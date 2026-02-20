@@ -1,0 +1,112 @@
+import { useParams, useNavigate } from "react-router-dom";
+import Button from "../components/ui/Button";
+import Card from "../components/ui/Card";
+import TopBar from "../components/ui/TopBar";
+import { useAppStore } from "../store/appStore";
+
+const MODULE_STATS: Record<string, { stat1: string; stat2: string; stat3?: string }> = {
+  Timeline: { stat1: "0 lanes", stat2: "0 anchors", stat3: "0 nodes" },
+  "Family Tree": { stat1: "0 unions", stat2: "0 people" },
+  Profiles: { stat1: "0 profiles", stat2: "0 states" },
+  Ideas: { stat1: "0 bubbles", stat2: "0 merges" },
+};
+
+export default function ProjectDashboard() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const projects = useAppStore((s) => s.projects);
+
+  const project = projects.find((p) => p.id === id);
+  const createWorkspace = useAppStore((s) => s.createWorkspace);
+
+  const handleOpenModule = (moduleName: string) => {
+    const wid = createWorkspace(`${project!.name} - ${moduleName}`, moduleName, project!.id);
+    navigate(`/workspaces/${wid}`);
+  };
+
+  if (!project) {
+    return (
+      <div className="min-h-screen bg-dark-bg flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-dark-muted mb-4">Project not found</p>
+          <Button onClick={() => navigate("/")}>Go Home</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-dark-bg flex flex-col">
+      <TopBar
+        left={
+          <button
+            onClick={() => navigate("/")}
+            className="flex items-center gap-2 px-3 py-1.5 text-dark-muted hover:text-dark-text transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Home
+          </button>
+        }
+      />
+
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold text-dark-text">{project.name}</h1>
+            <p className="text-dark-muted text-sm mt-1">Project Dashboard</p>
+          </div>
+
+          {/* Script strip */}
+          <div className="flex items-center gap-4 p-3 bg-dark-surface rounded-xl border border-dark-accent/50">
+            <Button variant="secondary" size="sm">
+              Open Project Script
+            </Button>
+            <span className="text-dark-muted text-sm">Declared Entities: 0</span>
+            <span className="text-dark-muted text-sm">|</span>
+            <span className="text-dark-muted text-sm">Errors: 0</span>
+          </div>
+
+          {/* Module cards */}
+          {project.enabledModules.length === 0 ? (
+            <Card padding="lg">
+              <p className="text-dark-muted text-sm text-center py-8">
+                No modules enabled. Edit project to add modules.
+              </p>
+            </Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {project.enabledModules.map((moduleName) => {
+                const stats = MODULE_STATS[moduleName] || {
+                  stat1: "0 items",
+                  stat2: "0 items",
+                };
+                return (
+                  <Card key={moduleName} padding="lg">
+                    <div className="flex flex-col h-full">
+                      <h3 className="text-dark-text font-medium mb-2">{moduleName}</h3>
+                      <div className="text-dark-muted text-xs space-y-1 mb-4">
+                        <p>{stats.stat1}</p>
+                        <p>{stats.stat2}</p>
+                        {stats.stat3 && <p>{stats.stat3}</p>}
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="mt-auto w-fit"
+                        onClick={() => handleOpenModule(moduleName)}
+                      >
+                        Open
+                      </Button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
