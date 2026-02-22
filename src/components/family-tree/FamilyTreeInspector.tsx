@@ -1,9 +1,16 @@
+import { useMemo } from "react";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData } from "../../store/familyTreeStore";
+import { computeGenerations, formatGeneration } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
 
 export default function FamilyTreeInspector() {
-  const { nodes, primarySelectedNodeId, updateNodeName, updateNodeNotes } = useFamilyTreeStore();
+  const { nodes, edges, primarySelectedNodeId, updateNodeName, updateNodeNotes } =
+    useFamilyTreeStore();
+  const generationByPersonId = useMemo(
+    () => computeGenerations(nodes, edges),
+    [nodes, edges]
+  );
 
   const selectedNode = primarySelectedNodeId
     ? nodes.find((n) => n.id === primarySelectedNodeId)
@@ -31,10 +38,22 @@ export default function FamilyTreeInspector() {
 
       {data.kind === "person" ? (
         <>
+          <div className="mb-4">
+            <span className="text-dark-muted text-sm">Generation: </span>
+            <span className="text-dark-text text-sm">
+              {formatGeneration(generationByPersonId[selectedNode.id])}
+            </span>
+          </div>
           <Input
             label="Name"
             value={data.name}
             onChange={(e) => updateNodeName(selectedNode.id, e.target.value)}
+            onBlur={(e) => {
+              const trimmed = e.target.value.trim();
+              if (trimmed !== e.target.value) {
+                updateNodeName(selectedNode.id, trimmed);
+              }
+            }}
           />
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Notes</label>

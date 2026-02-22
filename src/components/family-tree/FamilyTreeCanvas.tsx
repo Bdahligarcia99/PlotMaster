@@ -13,6 +13,7 @@ import {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
+import { FAMILY_TREE_GRID_SIZE } from "../../store/familyTreeStore";
 import PersonNode from "./PersonNode";
 import UnionNode from "./UnionNode";
 
@@ -70,7 +71,7 @@ export default function FamilyTreeCanvas() {
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
         snapToGrid={snapToGrid}
-        snapGrid={[16, 16]}
+        snapGrid={[FAMILY_TREE_GRID_SIZE, FAMILY_TREE_GRID_SIZE]}
         fitView
         panOnDrag
         zoomOnScroll
@@ -86,7 +87,7 @@ export default function FamilyTreeCanvas() {
       >
         <Background
           variant={BackgroundVariant.Dots}
-          gap={16}
+          gap={FAMILY_TREE_GRID_SIZE}
           size={1}
           color="#0f3460"
           className="bg-dark-bg"
