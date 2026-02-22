@@ -41,3 +41,11 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #1a4a7a;
 }
+
+/* React Flow dark theme overrides */
+.react-flow__edge-path {
+  stroke: #64748b !important;
+}
+.react-flow__connection-path {
+  stroke: #64748b !important;
+}

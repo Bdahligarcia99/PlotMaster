@@ -86,7 +86,7 @@ export default function HomeScreen() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  New Workspace
+                  New Project
                 </Button>
                 <Button
                   variant="secondary"
@@ -97,16 +97,16 @@ export default function HomeScreen() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
-                  New Project
+                  New Modular Project
                 </Button>
               </div>
             </div>
 
-            {/* Workspaces Card */}
+            {/* Projects Card (single-module) */}
             <Card padding="lg">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
-                  Workspaces
+                  Projects
                 </h2>
                 <Button
                   variant="secondary"
@@ -117,12 +117,12 @@ export default function HomeScreen() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  New Workspace
+                  New Project
                 </Button>
               </div>
               {workspaces.length === 0 ? (
                 <div className="py-8 text-center">
-                  <p className="text-dark-muted text-sm">No workspaces yet.</p>
+                  <p className="text-dark-muted text-sm">No projects yet.</p>
                   <p className="text-dark-muted text-xs mt-1">Create one to get started.</p>
                 </div>
               ) : (
@@ -151,11 +151,11 @@ export default function HomeScreen() {
               )}
             </Card>
 
-            {/* Projects Card */}
+            {/* Modular Projects Card */}
             <Card padding="lg">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
-                  Projects
+                  Modular Projects
                 </h2>
                 <Button
                   variant="secondary"
@@ -166,12 +166,12 @@ export default function HomeScreen() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  New Project
+                  New Modular Project
                 </Button>
               </div>
               {projects.length === 0 ? (
                 <div className="py-8 text-center">
-                  <p className="text-dark-muted text-sm">No projects yet.</p>
+                  <p className="text-dark-muted text-sm">No modular projects yet.</p>
                   <p className="text-dark-muted text-xs mt-1">Create one to get started.</p>
                 </div>
               ) : (

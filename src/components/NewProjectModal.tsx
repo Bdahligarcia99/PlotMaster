@@ -48,13 +48,13 @@ export default function NewProjectModal({ isOpen, onClose }: NewProjectModalProp
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="New Project">
+    <Modal isOpen={isOpen} onClose={handleClose} title="New Modular Project">
       <form onSubmit={handleSubmit}>
         <Input
-          label="Project Name"
+          label="Modular Project Name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="My project..."
+          placeholder="My modular project..."
           required
         />
         <div className="mb-4">
@@ -83,7 +83,7 @@ export default function NewProjectModal({ isOpen, onClose }: NewProjectModalProp
             className="flex-1"
             disabled={!name.trim()}
           >
-            Create Project
+            Create Modular Project
           </Button>
         </div>
       </form>

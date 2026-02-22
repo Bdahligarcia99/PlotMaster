@@ -45,13 +45,13 @@ export default function NewWorkspaceModal({ isOpen, onClose }: NewWorkspaceModal
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="New Workspace">
+    <Modal isOpen={isOpen} onClose={handleClose} title="New Project">
       <form onSubmit={handleSubmit}>
         <Input
-          label="Workspace Name"
+          label="Project Name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="My workspace..."
+          placeholder="My project..."
           required
         />
         <Select
@@ -82,7 +82,7 @@ export default function NewWorkspaceModal({ isOpen, onClose }: NewWorkspaceModal
                 onChange={() => setAttachment("project")}
                 className="w-4 h-4 text-blue-600"
               />
-              <span className="text-dark-text">Attach to Project</span>
+              <span className="text-dark-text">Attach to Modular Project</span>
             </label>
           </div>
           {attachment === "project" && projects.length > 0 && (
@@ -91,7 +91,7 @@ export default function NewWorkspaceModal({ isOpen, onClose }: NewWorkspaceModal
                 value={attachedProjectId}
                 onChange={(e) => setAttachedProjectId(e.target.value)}
                 options={[
-                  { value: "", label: "Select project..." },
+                  { value: "", label: "Select modular project..." },
                   ...projects.map((p) => ({ value: p.id, label: p.name })),
                 ]}
               />
@@ -99,7 +99,7 @@ export default function NewWorkspaceModal({ isOpen, onClose }: NewWorkspaceModal
           )}
           {attachment === "project" && projects.length === 0 && (
             <p className="text-dark-muted text-xs mt-2 ml-7">
-              No projects exist. Create a project first.
+              No modular projects exist. Create a modular project first.
             </p>
           )}
         </div>
@@ -114,7 +114,7 @@ export default function NewWorkspaceModal({ isOpen, onClose }: NewWorkspaceModal
             className="flex-1"
             disabled={!name.trim()}
           >
-            Create Workspace
+            Create Project
           </Button>
         </div>
       </form>

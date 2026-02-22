@@ -28,7 +28,7 @@ export default function ProjectDashboard() {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center">
         <div className="text-center">
-          <p className="text-dark-muted mb-4">Project not found</p>
+          <p className="text-dark-muted mb-4">Modular project not found</p>
           <Button onClick={() => navigate("/")}>Go Home</Button>
         </div>
       </div>
@@ -54,8 +54,8 @@ export default function ProjectDashboard() {
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-6">
           <div>
-            <h1 className="text-2xl font-bold text-dark-text">{project.name}</h1>
-            <p className="text-dark-muted text-sm mt-1">Project Dashboard</p>
+            <h1 className="text-2xl font-bold text-dark-text">Modular Project: {project.name}</h1>
+            <p className="text-dark-muted text-sm mt-1">Linked Projects</p>
           </div>
 
           {/* Script strip */}
@@ -72,7 +72,7 @@ export default function ProjectDashboard() {
           {project.enabledModules.length === 0 ? (
             <Card padding="lg">
               <p className="text-dark-muted text-sm text-center py-8">
-                No modules enabled. Edit project to add modules.
+                No modules enabled. Edit modular project to add modules.
               </p>
             </Card>
           ) : (
