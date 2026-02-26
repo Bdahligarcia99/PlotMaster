@@ -14,14 +14,14 @@ const MODULE_STATS: Record<string, { stat1: string; stat2: string; stat3?: strin
 export default function ProjectDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const projects = useAppStore((s) => s.projects);
+  const modularProjects = useAppStore((s) => s.modularProjects);
 
-  const project = projects.find((p) => p.id === id);
-  const createWorkspace = useAppStore((s) => s.createWorkspace);
+  const project = modularProjects.find((p) => p.id === id);
+  const createStandaloneProject = useAppStore((s) => s.createStandaloneProject);
 
   const handleOpenModule = (moduleName: string) => {
-    const wid = createWorkspace(`${project!.name} - ${moduleName}`, moduleName, project!.id);
-    navigate(`/workspaces/${wid}`);
+    const pid = createStandaloneProject(`${project!.name} - ${moduleName}`, moduleName);
+    navigate(`/project/${pid}`);
   };
 
   if (!project) {

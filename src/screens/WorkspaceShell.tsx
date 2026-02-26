@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
 import { useAppStore } from "../store/appStore";
 import FamilyTreeCanvas from "../components/family-tree/FamilyTreeCanvas";
 import FamilyTreeToolbar from "../components/family-tree/FamilyTreeToolbar";
+import { useFamilyTreeStore } from "../store/familyTreeStore";
 import FamilyTreeLeftSidebar from "../components/family-tree/FamilyTreeLeftSidebar";
 import FamilyTreeScriptPane from "../components/family-tree/FamilyTreeScriptPane";
 import FamilyTreeInspector from "../components/family-tree/FamilyTreeInspector";
@@ -28,21 +29,28 @@ export default function WorkspaceShell() {
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [scriptPaneOpen, setScriptPaneOpen] = useState(true);
 
-  const workspaces = useAppStore((s) => s.workspaces);
-  const projects = useAppStore((s) => s.projects);
+  const standaloneProjects = useAppStore((s) => s.standaloneProjects);
 
-  const workspace = workspaces.find((w) => w.id === id);
-  const attachedProject = workspace?.attachedProjectId
-    ? projects.find((p) => p.id === workspace.attachedProjectId)
-    : null;
+  const project = standaloneProjects.find((p) => p.id === id);
+  const loadTree = useFamilyTreeStore((s) => s.loadTree);
+  const updateLastOpened = useAppStore((s) => s.updateLastOpened);
 
-  const isFamilyTree = workspace?.moduleType === "Family Tree";
-  const isTimeline = workspace?.moduleType === "Timeline";
-  const isIdeas = workspace?.moduleType === "Ideas";
-  const isProfiles = workspace?.moduleType === "Profiles";
+  useEffect(() => {
+    if (id && project?.moduleType === "Family Tree") {
+      loadTree(id);
+      updateLastOpened("standalone", id);
+    } else if (id && project) {
+      updateLastOpened("standalone", id);
+    }
+  }, [id, project?.moduleType, project, loadTree, updateLastOpened]);
+
+  const isFamilyTree = project?.moduleType === "Family Tree";
+  const isTimeline = project?.moduleType === "Timeline";
+  const isIdeas = project?.moduleType === "Ideas";
+  const isProfiles = project?.moduleType === "Profiles";
   const hasPanelLayout = isFamilyTree || isTimeline || isIdeas || isProfiles;
 
-  if (!workspace) {
+  if (!project) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center">
         <div className="text-center">
@@ -68,15 +76,10 @@ export default function WorkspaceShell() {
               Home
             </button>
             <div className="h-4 w-px bg-dark-accent" />
-            <span className="text-dark-text font-medium truncate max-w-[200px]">Project: {workspace.name}</span>
+            <span className="text-dark-text font-medium truncate max-w-[200px]">{project.name}</span>
             <span className="text-xs text-dark-muted bg-dark-accent px-2 py-0.5 rounded">
-              {workspace.moduleType}
+              {project.moduleType}
             </span>
-            {attachedProject && (
-              <span className="text-xs text-blue-400/80">
-                → Modular Project: {attachedProject.name}
-              </span>
-            )}
           </div>
         }
         right={
@@ -289,7 +292,7 @@ export default function WorkspaceShell() {
             <div className="flex-1 flex min-h-0">
               <div className="flex-1 m-4 rounded-xl border-2 border-dashed border-dark-accent/50 flex items-center justify-center bg-dark-surface/30">
                 <div className="text-center text-dark-muted">
-                  <p className="text-sm font-medium">{workspace.moduleType} Canvas</p>
+                  <p className="text-sm font-medium">{project.moduleType} Canvas</p>
                   <p className="text-xs mt-1">Placeholder — Phase 2</p>
                 </div>
               </div>

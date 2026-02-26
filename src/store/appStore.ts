@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+const APP_STORAGE_KEY = "plotmaster:app";
+
 export interface Project {
   id: string;
   name: string;
@@ -7,37 +9,62 @@ export interface Project {
   lastOpened: number;
 }
 
-export interface Workspace {
+export interface StandaloneProject {
   id: string;
   name: string;
   moduleType: string;
-  attachedProjectId?: string;
   lastOpened: number;
 }
 
 interface AppStore {
-  projects: Project[];
-  workspaces: Workspace[];
-  createProject: (name: string, enabledModules: string[]) => string;
-  createWorkspace: (
-    name: string,
-    moduleType: string,
-    attachedProjectId?: string
-  ) => string;
-  attachWorkspaceToProject: (workspaceId: string, projectId: string) => void;
+  modularProjects: Project[];
+  standaloneProjects: StandaloneProject[];
+  createModularProject: (name: string, enabledModules: string[]) => string;
+  createStandaloneProject: (name: string, moduleType: string) => string;
+  removeStandaloneProject: (id: string) => void;
   updateLastOpened: (
-    type: "project" | "workspace",
+    type: "modular" | "standalone",
     id: string
   ) => void;
 }
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
 
-export const useAppStore = create<AppStore>((set) => ({
-  projects: [],
-  workspaces: [],
+function loadFromStorage(): { modularProjects: Project[]; standaloneProjects: StandaloneProject[] } {
+  try {
+    const raw = localStorage.getItem(APP_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const legacy = parsed.workspaces ?? [];
+      return {
+        modularProjects: parsed.projects ?? parsed.modularProjects ?? [],
+        standaloneProjects: parsed.standaloneProjects ?? legacy.map((w: { id: string; name: string; moduleType: string; lastOpened: number }) => ({
+          id: w.id,
+          name: w.name,
+          moduleType: w.moduleType,
+          lastOpened: w.lastOpened,
+        })),
+      };
+    }
+  } catch {}
+  return { modularProjects: [], standaloneProjects: [] };
+}
 
-  createProject: (name, enabledModules) => {
+function saveToStorage(modularProjects: Project[], standaloneProjects: StandaloneProject[]) {
+  try {
+    localStorage.setItem(APP_STORAGE_KEY, JSON.stringify({ modularProjects, standaloneProjects }));
+  } catch (e) {
+    console.warn("[AppStore] Save failed:", e);
+  }
+}
+
+const initialState = loadFromStorage();
+
+export const useAppStore = create<AppStore>((set) => ({
+  modularProjects: initialState.modularProjects,
+  standaloneProjects: initialState.standaloneProjects,
+
+  createModularProject: (name, enabledModules) => {
     const id = generateId();
     const project: Project = {
       id,
@@ -45,50 +72,59 @@ export const useAppStore = create<AppStore>((set) => ({
       enabledModules,
       lastOpened: Date.now(),
     };
-    set((state) => ({
-      projects: [project, ...state.projects],
-    }));
+    set((state) => {
+      const next = { modularProjects: [project, ...state.modularProjects] };
+      saveToStorage(next.modularProjects, state.standaloneProjects);
+      return next;
+    });
     return id;
   },
 
-  createWorkspace: (name, moduleType, attachedProjectId) => {
+  createStandaloneProject: (name, moduleType) => {
     const id = generateId();
-    const workspace: Workspace = {
+    const project: StandaloneProject = {
       id,
       name,
       moduleType,
-      attachedProjectId,
       lastOpened: Date.now(),
     };
-    set((state) => ({
-      workspaces: [workspace, ...state.workspaces],
-    }));
+    set((state) => {
+      const next = { standaloneProjects: [project, ...state.standaloneProjects] };
+      saveToStorage(state.modularProjects, next.standaloneProjects);
+      return next;
+    });
     return id;
   },
 
-  attachWorkspaceToProject: (workspaceId, projectId) => {
-    set((state) => ({
-      workspaces: state.workspaces.map((w) =>
-        w.id === workspaceId ? { ...w, attachedProjectId: projectId } : w
-      ),
-    }));
+  removeStandaloneProject: (id) => {
+    set((state) => {
+      const next = {
+        standaloneProjects: state.standaloneProjects.filter((p) => p.id !== id),
+      };
+      saveToStorage(state.modularProjects, next.standaloneProjects);
+      return next;
+    });
   },
 
   updateLastOpened: (type, id) => {
     const now = Date.now();
     set((state) => {
-      if (type === "project") {
-        return {
-          projects: state.projects.map((p) =>
+      if (type === "modular") {
+        const next = {
+          modularProjects: state.modularProjects.map((p) =>
             p.id === id ? { ...p, lastOpened: now } : p
           ),
         };
+        saveToStorage(next.modularProjects, state.standaloneProjects);
+        return next;
       }
-      return {
-        workspaces: state.workspaces.map((w) =>
-          w.id === id ? { ...w, lastOpened: now } : w
+      const next = {
+        standaloneProjects: state.standaloneProjects.map((p) =>
+          p.id === id ? { ...p, lastOpened: now } : p
         ),
       };
+      saveToStorage(state.modularProjects, next.standaloneProjects);
+      return next;
     });
   },
 }));

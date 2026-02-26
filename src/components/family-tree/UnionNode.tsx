@@ -1,26 +1,69 @@
-import { memo } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import type { UnionNodeData } from "../../store/familyTreeStore";
-import { useFamilyTreeStore } from "../../store/familyTreeStore";
+import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H } from "../../store/familyTreeStore";
 
-function UnionNode({ selected, xPos, yPos }: NodeProps<UnionNodeData>) {
-  const showCoordinates = useFamilyTreeStore((s) => s.showCoordinates);
+function UnionNode({ id, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
+  const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
+  const nodeInfoTopLeft = useFamilyTreeStore((s) => s.nodeInfoTopLeft);
+  const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
+  const nodeInfoSize = useFamilyTreeStore((s) => s.nodeInfoSize);
+  const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
+  const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
   const x = Math.round(xPos);
   const y = Math.round(yPos);
 
+  const sizeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = sizeRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      if (w > 0 && h > 0) reportNodeSize(id, { width: w, height: h });
+    });
+    observer.observe(el);
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    if (w > 0 && h > 0) reportNodeSize(id, { width: w, height: h });
+    return () => observer.disconnect();
+  }, [id, reportNodeSize]);
+
+  const handleRootPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedNodeIds((prev) => {
+          if (prev.includes(id)) return prev.filter((x) => x !== id);
+          return [...prev, id];
+        });
+      }
+    },
+    [id, setSelectedNodeIds]
+  );
+
   const coordsOverlayClass =
-    "absolute -top-1 right-0 translate-x-full px-1.5 py-0.5 text-xs font-mono text-dark-muted bg-dark-bg border border-dark-accent rounded shadow pointer-events-none z-40 whitespace-nowrap";
+    "absolute -top-1 right-0 translate-x-full px-1.5 py-1 text-xs font-mono text-dark-muted bg-dark-bg border border-dark-accent rounded shadow pointer-events-none z-40 whitespace-nowrap leading-tight";
+  const size = nodeSizesById[id] ?? { width: DEFAULT_UNION_W, height: DEFAULT_UNION_H };
+  const centerX = Math.round(x + size.width / 2);
+  const centerY = Math.round(y + size.height / 2);
 
   return (
-    <div className="relative group">
-      {/* Coordinates overlay: always visible when toggle ON, independent of hover */}
-      {showCoordinates && (
+    <div className="relative group" onPointerDown={handleRootPointerDown}>
+      {/* Node info overlay: only when enabled, lines based on node info toggles */}
+      {showNodeInfoEnabled && (nodeInfoTopLeft || nodeInfoCenter || nodeInfoSize) && (
         <div className={coordsOverlayClass}>
-          x: {x}  y: {y}
+          {nodeInfoTopLeft && <div>Top-Left: ({x}, {y})</div>}
+          {nodeInfoCenter && <div>Center: ({centerX}, {centerY})</div>}
+          {nodeInfoSize && <div>Size: {Math.round(size.width)}×{Math.round(size.height)}</div>}
         </div>
       )}
 
       <div
+        ref={sizeRef}
         className={`px-3 py-2 rounded-lg border min-w-[60px] flex flex-col items-center justify-center transition-colors ${
           selected
             ? "bg-dark-accent/80 border-blue-500 shadow-md"

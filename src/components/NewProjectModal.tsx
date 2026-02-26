@@ -14,7 +14,7 @@ interface NewProjectModalProps {
 
 export default function NewProjectModal({ isOpen, onClose }: NewProjectModalProps) {
   const navigate = useNavigate();
-  const createProject = useAppStore((s) => s.createProject);
+  const createModularProject = useAppStore((s) => s.createModularProject);
 
   const [name, setName] = useState("");
   const [enabledModules, setEnabledModules] = useState<Set<string>>(new Set());
@@ -36,7 +36,7 @@ export default function NewProjectModal({ isOpen, onClose }: NewProjectModalProp
     const trimmedName = name.trim();
     if (!trimmedName) return;
 
-    const id = createProject(trimmedName, Array.from(enabledModules));
+    const id = createModularProject(trimmedName, Array.from(enabledModules));
     onClose();
     navigate(`/projects/${id}`);
   };
