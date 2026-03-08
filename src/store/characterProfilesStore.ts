@@ -3,6 +3,9 @@ import { create } from "zustand";
 const PROFILES_STORAGE_KEY = (projectId: string) =>
   `plotmaster:profiles:${projectId}`;
 
+const TEMPLATES_STORAGE_KEY = (projectId: string) =>
+  `plotmaster:profiles:templates:${projectId}`;
+
 export type SectionHeadingLevel = "h1" | "h2";
 
 /** Note block - section-scoped note */
@@ -46,6 +49,14 @@ export interface CharacterEntity {
   sections: ProfileSection[];
 }
 
+/** Chart layout template - structure only, no character-specific values */
+export interface ChartLayoutTemplate {
+  id: string;
+  name: string;
+  createdAt?: number;
+  sections: ProfileSection[];
+}
+
 interface CharacterProfilesStore {
   activeProjectId: string | null;
   characters: CharacterEntity[];
@@ -77,6 +88,13 @@ interface CharacterProfilesStore {
   removeAttributeKey: (projectId: string, characterId: string, sectionId: string, blockId: string, key: string) => void;
   renameAttributeKey: (projectId: string, characterId: string, sectionId: string, blockId: string, oldKey: string, newKey: string) => void;
   reorderAttributeKeys: (projectId: string, characterId: string, sectionId: string, blockId: string, fromIndex: number, toIndex: number) => void;
+
+  // Chart layout templates
+  listTemplates: (projectId: string) => ChartLayoutTemplate[];
+  saveTemplateFromCharacter: (projectId: string, characterId: string, name: string) => string | null;
+  applyTemplateToCharacter: (projectId: string, characterId: string, templateId: string, mode: "replace" | "merge") => void;
+  renameTemplate: (projectId: string, templateId: string, name: string) => void;
+  deleteTemplate: (projectId: string, templateId: string) => void;
 }
 
 function generateId() {
@@ -211,6 +229,213 @@ function saveToStorage(projectId: string, characters: CharacterEntity[]) {
   } catch (e) {
     console.warn("[CharacterProfilesStore] Save failed:", e);
   }
+}
+
+function loadTemplatesFromStorage(projectId: string): ChartLayoutTemplate[] {
+  try {
+    const raw = localStorage.getItem(TEMPLATES_STORAGE_KEY(projectId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTemplatesToStorage(projectId: string, templates: ChartLayoutTemplate[]) {
+  try {
+    localStorage.setItem(
+      TEMPLATES_STORAGE_KEY(projectId),
+      JSON.stringify(templates)
+    );
+  } catch (e) {
+    console.warn("[CharacterProfilesStore] Template save failed:", e);
+  }
+}
+
+/** Strip values from character sections to create template structure */
+function sectionsToTemplateFormat(sections: ProfileSection[]): ProfileSection[] {
+  const oldToNewSectionId = new Map<string, string>();
+  const result: ProfileSection[] = [];
+  const ordered = getOrderedSections(sections);
+
+  for (const s of ordered) {
+    const newId = generateId();
+    oldToNewSectionId.set(s.id, newId);
+    const blocks: ContentBlock[] = (s.contentBlocks ?? []).map((b) => {
+      if (b.type === "note") {
+        return { type: "note" as const, id: generateId(), content: "" };
+      }
+      if (b.type === "attributes") {
+        const keys = b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {});
+        const keyValuePairs: Record<string, string> = {};
+        for (const k of keys) if (k in (b.keyValuePairs ?? {})) keyValuePairs[k] = "";
+        return {
+          type: "attributes" as const,
+          id: generateId(),
+          keyValuePairs,
+          attributeOrder: keys.filter((k) => k in keyValuePairs),
+        };
+      }
+      if (b.type === "image") {
+        return { type: "image" as const, id: generateId(), label: b.label, imageUrl: undefined };
+      }
+      return b;
+    });
+    result.push({
+      id: newId,
+      label: s.label,
+      headingLevel: s.headingLevel,
+      parentId: s.parentId ? (oldToNewSectionId.get(s.parentId) ?? null) : null,
+      contentBlocks: blocks,
+      order: s.order,
+    });
+  }
+  return result;
+}
+
+/** Apply template sections to character, generating new IDs and remapping parentId */
+function applyTemplateSections(
+  templateSections: ProfileSection[],
+  existingSections: ProfileSection[],
+  mode: "replace" | "merge"
+): ProfileSection[] {
+  const templateOrdered = getOrderedSections(templateSections);
+
+  if (mode === "replace") {
+    return templateSectionsToCharacter(templateOrdered);
+  }
+
+  const existingOrdered = getOrderedSections(existingSections);
+  const existingByLabel = new Map<string, ProfileSection>();
+  for (const s of existingOrdered) {
+    existingByLabel.set(s.label.toLowerCase(), s);
+  }
+  const existingAttrKeys = new Map<string, Set<string>>();
+  for (const s of existingOrdered) {
+    const keys = new Set<string>();
+    for (const b of s.contentBlocks ?? []) {
+      if (b.type === "attributes") {
+        for (const k of b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {})) keys.add(k);
+      }
+    }
+    existingAttrKeys.set(s.label.toLowerCase(), keys);
+  }
+
+  const templateIdToCharId = new Map<string, string>();
+  const result: ProfileSection[] = [...existingOrdered];
+  let maxOrder = Math.max(-1, ...existingOrdered.map((s) => s.order)) + 1;
+
+  for (const ts of templateOrdered) {
+    const labelKey = ts.label.toLowerCase();
+    const existing = existingByLabel.get(labelKey);
+    if (existing) {
+      templateIdToCharId.set(ts.id, existing.id);
+      const attrKeys = existingAttrKeys.get(labelKey) ?? new Set();
+      for (const tb of ts.contentBlocks ?? []) {
+        if (tb.type === "attributes") {
+          const keysToAdd = (tb.attributeOrder ?? Object.keys(tb.keyValuePairs ?? {})).filter(
+            (k) => !attrKeys.has(k)
+          );
+          if (keysToAdd.length > 0) {
+            const block = (existing.contentBlocks ?? []).find(
+              (b): b is AttributeBlock => b.type === "attributes"
+            );
+            if (block) {
+              const pairs = { ...block.keyValuePairs };
+              const order = [...(block.attributeOrder ?? Object.keys(pairs))];
+              for (const k of keysToAdd) {
+                pairs[k] = "";
+                order.push(k);
+                attrKeys.add(k);
+              }
+              existing.contentBlocks = (existing.contentBlocks ?? []).map((b) =>
+                b.type === "attributes" && b.id === block.id
+                  ? { ...b, keyValuePairs: pairs, attributeOrder: order }
+                  : b
+              );
+            } else {
+              existing.contentBlocks = [
+                ...(existing.contentBlocks ?? []),
+                {
+                  type: "attributes" as const,
+                  id: generateId(),
+                  keyValuePairs: Object.fromEntries(keysToAdd.map((k) => [k, ""])),
+                  attributeOrder: keysToAdd,
+                },
+              ];
+              keysToAdd.forEach((k) => attrKeys.add(k));
+            }
+          }
+        } else if (tb.type === "note") {
+          existing.contentBlocks = [
+            ...(existing.contentBlocks ?? []),
+            { type: "note" as const, id: generateId(), content: "" },
+          ];
+        } else if (tb.type === "image") {
+          existing.contentBlocks = [
+            ...(existing.contentBlocks ?? []),
+            { type: "image" as const, id: generateId(), label: tb.label },
+          ];
+        }
+      }
+    } else {
+      const newParentId = ts.parentId ? (templateIdToCharId.get(ts.parentId) ?? null) : null;
+      const newSection = templateSectionToCharacter(ts, newParentId, maxOrder++);
+      templateIdToCharId.set(ts.id, newSection.id);
+      result.push(newSection);
+      existingByLabel.set(labelKey, newSection);
+      existingAttrKeys.set(labelKey, new Set());
+    }
+  }
+  return result;
+}
+
+function templateSectionToCharacter(
+  s: ProfileSection,
+  parentId: string | null,
+  order: number
+): ProfileSection {
+  const newId = generateId();
+  const blocks: ContentBlock[] = (s.contentBlocks ?? []).map((b) => {
+    if (b.type === "note") return { type: "note" as const, id: generateId(), content: "" };
+    if (b.type === "attributes") {
+      const keys = b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {});
+      return {
+        type: "attributes" as const,
+        id: generateId(),
+        keyValuePairs: Object.fromEntries(keys.map((k) => [k, ""])),
+        attributeOrder: keys,
+      };
+    }
+    if (b.type === "image") return { type: "image" as const, id: generateId(), label: b.label };
+    return b;
+  });
+  return { id: newId, label: s.label, headingLevel: s.headingLevel, parentId, contentBlocks: blocks, order };
+}
+
+function templateSectionsToCharacter(templateOrdered: ProfileSection[]): ProfileSection[] {
+  const templateIdToNewId = new Map<string, string>();
+  const byParent = new Map<string | null, ProfileSection[]>();
+  for (const s of templateOrdered) {
+    const p = s.parentId ?? null;
+    if (!byParent.has(p)) byParent.set(p, []);
+    byParent.get(p)!.push(s);
+  }
+  const result: ProfileSection[] = [];
+  function add(parentId: string | null, orderStart: number) {
+    const children = byParent.get(parentId) ?? [];
+    children.sort((a, b) => a.order - b.order);
+    for (let i = 0; i < children.length; i++) {
+      const s = children[i];
+      const newParentId = parentId ? templateIdToNewId.get(parentId) ?? null : null;
+      const newSection = templateSectionToCharacter(s, newParentId, orderStart + i);
+      templateIdToNewId.set(s.id, newSection.id);
+      result.push(newSection);
+      add(s.id, 0);
+    }
+  }
+  add(null, 0);
+  return result;
 }
 
 /** Get top-level sections (H1) and nested H2s, in display order */
@@ -601,6 +826,56 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
       });
       saveToStorage(projectId, chars);
       if (get().activeProjectId === projectId) set({ characters: chars });
+    },
+
+    listTemplates: (projectId) => loadTemplatesFromStorage(projectId),
+
+    saveTemplateFromCharacter: (projectId, characterId, name) => {
+      const chars = loadFromStorage(projectId);
+      const char = chars.find((c) => c.id === characterId);
+      if (!char || (char.sections ?? []).length === 0) return null;
+      const templateSections = sectionsToTemplateFormat(char.sections ?? []);
+      const templates = loadTemplatesFromStorage(projectId);
+      const dupCount = templates.filter((t) => t.name === name.trim()).length;
+      const finalName = dupCount > 0 ? `${name.trim()} (${dupCount + 1})` : name.trim() || "Untitled";
+      const template: ChartLayoutTemplate = {
+        id: generateId(),
+        name: finalName,
+        createdAt: Date.now(),
+        sections: templateSections,
+      };
+      const next = [...templates, template];
+      saveTemplatesToStorage(projectId, next);
+      return template.id;
+    },
+
+    applyTemplateToCharacter: (projectId, characterId, templateId, mode) => {
+      const templates = loadTemplatesFromStorage(projectId);
+      const template = templates.find((t) => t.id === templateId);
+      if (!template) return;
+      const chars = loadFromStorage(projectId);
+      const char = chars.find((c) => c.id === characterId);
+      if (!char) return;
+      const existing = char.sections ?? [];
+      const nextSections = applyTemplateSections(template.sections, existing, mode);
+      const updated = chars.map((c) =>
+        c.id === characterId ? { ...c, sections: nextSections } : c
+      );
+      saveToStorage(projectId, updated);
+      if (get().activeProjectId === projectId) set({ characters: updated });
+    },
+
+    renameTemplate: (projectId, templateId, name) => {
+      const trimmed = name.trim() || "Untitled";
+      const templates = loadTemplatesFromStorage(projectId).map((t) =>
+        t.id === templateId ? { ...t, name: trimmed } : t
+      );
+      saveTemplatesToStorage(projectId, templates);
+    },
+
+    deleteTemplate: (projectId, templateId) => {
+      const templates = loadTemplatesFromStorage(projectId).filter((t) => t.id !== templateId);
+      saveTemplatesToStorage(projectId, templates);
     },
   })
 );

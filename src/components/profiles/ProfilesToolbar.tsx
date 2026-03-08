@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import Button from "../ui/Button";
 import { useCharacterProfilesStore } from "../../store/characterProfilesStore";
 import { useParams } from "react-router-dom";
+import ProfileTemplatesModal, { type TemplateModalMode } from "./ProfileTemplatesModal";
 
 export default function ProfilesToolbar() {
   const { id } = useParams<{ id: string }>();
@@ -19,8 +20,10 @@ export default function ProfilesToolbar() {
   const h1Sections = (selectedCharacter?.sections ?? []).filter((s) => !s.parentId);
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [templateModalMode, setTemplateModalMode] = useState<TemplateModalMode>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const templateButtonRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (id) {
@@ -196,6 +199,45 @@ export default function ProfilesToolbar() {
             document.body
           )}
       </div>
+
+      <div ref={templateButtonRef} className="relative flex rounded-lg overflow-hidden border border-dark-accent/50">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={!activeProjectId}
+          onClick={() => setTemplateModalMode((m) => (m ? null : "save"))}
+          title="Save layout as template"
+          className="rounded-none border-0 rounded-l-lg"
+        >
+          Save layout
+        </Button>
+        <button
+          type="button"
+          onClick={() => setTemplateModalMode((m) => (m === "load" ? null : "load"))}
+          disabled={!activeProjectId}
+          className="px-2 py-1.5 text-sm border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-accent/80 text-dark-text disabled:opacity-50 transition-colors"
+          title="Load template"
+        >
+          Load
+        </button>
+        <button
+          type="button"
+          onClick={() => setTemplateModalMode((m) => (m === "manage" ? null : "manage"))}
+          disabled={!activeProjectId}
+          className="rounded-r-lg px-2 py-1.5 text-sm border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-accent/80 text-dark-text disabled:opacity-50 transition-colors"
+          title="Manage templates"
+        >
+          Templates
+        </button>
+      </div>
+
+      <ProfileTemplatesModal
+        projectId={id ?? null}
+        selectedCharacterId={selectedCharacterId}
+        mode={templateModalMode}
+        onClose={() => setTemplateModalMode(null)}
+        anchorRef={templateButtonRef}
+      />
     </div>
   );
 }
