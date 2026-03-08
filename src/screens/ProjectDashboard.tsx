@@ -3,6 +3,8 @@ import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import TopBar from "../components/ui/TopBar";
 import { useAppStore } from "../store/appStore";
+import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
+import { useWindowTitle } from "../hooks/useWindowTitle";
 
 const MODULE_STATS: Record<string, { stat1: string; stat2: string; stat3?: string }> = {
   Timeline: { stat1: "0 lanes", stat2: "0 anchors", stat3: "0 nodes" },
@@ -15,9 +17,12 @@ export default function ProjectDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const modularProjects = useAppStore((s) => s.modularProjects);
+  const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
 
   const project = modularProjects.find((p) => p.id === id);
   const createStandaloneProject = useAppStore((s) => s.createStandaloneProject);
+
+  useWindowTitle(project ? `${project.name} - PlotMaster` : "PlotMaster");
 
   const handleOpenModule = (moduleName: string) => {
     const pid = createStandaloneProject(`${project!.name} - ${moduleName}`, moduleName);
@@ -40,13 +45,20 @@ export default function ProjectDashboard() {
       <TopBar
         left={
           <button
-            onClick={() => navigate("/")}
+            onClick={() => {
+              if (isTauri()) {
+                openOrFocusIntroWindow();
+              } else {
+                setIntroDialogOpen(true);
+              }
+            }}
             className="flex items-center gap-2 px-3 py-1.5 text-dark-muted hover:text-dark-text transition-colors"
+            title="Open projects"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
-            Home
+            Projects
           </button>
         }
       />

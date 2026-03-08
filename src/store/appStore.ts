@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getStorageDriver } from "../storage/StorageDriver";
 
 const APP_STORAGE_KEY = "plotmaster:app";
 
@@ -16,16 +17,27 @@ export interface StandaloneProject {
   lastOpened: number;
 }
 
+/** Maps driver moduleType to WorkspaceShell moduleType. */
+const DRIVER_TO_STANDALONE_MODULE: Record<string, string> = {
+  characterProfiles: "Profiles",
+  timeline: "Timeline",
+  ideas: "Ideas",
+};
+
 interface AppStore {
   modularProjects: Project[];
   standaloneProjects: StandaloneProject[];
+  introDialogOpen: boolean;
   createModularProject: (name: string, enabledModules: string[]) => string;
   createStandaloneProject: (name: string, moduleType: string) => string;
   removeStandaloneProject: (id: string) => void;
+  /** Hydrate a project from the driver into standaloneProjects when opening from driver/recent. */
+  ensureStandaloneFromDriver: (projectId: string) => Promise<StandaloneProject | null>;
   updateLastOpened: (
     type: "modular" | "standalone",
     id: string
   ) => void;
+  setIntroDialogOpen: (open: boolean) => void;
 }
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
@@ -63,6 +75,9 @@ const initialState = loadFromStorage();
 export const useAppStore = create<AppStore>((set) => ({
   modularProjects: initialState.modularProjects,
   standaloneProjects: initialState.standaloneProjects,
+  introDialogOpen: false,
+
+  setIntroDialogOpen: (open) => set({ introDialogOpen: open }),
 
   createModularProject: (name, enabledModules) => {
     const id = generateId();
@@ -104,6 +119,27 @@ export const useAppStore = create<AppStore>((set) => ({
       saveToStorage(state.modularProjects, next.standaloneProjects);
       return next;
     });
+  },
+
+  ensureStandaloneFromDriver: async (projectId: string) => {
+    const list = await getStorageDriver().listProjects();
+    const driverProject = list.find((p) => p.id === projectId);
+    if (!driverProject) return null;
+    const moduleType = DRIVER_TO_STANDALONE_MODULE[driverProject.moduleType];
+    if (!moduleType) return null; // familyTree uses /family-tree route, skip
+    const standalone: StandaloneProject = {
+      id: driverProject.id,
+      name: driverProject.name,
+      moduleType,
+      lastOpened: driverProject.updatedAt,
+    };
+    set((state) => {
+      if (state.standaloneProjects.some((p) => p.id === projectId)) return state;
+      const next = { standaloneProjects: [standalone, ...state.standaloneProjects] };
+      saveToStorage(state.modularProjects, next.standaloneProjects);
+      return next;
+    });
+    return standalone;
   },
 
   updateLastOpened: (type, id) => {

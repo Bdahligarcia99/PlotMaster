@@ -5,6 +5,9 @@ import { getStorageDriver } from "../storage/StorageDriver";
 /** Grid size for Family Tree canvas. Must match snapGrid in FamilyTreeCanvas. */
 export const FAMILY_TREE_GRID_SIZE = 16;
 
+/** Y offset from anchor top for Sort baseline when snapping gen-assigned nodes. */
+export const GEN_BASELINE_OFFSET = 64;
+
 /** Sort v1 layout constants. */
 export const PARTNER_DX = 224;
 export const UNION_DY = 96;
@@ -32,10 +35,22 @@ export function snapPosition(
   };
 }
 
+/** Generation anchor: defines a horizontal band for organizing persons by generation. */
+export interface GenerationAnchor {
+  id: string;
+  index: number;
+  yTop: number;
+  height: number;
+  customLabel?: string;
+}
+
 export interface PersonNodeData {
   kind: "person";
   name: string;
   notes: string;
+  genAnchorId?: string | null;
+  /** True after user has clicked or dragged the node; required for gen inheritance. */
+  isGenArmed?: boolean;
 }
 
 export interface UnionNodeData {
@@ -52,8 +67,10 @@ export interface FamilyTreeSavedState {
   nodes: Node<FamilyTreeNodeData>[];
   edges: Edge[];
   anchorNodeId: string | null;
+  generationAnchors?: GenerationAnchor[];
   uiFlags?: { snapToGrid?: boolean; showCoordinates?: boolean };
   ui?: {
+    genLabelMode?: "letters" | "numbers" | "both";
     showCoordinatesEnabled?: boolean;
     showNodeInfoEnabled?: boolean;
     singleChildAlignment?: "left" | "center" | "right";
@@ -63,7 +80,10 @@ export interface FamilyTreeSavedState {
     nodeInfoTopLeft?: boolean;
     nodeInfoCenter?: boolean;
     nodeInfoSize?: boolean;
+    nodeInfoSpacing?: boolean;
     scriptPanelLayout?: "split" | "codeOnly" | "viewOnly";
+    showGenerationAnchors?: boolean;
+    showGenInheritIndicator?: boolean;
   };
 }
 
@@ -130,11 +150,35 @@ export function computeGenerations(
   return gen;
 }
 
+/** Format generation anchor label for display (letters/numbers/both). */
+export function formatGenerationAnchorLabel(
+  anchor: GenerationAnchor,
+  mode: "letters" | "numbers" | "both"
+): string {
+  const letter = anchor.index < 26 ? String.fromCharCode(65 + anchor.index) : `Gen ${anchor.index + 1}`;
+  const num = String(anchor.index);
+  if (mode === "letters") return letter;
+  if (mode === "numbers") return num;
+  return `${letter} (${num})`;
+}
+
 /** Format generation number as "Gen A", "Gen B", etc. Unknown => "Gen —" */
 export function formatGeneration(gen: number | undefined): string {
   if (gen === undefined || gen < 0) return "Gen —";
   if (gen < 26) return `Gen ${String.fromCharCode(65 + gen)}`;
   return `Gen ${gen + 1}`;
+}
+
+/** Return the anchor that contains flow-space Y, or null. Uses centerY = node top + height/2. */
+export function getAnchorAtY(
+  anchors: GenerationAnchor[],
+  y: number
+): GenerationAnchor | null {
+  const sorted = [...anchors].sort((a, b) => a.index - b.index);
+  for (const a of sorted) {
+    if (y >= a.yTop && y <= a.yTop + a.height) return a;
+  }
+  return null;
 }
 
 /** Child edges use edge.data.type === 'child' (see addChild). */
@@ -163,6 +207,8 @@ export function generateFamilyTreeScript(
     nodeInfoCenter?: boolean;
     nodeInfoSize?: boolean;
     nodeSizesById?: Record<string, { width: number; height: number }>;
+    generationAnchors?: GenerationAnchor[];
+    genLabelMode?: "letters" | "numbers" | "both";
   }
 ): string {
   const compactDeclarations = options?.compactDeclarations ?? false;
@@ -171,6 +217,25 @@ export function generateFamilyTreeScript(
   const nodeInfoCenter = options?.nodeInfoCenter ?? false;
   const nodeInfoSize = options?.nodeInfoSize ?? false;
   const nodeSizesById = options?.nodeSizesById ?? {};
+  const generationAnchors = options?.generationAnchors ?? [];
+  const genLabelMode = options?.genLabelMode ?? "letters";
+
+  const anchorById = new Map(generationAnchors.map((a) => [a.id, a]));
+  const getGenSuffix = (n: Node<PersonNodeData>): string => {
+    const genAnchorId = n.data.genAnchorId;
+    if (!genAnchorId) return "";
+    const anchor = anchorById.get(genAnchorId);
+    if (!anchor) return "";
+    const label = formatGenerationAnchorLabel(anchor, genLabelMode);
+    return ` {Gen ${label}}`;
+  };
+  const getGenLabel = (personNode: Node<PersonNodeData>): string | null => {
+    const genAnchorId = personNode.data.genAnchorId;
+    if (!genAnchorId) return null;
+    const anchor = anchorById.get(genAnchorId);
+    if (!anchor) return null;
+    return formatGenerationAnchorLabel(anchor, genLabelMode);
+  };
 
   const personNodes = nodes
     .filter((n): n is Node<PersonNodeData> => n.data.kind === "person")
@@ -235,7 +300,7 @@ export function generateFamilyTreeScript(
   if (compactDeclarations) {
     if (showNodeInfo) {
       const tokens = personNodes.map((n) => {
-        const base = `${n.data.name || "New Person"}(${n.id})`;
+        const base = `${n.data.name || "New Person"}(${n.id})${getGenSuffix(n)}`;
         return base + getInlineInfo(n, n.id, false);
       });
       const unionTokens = unionNodes.map((u) => {
@@ -245,7 +310,7 @@ export function generateFamilyTreeScript(
       lines.push([...tokens, ...unionTokens].join(", "));
     } else {
       const tokens = personNodes.map(
-        (n) => `${n.data.name || "New Person"}(${n.id})`
+        (n) => `${n.data.name || "New Person"}(${n.id})${getGenSuffix(n)}`
       );
       lines.push(tokens.join(", "));
     }
@@ -273,7 +338,7 @@ export function generateFamilyTreeScript(
     };
     for (const n of personNodes) {
       const name = n.data.name || "New Person";
-      lines.push(`${name} (${n.id})`);
+      lines.push(`${name} (${n.id})${getGenSuffix(n)}`);
       pushBlockLines(n, n.id, false);
       lines.push("");
     }
@@ -287,7 +352,8 @@ export function generateFamilyTreeScript(
     }
   } else {
     for (const n of personNodes) {
-      lines.push(`[${n.data.name || "New Person"}] # id: ${n.id}`);
+      const gen = getGenSuffix(n);
+      lines.push(`[${n.data.name || "New Person"}] # id: ${n.id}${gen ? " " + gen.trim() : ""}`);
     }
   }
   lines.push("");
@@ -329,14 +395,34 @@ export function generateFamilyTreeScript(
         return a.id.localeCompare(b.id);
       });
 
-    const childNames = childNodes.map((n) => n.data.name || "New Person");
+    const childTokens = childNodes.map(
+      (n) => `-> ${n.data.name || "New Person"}${getGenSuffix(n)}`
+    );
 
-    if (childNames.length > 0) {
-      lines.push(`@${union.id}: ${leftName} <=> ${rightName} {`);
-      lines.push(`  children: ${childNames.join(", ")}`);
+    const isRootUnion =
+      !hasParents(edges, leftId) && !hasParents(edges, rightId);
+    let rootGenTag = "";
+    if (isRootUnion) {
+      const leftNode = personById.get(leftId);
+      const rightNode = personById.get(rightId);
+      const gL = leftNode ? getGenLabel(leftNode) : null;
+      const gR = rightNode ? getGenLabel(rightNode) : null;
+      if (gL && gR) {
+        rootGenTag = gL === gR ? ` {Gen ${gL}}` : ` {Gen ${gL} / Gen ${gR}}`;
+      } else if (gL) {
+        rootGenTag = ` {Gen ${gL} / ?}`;
+      } else if (gR) {
+        rootGenTag = ` {Gen ? / Gen ${gR}}`;
+      }
+    }
+
+    const headerLine = `@${union.id}: ${leftName} <=> ${rightName}${rootGenTag}`;
+    if (childTokens.length > 0) {
+      lines.push(`${headerLine} {`);
+      lines.push(`  children: ${childTokens.join(", ")}`);
       lines.push("}");
     } else {
-      lines.push(`@${union.id}: ${leftName} <=> ${rightName}`);
+      lines.push(headerLine);
     }
     lines.push("");
   }
@@ -409,10 +495,25 @@ interface FamilyTreeStore {
   nodeInfoTopLeft: boolean;
   nodeInfoCenter: boolean;
   nodeInfoSize: boolean;
+  nodeInfoSpacing: boolean;
   singleChildAlignment: "left" | "center" | "right";
   childrenRowAlignment3Plus: "left" | "center" | "right";
   persistUnionSelectionOnChildCreate: boolean;
   scriptPanelLayout: "split" | "codeOnly" | "viewOnly";
+  showGenerationAnchors: boolean;
+  showGenInheritIndicator: boolean;
+  generationAnchors: GenerationAnchor[];
+  genLabelMode: "letters" | "numbers" | "both";
+  genInheritFlashByNodeId: Record<string, { token: number; label: string }>;
+  pendingGenChangePrompt: {
+    nodeId: string;
+    nodeName: string;
+    fromAnchorId: string;
+    toAnchorId: string;
+    fromLabel: string;
+    toLabel: string;
+    previousPosition: { x: number; y: number };
+  } | null;
   marqueeToolActive: boolean;
   isSpacePanning: boolean;
   hasUnsavedChanges: boolean;
@@ -431,14 +532,26 @@ interface FamilyTreeStore {
   setNodeInfoTopLeft: (v: boolean) => void;
   setNodeInfoCenter: (v: boolean) => void;
   setNodeInfoSize: (v: boolean) => void;
+  setNodeInfoSpacing: (v: boolean) => void;
   setSingleChildAlignment: (v: "left" | "center" | "right") => void;
   setChildrenRowAlignment3Plus: (v: "left" | "center" | "right") => void;
   setPersistUnionSelectionOnChildCreate: (v: boolean) => void;
   setScriptPanelLayout: (v: "split" | "codeOnly" | "viewOnly") => void;
+  setShowGenerationAnchors: (v: boolean) => void;
+  setShowGenInheritIndicator: (v: boolean) => void;
+  addGenerationAnchor: () => void;
+  updateGenerationAnchorLabel: (anchorId: string, customLabel: string) => void;
+  setGenLabelMode: (v: "letters" | "numbers" | "both") => void;
+  setNodeGenArmed: (nodeId: string) => void;
+  updateNodeGenAnchor: (nodeId: string, genAnchorId: string | null) => void;
+  setGenInheritFlash: (nodeId: string, label: string) => void;
+  clearGenInheritFlash: (nodeId: string) => void;
+  setPendingGenChangePrompt: (p: FamilyTreeStore["pendingGenChangePrompt"]) => void;
+  resolveGenChangePrompt: (choice: "update" | "cancel") => void;
   setMarqueeToolActive: (v: boolean) => void;
   setIsSpacePanning: (v: boolean) => void;
   setAutosaveEnabled: (v: boolean) => void;
-  addPerson: () => string;
+  addPerson: (options?: { genAnchorId?: string }) => string;
   createUnion: (partnerNodeIds: [string, string]) => string | null;
   addChild: (unionNodeId: string) => string | null;
   updateNodeName: (nodeId: string, name: string) => void;
@@ -460,10 +573,15 @@ let prevShowNodeInfoEnabled: boolean | null = null;
 let prevNodeInfoTopLeft: boolean | null = null;
 let prevNodeInfoCenter: boolean | null = null;
 let prevNodeInfoSize: boolean | null = null;
+let prevNodeInfoSpacing: boolean | null = null;
 let prevSingleChildAlignment: "left" | "center" | "right" | null = null;
 let prevChildrenRowAlignment3Plus: "left" | "center" | "right" | null = null;
 let prevPersistUnionSelectionOnChildCreate: boolean | null = null;
 let prevScriptPanelLayout: "split" | "codeOnly" | "viewOnly" | null = null;
+let prevShowGenerationAnchors: boolean | null = null;
+let prevShowGenInheritIndicator: boolean | null = null;
+let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
+let prevGenerationAnchorsJson: string | null = null;
 
 export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   nodes: [],
@@ -479,10 +597,17 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   nodeInfoTopLeft: true,
   nodeInfoCenter: false,
   nodeInfoSize: false,
+  nodeInfoSpacing: false,
   singleChildAlignment: "left",
   childrenRowAlignment3Plus: "center",
   persistUnionSelectionOnChildCreate: true,
   scriptPanelLayout: "split",
+  showGenerationAnchors: true,
+  showGenInheritIndicator: true,
+  generationAnchors: [],
+  genLabelMode: "letters",
+  genInheritFlashByNodeId: {},
+  pendingGenChangePrompt: null,
   marqueeToolActive: false,
   isSpacePanning: false,
   hasUnsavedChanges: false,
@@ -496,18 +621,23 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     set({ showNodeInfoEnabled: v, hasUnsavedChanges: true, lastSaveError: null }),
   setNodeInfoTopLeft: (v) =>
     set((s) => {
-      if (!v && !s.nodeInfoCenter && !s.nodeInfoSize) return {};
+      if (!v && !s.nodeInfoCenter && !s.nodeInfoSize && !s.nodeInfoSpacing) return {};
       return { nodeInfoTopLeft: v, hasUnsavedChanges: true, lastSaveError: null };
     }),
   setNodeInfoCenter: (v) =>
     set((s) => {
-      if (!v && !s.nodeInfoTopLeft && !s.nodeInfoSize) return {};
+      if (!v && !s.nodeInfoTopLeft && !s.nodeInfoSize && !s.nodeInfoSpacing) return {};
       return { nodeInfoCenter: v, hasUnsavedChanges: true, lastSaveError: null };
     }),
   setNodeInfoSize: (v) =>
     set((s) => {
-      if (!v && !s.nodeInfoTopLeft && !s.nodeInfoCenter) return {};
+      if (!v && !s.nodeInfoTopLeft && !s.nodeInfoCenter && !s.nodeInfoSpacing) return {};
       return { nodeInfoSize: v, hasUnsavedChanges: true, lastSaveError: null };
+    }),
+  setNodeInfoSpacing: (v) =>
+    set((s) => {
+      if (!v && !s.nodeInfoTopLeft && !s.nodeInfoCenter && !s.nodeInfoSize) return {};
+      return { nodeInfoSpacing: v, hasUnsavedChanges: true, lastSaveError: null };
     }),
   setSingleChildAlignment: (v) => set({ singleChildAlignment: v, hasUnsavedChanges: true, lastSaveError: null }),
   setChildrenRowAlignment3Plus: (v) =>
@@ -516,6 +646,106 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     set({ persistUnionSelectionOnChildCreate: v, hasUnsavedChanges: true, lastSaveError: null }),
   setScriptPanelLayout: (v) =>
     set({ scriptPanelLayout: v, hasUnsavedChanges: true, lastSaveError: null }),
+  setShowGenerationAnchors: (v) =>
+    set({ showGenerationAnchors: v, hasUnsavedChanges: true, lastSaveError: null }),
+  setShowGenInheritIndicator: (v) =>
+    set({ showGenInheritIndicator: v, hasUnsavedChanges: true, lastSaveError: null }),
+  addGenerationAnchor: () =>
+    set((s) => {
+      const DEFAULT_HEIGHT = 224;
+      const GAP = 32;
+      let yTop: number;
+      let index: number;
+      if (s.generationAnchors.length === 0) {
+        yTop = 80;
+        index = 0;
+      } else {
+        const last = s.generationAnchors[s.generationAnchors.length - 1]!;
+        yTop = last.yTop + last.height + GAP;
+        index = last.index + 1;
+      }
+      const id = generateId();
+      const anchor: GenerationAnchor = { id, index, yTop, height: DEFAULT_HEIGHT };
+      return {
+        generationAnchors: [...s.generationAnchors, anchor],
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    }),
+  updateGenerationAnchorLabel: (anchorId, customLabel) =>
+    set((s) => ({
+      generationAnchors: s.generationAnchors.map((a) =>
+        a.id === anchorId ? { ...a, customLabel: customLabel.trim() || undefined } : a
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setGenLabelMode: (v) =>
+    set({ genLabelMode: v, hasUnsavedChanges: true, lastSaveError: null }),
+  setNodeGenArmed: (nodeId) =>
+    set((s) => {
+      const node = s.nodes.find((n) => n.id === nodeId && n.data.kind === "person");
+      if (!node || (node.data as PersonNodeData).isGenArmed === true) return {};
+      return {
+        nodes: s.nodes.map((n) =>
+          n.id === nodeId && n.data.kind === "person"
+            ? { ...n, data: { ...n.data, isGenArmed: true } }
+            : n
+        ),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    }),
+  updateNodeGenAnchor: (nodeId, genAnchorId) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === nodeId && n.data.kind === "person"
+          ? { ...n, data: { ...n.data, genAnchorId } }
+          : n
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setGenInheritFlash: (nodeId, label) => {
+    if (!get().showGenInheritIndicator) return;
+    const token = Date.now();
+    set((s) => ({ genInheritFlashByNodeId: { ...s.genInheritFlashByNodeId, [nodeId]: { token, label } } }));
+    setTimeout(() => {
+      get().clearGenInheritFlash(nodeId);
+    }, 900);
+  },
+  clearGenInheritFlash: (nodeId) =>
+    set((s) => {
+      const next = { ...s.genInheritFlashByNodeId };
+      delete next[nodeId];
+      return { genInheritFlashByNodeId: next };
+    }),
+  setPendingGenChangePrompt: (p) => set({ pendingGenChangePrompt: p }),
+  resolveGenChangePrompt: (choice) =>
+    set((s) => {
+      const p = s.pendingGenChangePrompt;
+      if (!p) return {};
+      if (choice === "update") {
+        return {
+          pendingGenChangePrompt: null,
+          nodes: s.nodes.map((n) =>
+            n.id === p.nodeId && n.data.kind === "person"
+              ? { ...n, data: { ...n.data, genAnchorId: p.toAnchorId } }
+              : n
+          ),
+          hasUnsavedChanges: true,
+          lastSaveError: null,
+        };
+      }
+      return {
+        pendingGenChangePrompt: null,
+        nodes: s.nodes.map((n) =>
+          n.id === p.nodeId ? { ...n, position: p.previousPosition } : n
+        ),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    }),
   setMarqueeToolActive: (v) => set({ marqueeToolActive: v }),
   setIsSpacePanning: (v) => set({ isSpacePanning: v }),
   setAutosaveEnabled: (v) => {
@@ -552,10 +782,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       return { selectedNodeIds: ids, primarySelectedNodeId: ids[0] ?? null };
     }),
 
-  addPerson: () => {
+  addPerson: (options) => {
     const id = generateId();
     const state = get();
-    const { nodes, anchorNodeId, viewportBounds, snapToGrid } = state;
+    const { nodes, anchorNodeId, viewportBounds, snapToGrid, generationAnchors, genLabelMode, showGenInheritIndicator } = state;
+    const genAnchorId = options?.genAnchorId;
+    const anchor = genAnchorId ? generationAnchors.find((a) => a.id === genAnchorId) : null;
 
     const tryPosition = (x: number, y: number) =>
       snapToGrid ? snapPosition(x, y, true) : { x, y };
@@ -573,17 +805,43 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       return tryPosition(baseX + spacingX, baseY);
     };
 
+    const findPositionInAnchorBand = (anchor: GenerationAnchor) => {
+      const baselineY = anchor.yTop + GEN_BASELINE_OFFSET;
+      let baseX: number;
+      if (viewportBounds) {
+        baseX = (viewportBounds.minX + viewportBounds.maxX) / 2 - PLACEMENT_NODE_WIDTH / 2;
+      } else {
+        baseX = 100;
+      }
+      const cascadeStep = 16;
+      const maxCascade = 8;
+      for (let k = 0; k < maxCascade; k++) {
+        const candX = baseX + k * cascadeStep;
+        const candY = baselineY + k * cascadeStep;
+        const pos = tryPosition(candX, candY);
+        if (isSpotFree(pos.x, pos.y, nodes, [])) return pos;
+      }
+      return tryPosition(baseX, baselineY);
+    };
+
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
     let position: { x: number; y: number };
-    if (anchorNodeId) {
-      const anchor = nodes.find((n) => n.id === anchorNodeId);
-      if (!anchor) {
+    let data: PersonNodeData;
+
+    const nextNum = nextPersonNumber(nodes);
+    if (anchor) {
+      position = findPositionInAnchorBand(anchor);
+      data = { kind: "person", name: `Person ${nextNum}`, notes: "", genAnchorId: anchor.id, isGenArmed: true };
+    } else if (anchorNodeId) {
+      const anchorNode = nodes.find((n) => n.id === anchorNodeId);
+      if (!anchorNode) {
         const maxY = nodes.reduce((max, n) => Math.max(max, n.position.y), 0);
         position = tryPosition(Math.random() * 200, maxY + 80);
       } else {
-        position = findFreeSlot(anchor.position.x, anchor.position.y, [anchorNodeId]);
+        position = findFreeSlot(anchorNode.position.x, anchorNode.position.y, [anchorNodeId]);
       }
+      data = { kind: "person", name: `Person ${nextNum}`, notes: "", isGenArmed: false };
     } else if (viewportBounds) {
       const marginX = 120;
       const marginY = 100;
@@ -603,19 +861,20 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         if (!isNearExisting(candidateX, candidateY, nodes)) break;
       }
       position = tryPosition(candidateX, candidateY);
+      data = { kind: "person", name: `Person ${nextNum}`, notes: "", isGenArmed: false };
     } else {
       const maxY = nodes.reduce((max, n) => Math.max(max, n.position.y), 0);
       position = tryPosition(Math.random() * 200, maxY + 80);
+      data = { kind: "person", name: `Person ${nextNum}`, notes: "", isGenArmed: false };
     }
 
-    const nextNum = nextPersonNumber(nodes);
-    const newNode: Node<PersonNodeData> = {
-      id,
-      type: "person",
-      position,
-      data: { kind: "person", name: `Person ${nextNum}`, notes: "" },
-    };
+    const newNode: Node<PersonNodeData> = { id, type: "person", position, data };
     set((s) => ({ nodes: [...s.nodes, newNode], hasUnsavedChanges: true, lastSaveError: null }));
+
+    if (anchor && showGenInheritIndicator) {
+      const label = formatGenerationAnchorLabel(anchor, genLabelMode);
+      get().setGenInheritFlash(id, label);
+    }
     return id;
   },
 
@@ -688,7 +947,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         x: unionNode.position.x,
         y: unionNode.position.y + 160,
       },
-      data: { kind: "person", name: `Person ${nextNum}`, notes: "" },
+      data: { kind: "person", name: `Person ${nextNum}`, notes: "", isGenArmed: false },
     };
 
     const childEdge: Edge = {
@@ -845,7 +1104,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       nodes,
       edges,
       anchorNodeId: payload?.anchorNodeId ?? null,
+      generationAnchors: (payload as { generationAnchors?: GenerationAnchor[] })?.generationAnchors ?? [],
       snapToGrid: payload?.ui?.snapToGrid ?? true,
+      genLabelMode:
+        (payload?.ui?.genLabelMode === "numbers" || payload?.ui?.genLabelMode === "both"
+          ? payload.ui.genLabelMode
+          : "letters"),
       showNodeInfoEnabled:
         payload?.ui?.showNodeInfoEnabled ??
         payload?.ui?.showCoordinatesEnabled ??
@@ -856,6 +1120,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       nodeInfoCenter:
         payload?.ui?.nodeInfoCenter ?? payload?.ui?.coordModeCenter ?? false,
       nodeInfoSize: payload?.ui?.nodeInfoSize ?? false,
+      nodeInfoSpacing: payload?.ui?.nodeInfoSpacing ?? false,
       singleChildAlignment: savedAlignment === "center" || savedAlignment === "right" ? savedAlignment : "left",
       childrenRowAlignment3Plus:
         (payload?.ui?.childrenRowAlignment3Plus === "left" || payload?.ui?.childrenRowAlignment3Plus === "right"
@@ -866,12 +1131,16 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         (payload?.ui?.scriptPanelLayout === "codeOnly" || payload?.ui?.scriptPanelLayout === "viewOnly"
           ? payload.ui.scriptPanelLayout
           : "split"),
+      showGenerationAnchors: payload?.ui?.showGenerationAnchors ?? true,
+      showGenInheritIndicator: payload?.ui?.showGenInheritIndicator ?? true,
       selectedNodeIds: [],
       primarySelectedNodeId: null,
       nodeSizesById: {},
       viewportBounds: null,
       hasUnsavedChanges: false,
       lastSaveError: null,
+      genInheritFlashByNodeId: {},
+      pendingGenChangePrompt: null,
     });
     return { hadData };
   },
@@ -888,12 +1157,17 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         nodes: s.nodes,
         edges: s.edges,
         anchorNodeId: s.anchorNodeId,
+        generationAnchors: s.generationAnchors,
         ui: {
+          genLabelMode: s.genLabelMode,
+          showGenerationAnchors: s.showGenerationAnchors,
+          showGenInheritIndicator: s.showGenInheritIndicator,
           snapToGrid: s.snapToGrid,
           showNodeInfoEnabled: s.showNodeInfoEnabled,
           nodeInfoTopLeft: s.nodeInfoTopLeft,
           nodeInfoCenter: s.nodeInfoCenter,
           nodeInfoSize: s.nodeInfoSize,
+          nodeInfoSpacing: s.nodeInfoSpacing,
           singleChildAlignment: s.singleChildAlignment,
           childrenRowAlignment3Plus: s.childrenRowAlignment3Plus,
           persistUnionSelectionOnChildCreate: s.persistUnionSelectionOnChildCreate,
@@ -926,11 +1200,14 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     set({
       nodes: [],
       edges: [],
+      generationAnchors: [],
       selectedNodeIds: [],
       primarySelectedNodeId: null,
       anchorNodeId: null,
       nodeSizesById: {},
       viewportBounds: null,
+      genInheritFlashByNodeId: {},
+      pendingGenChangePrompt: null,
     });
     if (pid) {
       const driver = getStorageDriver();
@@ -940,12 +1217,17 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         nodes: [],
         edges: [],
         anchorNodeId: null,
+        generationAnchors: [],
         ui: {
+          genLabelMode: "letters",
+          showGenerationAnchors: true,
+          showGenInheritIndicator: true,
           snapToGrid: true,
           showNodeInfoEnabled: false,
           nodeInfoTopLeft: true,
           nodeInfoCenter: false,
           nodeInfoSize: false,
+          nodeInfoSpacing: false,
           singleChildAlignment: "left",
           childrenRowAlignment3Plus: "center",
           persistUnionSelectionOnChildCreate: true,
@@ -965,20 +1247,30 @@ useFamilyTreeStore.subscribe((state) => {
     state.nodeInfoTopLeft !== prevNodeInfoTopLeft ||
     state.nodeInfoCenter !== prevNodeInfoCenter ||
     state.nodeInfoSize !== prevNodeInfoSize ||
+    state.nodeInfoSpacing !== prevNodeInfoSpacing ||
     state.singleChildAlignment !== prevSingleChildAlignment ||
     state.childrenRowAlignment3Plus !== prevChildrenRowAlignment3Plus ||
     state.persistUnionSelectionOnChildCreate !== prevPersistUnionSelectionOnChildCreate ||
-    state.scriptPanelLayout !== prevScriptPanelLayout;
+    state.scriptPanelLayout !== prevScriptPanelLayout ||
+    state.showGenerationAnchors !== prevShowGenerationAnchors ||
+    state.showGenInheritIndicator !== prevShowGenInheritIndicator ||
+    state.genLabelMode !== prevGenLabelMode ||
+    JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson;
   prevNodes = state.nodes;
   prevEdges = state.edges;
   prevShowNodeInfoEnabled = state.showNodeInfoEnabled;
   prevNodeInfoTopLeft = state.nodeInfoTopLeft;
   prevNodeInfoCenter = state.nodeInfoCenter;
   prevNodeInfoSize = state.nodeInfoSize;
+  prevNodeInfoSpacing = state.nodeInfoSpacing;
   prevSingleChildAlignment = state.singleChildAlignment;
   prevChildrenRowAlignment3Plus = state.childrenRowAlignment3Plus;
   prevPersistUnionSelectionOnChildCreate = state.persistUnionSelectionOnChildCreate;
   prevScriptPanelLayout = state.scriptPanelLayout;
+  prevShowGenerationAnchors = state.showGenerationAnchors;
+  prevShowGenInheritIndicator = state.showGenInheritIndicator;
+  prevGenLabelMode = state.genLabelMode;
+  prevGenerationAnchorsJson = JSON.stringify(state.generationAnchors);
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&
     state.activeProjectId &&

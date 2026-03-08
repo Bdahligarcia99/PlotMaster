@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -21,9 +21,15 @@ import {
   DEFAULT_PERSON_H,
   DEFAULT_UNION_W,
   DEFAULT_UNION_H,
+  getAnchorAtY,
+  formatGenerationAnchorLabel,
 } from "../../store/familyTreeStore";
 import PersonNode from "./PersonNode";
 import UnionNode from "./UnionNode";
+import GenerationAnchorsOverlay from "./GenerationAnchorsOverlay";
+import GenerationRuler from "./GenerationRuler";
+import NodeSpacingOverlay from "./NodeSpacingOverlay";
+import Modal from "../ui/Modal";
 
 function ViewportBoundsSync() {
   const setViewportBounds = useFamilyTreeStore((s) => s.setViewportBounds);
@@ -283,8 +289,86 @@ export default function FamilyTreeCanvas({
   marqueeToolActive = false,
   isSpacePanning = false,
 }: FamilyTreeCanvasProps = {}) {
-  const { nodes, edges, setNodes, setEdges, setSelectedNodeIds, selectedNodeIds, snapToGrid } =
-    useFamilyTreeStore();
+  const {
+    nodes,
+    edges,
+    setNodes,
+    setEdges,
+    setSelectedNodeIds,
+    selectedNodeIds,
+    snapToGrid,
+    nodeSizesById,
+    generationAnchors,
+    genLabelMode,
+    updateNodeGenAnchor,
+    setGenInheritFlash,
+    setPendingGenChangePrompt,
+    setNodeGenArmed,
+  } = useFamilyTreeStore();
+
+  const dragStartRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  const onNodeDragStart = useCallback(
+    (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
+      dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
+      if (node.data?.kind === "person" && node.data?.isGenArmed === false) setNodeGenArmed(node.id);
+    },
+    [setNodeGenArmed]
+  );
+
+  const onNodeDragStop = useCallback(
+    (
+      _: React.MouseEvent,
+      node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean; genAnchorId?: string | null; name?: string } }
+    ) => {
+      if (node.data?.kind !== "person") return;
+      const prevPos = dragStartRef.current.get(node.id);
+      dragStartRef.current.delete(node.id);
+      if (!prevPos) return;
+
+      const storeNode = useFamilyTreeStore.getState().nodes.find((n) => n.id === node.id);
+      const rawArmed = (storeNode?.data ?? node.data) as { isGenArmed?: boolean };
+      const isGenArmed = rawArmed.isGenArmed ?? true;
+      if (!isGenArmed) return;
+
+      const height = nodeSizesById[node.id]?.height ?? DEFAULT_PERSON_H;
+      const centerY = node.position.y + height / 2;
+      const targetAnchor = getAnchorAtY(generationAnchors, centerY);
+      const currentGen = (node.data as { genAnchorId?: string | null }).genAnchorId ?? null;
+      const nodeName = (node.data as { name?: string }).name || "New Person";
+
+      if (targetAnchor) {
+        if (!currentGen) {
+          updateNodeGenAnchor(node.id, targetAnchor.id);
+          const inheritLabel = formatGenerationAnchorLabel(targetAnchor, genLabelMode);
+          setGenInheritFlash(node.id, inheritLabel);
+        } else if (currentGen !== targetAnchor.id) {
+          const fromAnchor = generationAnchors.find((a) => a.id === currentGen);
+          const fromLabel = fromAnchor
+            ? formatGenerationAnchorLabel(fromAnchor, genLabelMode)
+            : "?";
+          const toLabel = formatGenerationAnchorLabel(targetAnchor, genLabelMode);
+          setPendingGenChangePrompt({
+            nodeId: node.id,
+            nodeName,
+            fromAnchorId: currentGen,
+            toAnchorId: targetAnchor.id,
+            fromLabel,
+            toLabel,
+            previousPosition: prevPos,
+          });
+        }
+      }
+    },
+    [
+      generationAnchors,
+      genLabelMode,
+      nodeSizesById,
+      updateNodeGenAnchor,
+      setGenInheritFlash,
+      setPendingGenChangePrompt,
+    ]
+  );
 
   const nodesWithSelection = nodes.map((n) => ({
     ...n,
@@ -307,6 +391,7 @@ export default function FamilyTreeCanvas({
   );
   const onNodeClick: NodeMouseHandler = useCallback(
     (evt, node) => {
+      if (node.data?.kind === "person" && (node.data as { isGenArmed?: boolean }).isGenArmed === false) setNodeGenArmed(node.id);
       if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
         evt.preventDefault();
         evt.stopPropagation();
@@ -320,11 +405,14 @@ export default function FamilyTreeCanvas({
         setSelectedNodeIds([node.id]);
       }
     },
-    [setSelectedNodeIds]
+    [setSelectedNodeIds, setNodeGenArmed]
   );
   const onPaneClick = useCallback(() => setSelectedNodeIds([]), [setSelectedNodeIds]);
 
   const showSpacePanCursor = marqueeToolActive && isSpacePanning;
+
+  const pendingGenChangePrompt = useFamilyTreeStore((s) => s.pendingGenChangePrompt);
+  const resolveGenChangePrompt = useFamilyTreeStore((s) => s.resolveGenChangePrompt);
 
   return (
     <div
@@ -349,6 +437,8 @@ export default function FamilyTreeCanvas({
         onSelectionChange={onSelectionChange}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
         snapToGrid={snapToGrid}
         snapGrid={[FAMILY_TREE_GRID_SIZE, FAMILY_TREE_GRID_SIZE]}
@@ -376,8 +466,41 @@ export default function FamilyTreeCanvas({
           className="!bg-dark-surface !border-dark-accent !rounded-lg [&>button]:!bg-dark-accent [&>button]:!text-dark-text [&>button]:!border-dark-accent [&>button:hover]:!bg-dark-bg"
         />
         <ViewportBoundsSync />
+        <GenerationAnchorsOverlay />
+        <GenerationRuler />
+        <NodeSpacingOverlay />
         {marqueeToolActive && <MarqueeOverlay isSpacePanning={isSpacePanning} />}
       </ReactFlow>
+      <Modal
+        isOpen={!!pendingGenChangePrompt}
+        onClose={() => resolveGenChangePrompt("cancel")}
+        title="Update Generation?"
+      >
+        {pendingGenChangePrompt && (
+          <>
+            <p className="text-dark-text mb-4">
+              Move {pendingGenChangePrompt.nodeName} from Gen {pendingGenChangePrompt.fromLabel} → Gen{" "}
+              {pendingGenChangePrompt.toLabel}?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => resolveGenChangePrompt("cancel")}
+                className="px-3 py-1.5 text-sm rounded border border-dark-accent/50 hover:bg-dark-accent/30 text-dark-text"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => resolveGenChangePrompt("update")}
+                className="px-3 py-1.5 text-sm rounded bg-blue-500 hover:bg-blue-600 text-white"
+              >
+                Update Generation
+              </button>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }

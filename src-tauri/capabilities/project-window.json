@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "project-window",
+  "description": "Permissions for project windows opened from the intro",
+  "windows": ["project-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title",
+    "core:webview:allow-create-webview-window"
+  ]
+}

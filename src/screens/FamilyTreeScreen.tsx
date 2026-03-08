@@ -7,6 +7,7 @@ const SCRIPT_MIN_H = 160;
 const SCRIPT_MAX_H = 520;
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
+import { useWindowTitle } from "../hooks/useWindowTitle";
 import FamilyTreeCanvas from "../components/family-tree/FamilyTreeCanvas";
 import FamilyTreeToolbar from "../components/family-tree/FamilyTreeToolbar";
 import FamilyTreeSaveControls from "../components/family-tree/FamilyTreeSaveControls";
@@ -14,6 +15,8 @@ import FamilyTreeLeftSidebar from "../components/family-tree/FamilyTreeLeftSideb
 import FamilyTreeScriptPane from "../components/family-tree/FamilyTreeScriptPane";
 import FamilyTreeInspector from "../components/family-tree/FamilyTreeInspector";
 import { useFamilyTreeStore } from "../store/familyTreeStore";
+import { useAppStore } from "../store/appStore";
+import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
 
 export default function FamilyTreeScreen() {
@@ -32,7 +35,10 @@ export default function FamilyTreeScreen() {
 
   const loadTree = useFamilyTreeStore((s) => s.loadTree);
   const marqueeToolActive = useFamilyTreeStore((s) => s.marqueeToolActive);
+  const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
   const isSpacePanning = useFamilyTreeStore((s) => s.isSpacePanning);
+
+  useWindowTitle(projectName ? `${projectName} - PlotMaster` : "PlotMaster");
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -169,13 +175,20 @@ export default function FamilyTreeScreen() {
         left={
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate("/")}
+              onClick={() => {
+                if (isTauri()) {
+                  openOrFocusIntroWindow();
+                } else {
+                  setIntroDialogOpen(true);
+                }
+              }}
               className="flex items-center gap-2 px-3 py-1.5 text-dark-muted hover:text-dark-text transition-colors"
+              title="Open projects"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
               </svg>
-              Home
+              Projects
             </button>
             <div className="h-4 w-px bg-dark-accent" />
             {isEditingName ? (

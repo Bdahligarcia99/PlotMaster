@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { computeGenerations, formatGeneration, isChildEdge } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, isChildEdge } from "../../store/familyTreeStore";
 
 export interface FamilyUnit {
   unionId: string;
@@ -70,8 +70,11 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
   const edges = useFamilyTreeStore((s) => s.edges);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
+  const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
 
   const isSelected = (id: string) => selectedNodeIds.includes(id);
 
@@ -135,10 +138,18 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
     return order;
   }, [familyUnits, unlinkedPeople, collapsedUnits]);
 
-  const generationByPersonId = useMemo(
-    () => computeGenerations(nodes, edges),
-    [nodes, edges]
-  );
+  const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
+  const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
+
+  const getPersonGenLabel = (personId: string) => {
+    const node = nodes.find((n) => n.id === personId && (n.data as { kind?: string }).kind === "person");
+    const genAnchorId = (node?.data as PersonNodeData)?.genAnchorId;
+    if (!genAnchorId) return null;
+    const anchor = generationAnchors.find((a) => a.id === genAnchorId);
+    if (!anchor) return null;
+    const base = formatGenerationAnchorLabel(anchor, genLabelMode);
+    return anchor.customLabel ? `${base} — ${anchor.customLabel}` : base;
+  };
 
   const toggleUnit = (unionId: string) => {
     setCollapsedUnits((prev) => {
@@ -178,6 +189,23 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
       setLastEntityClickedId(id);
     }
     if (onSelectNode) onSelectNode();
+  };
+
+  const startEditingPerson = (e: React.MouseEvent, personId: string, currentName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEditingPersonId(personId);
+    setDraftName(currentName);
+  };
+
+  const savePersonName = (personId: string) => {
+    const trimmed = draftName.trim() || "New Person";
+    updateNodeName(personId, trimmed);
+    setEditingPersonId(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingPersonId(null);
   };
 
   return (
@@ -244,38 +272,96 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                             <p className="text-dark-muted text-[10px] uppercase mt-1 px-1">
                               Parents
                             </p>
-                            <button
-                              type="button"
-                              onClick={(e) => handleEntityClick(e, leftId)}
-                              title={leftName}
-                              className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${
-                                isSelected(leftId)
-                                  ? "bg-blue-500/20 ring-1 ring-blue-500/50"
-                                  : "hover:bg-dark-accent/30"
-                              }`}
-                            >
-                              <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                              <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{leftName}</span>
-                              <span className="text-dark-muted text-[10px] flex-shrink-0">
-                                {formatGeneration(generationByPersonId[leftId])}
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleEntityClick(e, rightId)}
-                              title={rightName}
-                              className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${
-                                isSelected(rightId)
-                                  ? "bg-blue-500/20 ring-1 ring-blue-500/50"
-                                  : "hover:bg-dark-accent/30"
-                              }`}
-                            >
-                              <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                              <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{rightName}</span>
-                              <span className="text-dark-muted text-[10px] flex-shrink-0">
-                                {formatGeneration(generationByPersonId[rightId])}
-                              </span>
-                            </button>
+                            {editingPersonId === leftId ? (
+                              <div
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${
+                                  isSelected(leftId) ? "bg-blue-500/20 ring-1 ring-blue-500/50" : "bg-dark-accent/30"
+                                }`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
+                                <input
+                                  type="text"
+                                  value={draftName}
+                                  onChange={(e) => setDraftName(e.target.value)}
+                                  onBlur={() => savePersonName(leftId)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") savePersonName(leftId);
+                                    if (e.key === "Escape") cancelEditing();
+                                  }}
+                                  autoFocus
+                                  className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                                {getPersonGenLabel(leftId) && (
+                                  <span className="text-dark-muted text-[10px] flex-shrink-0">{getPersonGenLabel(leftId)}</span>
+                                )}
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => handleEntityClick(e, leftId)}
+                                onDoubleClick={(e) => startEditingPerson(e, leftId, leftName)}
+                                title={leftName}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${
+                                  isSelected(leftId)
+                                    ? "bg-blue-500/20 ring-1 ring-blue-500/50"
+                                    : "hover:bg-dark-accent/30"
+                                }`}
+                              >
+                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
+                                <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{leftName}</span>
+                                {getPersonGenLabel(leftId) && (
+                                  <span className="text-dark-muted text-[10px] flex-shrink-0">
+                                    {getPersonGenLabel(leftId)}
+                                  </span>
+                                )}
+                              </button>
+                            )}
+                            {editingPersonId === rightId ? (
+                              <div
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${
+                                  isSelected(rightId) ? "bg-blue-500/20 ring-1 ring-blue-500/50" : "bg-dark-accent/30"
+                                }`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
+                                <input
+                                  type="text"
+                                  value={draftName}
+                                  onChange={(e) => setDraftName(e.target.value)}
+                                  onBlur={() => savePersonName(rightId)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") savePersonName(rightId);
+                                    if (e.key === "Escape") cancelEditing();
+                                  }}
+                                  autoFocus
+                                  className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                                {getPersonGenLabel(rightId) && (
+                                  <span className="text-dark-muted text-[10px] flex-shrink-0">{getPersonGenLabel(rightId)}</span>
+                                )}
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => handleEntityClick(e, rightId)}
+                                onDoubleClick={(e) => startEditingPerson(e, rightId, rightName)}
+                                title={rightName}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${
+                                  isSelected(rightId)
+                                    ? "bg-blue-500/20 ring-1 ring-blue-500/50"
+                                    : "hover:bg-dark-accent/30"
+                                }`}
+                              >
+                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
+                                <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{rightName}</span>
+                                {getPersonGenLabel(rightId) && (
+                                  <span className="text-dark-muted text-[10px] flex-shrink-0">
+                                    {getPersonGenLabel(rightId)}
+                                  </span>
+                                )}
+                              </button>
+                            )}
                             {unit.children.length > 0 && (
                               <>
                                 <p className="text-dark-muted text-[10px] uppercase mt-2 px-1">
@@ -284,23 +370,53 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                                 {unit.children.map((childId) => {
                                   const name = getPersonName(nodes, childId);
                                   return (
-                                    <button
-                                      key={childId}
-                                      type="button"
-                                      onClick={(e) => handleEntityClick(e, childId)}
-                                      title={name}
-                                      className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left pl-6 min-w-0 ${
-                                        isSelected(childId)
-                                          ? "bg-blue-500/20 ring-1 ring-blue-500/50"
-                                          : "hover:bg-dark-accent/30"
-                                      }`}
-                                    >
-                                      <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
-                                      <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{name}</span>
-                                      <span className="text-dark-muted text-[10px] flex-shrink-0">
-                                        {formatGeneration(generationByPersonId[childId])}
-                                      </span>
-                                    </button>
+                                    <div key={childId}>
+                                      {editingPersonId === childId ? (
+                                        <div
+                                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg pl-6 min-w-0 ${
+                                            isSelected(childId) ? "bg-blue-500/20 ring-1 ring-blue-500/50" : "bg-dark-accent/30"
+                                          }`}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
+                                          <input
+                                            type="text"
+                                            value={draftName}
+                                            onChange={(e) => setDraftName(e.target.value)}
+                                            onBlur={() => savePersonName(childId)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") savePersonName(childId);
+                                              if (e.key === "Escape") cancelEditing();
+                                            }}
+                                            autoFocus
+                                            className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                          />
+                                          {getPersonGenLabel(childId) && (
+                                            <span className="text-dark-muted text-[10px] flex-shrink-0">{getPersonGenLabel(childId)}</span>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => handleEntityClick(e, childId)}
+                                          onDoubleClick={(e) => startEditingPerson(e, childId, name)}
+                                          title={name}
+                                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left pl-6 min-w-0 ${
+                                            isSelected(childId)
+                                              ? "bg-blue-500/20 ring-1 ring-blue-500/50"
+                                              : "hover:bg-dark-accent/30"
+                                          }`}
+                                        >
+                                          <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
+                                          <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{name}</span>
+                                          {getPersonGenLabel(childId) && (
+                                            <span className="text-dark-muted text-[10px] flex-shrink-0">
+                                              {getPersonGenLabel(childId)}
+                                            </span>
+                                          )}
+                                        </button>
+                                      )}
+                                    </div>
                                   );
                                 })}
                               </>
@@ -323,23 +439,55 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                   {unlinkedPeople.map((node) => {
                     const name = node.data.name || "New Person";
                     return (
-                      <button
-                        key={node.id}
-                        type="button"
-                        onClick={(e) => handleEntityClick(e, node.id)}
-                        title={name}
-                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border transition-colors text-left cursor-pointer min-w-0 ${
-                          isSelected(node.id)
-                            ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50"
-                            : "border-dark-accent/30 hover:bg-dark-accent/30"
-                        }`}
-                      >
-                        <div className="w-6 h-6 rounded-full bg-dark-accent flex-shrink-0" />
-                        <span className="text-dark-text text-sm flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
-                        <span className="text-dark-muted text-[10px] px-2 py-0.5 rounded-full bg-dark-accent/50 border border-dark-accent/50 flex-shrink-0">
-                          {formatGeneration(generationByPersonId[node.id])}
-                        </span>
-                      </button>
+                      <div key={node.id}>
+                        {editingPersonId === node.id ? (
+                          <div
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border min-w-0 ${
+                              isSelected(node.id) ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50" : "border-dark-accent/30 bg-dark-accent/30"
+                            }`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="w-6 h-6 rounded-full bg-dark-accent flex-shrink-0" />
+                            <input
+                              type="text"
+                              value={draftName}
+                              onChange={(e) => setDraftName(e.target.value)}
+                              onBlur={() => savePersonName(node.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") savePersonName(node.id);
+                                if (e.key === "Escape") cancelEditing();
+                              }}
+                              autoFocus
+                              className="flex-1 min-w-0 px-2 py-1 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            {getPersonGenLabel(node.id) && (
+                              <span className="text-dark-muted text-[10px] px-2 py-0.5 rounded-full bg-dark-accent/50 border border-dark-accent/50 flex-shrink-0">
+                                {getPersonGenLabel(node.id)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => handleEntityClick(e, node.id)}
+                            onDoubleClick={(e) => startEditingPerson(e, node.id, name)}
+                            title={name}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border transition-colors text-left cursor-pointer min-w-0 ${
+                              isSelected(node.id)
+                                ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50"
+                                : "border-dark-accent/30 hover:bg-dark-accent/30"
+                            }`}
+                          >
+                            <div className="w-6 h-6 rounded-full bg-dark-accent flex-shrink-0" />
+                            <span className="text-dark-text text-sm flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
+                            {getPersonGenLabel(node.id) && (
+                              <span className="text-dark-muted text-[10px] px-2 py-0.5 rounded-full bg-dark-accent/50 border border-dark-accent/50 flex-shrink-0">
+                                {getPersonGenLabel(node.id)}
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

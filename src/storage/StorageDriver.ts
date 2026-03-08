@@ -21,14 +21,31 @@ export interface FamilyTreeUIFlags {
   snapToGrid?: boolean;
   showCoordinates?: boolean;
   showCoordinatesEnabled?: boolean;
+  /** @deprecated Use nodeInfoTopLeft */
+  coordModeTopLeft?: boolean;
+  /** @deprecated Use nodeInfoCenter */
+  coordModeCenter?: boolean;
   showNodeInfoEnabled?: boolean;
   nodeInfoTopLeft?: boolean;
   nodeInfoCenter?: boolean;
   nodeInfoSize?: boolean;
+  nodeInfoSpacing?: boolean;
   singleChildAlignment?: "left" | "center" | "right";
   childrenRowAlignment3Plus?: "left" | "center" | "right";
   persistUnionSelectionOnChildCreate?: boolean;
   scriptPanelLayout?: "split" | "codeOnly" | "viewOnly";
+  genLabelMode?: "letters" | "numbers" | "both";
+  showGenerationAnchors?: boolean;
+  showGenInheritIndicator?: boolean;
+}
+
+/** Generation anchor for family tree. */
+export interface GenerationAnchor {
+  id: string;
+  index: number;
+  yTop: number;
+  height: number;
+  customLabel?: string;
 }
 
 /** Project payload (family tree). */
@@ -38,6 +55,7 @@ export interface ProjectPayload {
   nodes: Node<unknown>[];
   edges: Edge[];
   anchorNodeId: string | null;
+  generationAnchors?: GenerationAnchor[];
   ui?: FamilyTreeUIFlags;
 }
 

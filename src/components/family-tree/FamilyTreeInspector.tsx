@@ -1,8 +1,7 @@
-import { useMemo } from "react";
 import type { Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { computeGenerations, formatGeneration, isChildEdge } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, isChildEdge } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
 
 function ParentsSection({
@@ -179,11 +178,10 @@ export default function FamilyTreeInspector() {
     updateNodeName,
     updateNodeNotes,
     swapUnionPartners,
+    generationAnchors,
+    genLabelMode,
+    updateNodeGenAnchor,
   } = useFamilyTreeStore();
-  const generationByPersonId = useMemo(
-    () => computeGenerations(nodes, edges),
-    [nodes, edges]
-  );
 
   const selectedNode = primarySelectedNodeId
     ? nodes.find((n) => n.id === primarySelectedNodeId)
@@ -241,10 +239,20 @@ export default function FamilyTreeInspector() {
             )}
           </div>
           <div className="mb-4">
-            <span className="text-dark-muted text-sm">Generation: </span>
-            <span className="text-dark-text text-sm">
-              {formatGeneration(generationByPersonId[selectedNode.id])}
-            </span>
+            <label className="block text-dark-muted text-sm mb-2">Generation anchor</label>
+            <select
+              value={(data as PersonNodeData).genAnchorId ?? ""}
+              onChange={(e) => updateNodeGenAnchor(selectedNode.id, e.target.value || null)}
+              className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="">None</option>
+              {generationAnchors.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {formatGenerationAnchorLabel(a, genLabelMode)}
+                  {a.customLabel ? ` — ${a.customLabel}` : ""}
+                </option>
+              ))}
+            </select>
           </div>
           <ParentsSection
             personId={selectedNode.id}

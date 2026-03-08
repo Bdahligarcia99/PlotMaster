@@ -18,6 +18,11 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const isAnchor = anchorNodeId === id;
   const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
   const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
+  const genInheritFlashByNodeId = useFamilyTreeStore((s) => s.genInheritFlashByNodeId);
+  const inheritFlash = genInheritFlashByNodeId[id];
+  const showGenInheritFlash = !!inheritFlash;
+  const inheritLabel = inheritFlash?.label ?? "";
+  const isGenImmune = nodeData.isGenArmed === false;
   const x = Math.round(xPos);
   const y = Math.round(yPos);
 
@@ -132,9 +137,20 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
         className={`px-4 py-3 rounded-xl border-2 min-w-[120px] transition-colors relative ${
           selected
             ? "bg-dark-surface border-blue-500 shadow-lg shadow-blue-500/20"
-            : "bg-dark-surface border-dark-accent hover:border-dark-muted"
-        }`}
+            : isGenImmune
+              ? "bg-dark-surface border-red-500/70 hover:border-red-500/90 shadow-[0_0_12px_rgba(239,68,68,0.4)]"
+              : "bg-dark-surface border-dark-accent hover:border-dark-muted"
+        } ${selected && isGenImmune ? "ring-1 ring-red-500/25 ring-offset-1 ring-offset-dark-bg" : ""} ${showGenInheritFlash ? "animate-pulse" : ""}`}
+        style={showGenInheritFlash ? { outline: "2px solid rgba(59,130,246,0.6)", outlineOffset: 2 } : undefined}
       >
+        {showGenInheritFlash && inheritLabel && (
+          <div
+            key={inheritFlash.token}
+            className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 text-xs font-medium text-blue-300 bg-blue-500/30 border border-blue-400/50 rounded-full whitespace-nowrap animate-gen-inherit-pill pointer-events-none z-50"
+          >
+            Gen {inheritLabel}
+          </div>
+        )}
         {isAnchor && (
           <div
             className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-amber-500/80 border border-amber-400"

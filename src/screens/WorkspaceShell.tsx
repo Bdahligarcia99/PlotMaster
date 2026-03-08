@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
+import { useWindowTitle } from "../hooks/useWindowTitle";
 import { useAppStore } from "../store/appStore";
+import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import FamilyTreeCanvas from "../components/family-tree/FamilyTreeCanvas";
 import FamilyTreeToolbar from "../components/family-tree/FamilyTreeToolbar";
 import { useFamilyTreeStore } from "../store/familyTreeStore";
@@ -18,7 +20,8 @@ import IdeasCanvasPlaceholder from "../components/ideas/IdeasCanvasPlaceholder";
 import IdeasScriptPane from "../components/ideas/IdeasScriptPane";
 import IdeasInspector from "../components/ideas/IdeasInspector";
 import ProfilesEntitiesPanel from "../components/profiles/ProfilesEntitiesPanel";
-import ProfilesCanvasPlaceholder from "../components/profiles/ProfilesCanvasPlaceholder";
+import ProfilesToolbar from "../components/profiles/ProfilesToolbar";
+import ProfilesChartEditor from "../components/profiles/ProfilesChartEditor";
 import ProfilesScriptPane from "../components/profiles/ProfilesScriptPane";
 import ProfilesInspector from "../components/profiles/ProfilesInspector";
 
@@ -30,19 +33,32 @@ export default function WorkspaceShell() {
   const [scriptPaneOpen, setScriptPaneOpen] = useState(true);
 
   const standaloneProjects = useAppStore((s) => s.standaloneProjects);
+  const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
+  const ensureStandaloneFromDriver = useAppStore((s) => s.ensureStandaloneFromDriver);
 
   const project = standaloneProjects.find((p) => p.id === id);
   const loadTree = useFamilyTreeStore((s) => s.loadTree);
   const updateLastOpened = useAppStore((s) => s.updateLastOpened);
+  const [hydrating, setHydrating] = useState(false);
+  const lastUpdatedIdRef = useRef<string | null>(null);
 
+  // When project not found, try hydrating from driver (e.g. characterProfiles from driver list)
   useEffect(() => {
-    if (id && project?.moduleType === "Family Tree") {
+    if (!id || project || hydrating) return;
+    setHydrating(true);
+    ensureStandaloneFromDriver(id).finally(() => setHydrating(false));
+  }, [id, project, hydrating, ensureStandaloneFromDriver]);
+
+  // Load tree and update lastOpened - run once per project to avoid infinite loop from store update
+  useEffect(() => {
+    if (!id || !project) return;
+    if (lastUpdatedIdRef.current === id) return;
+    lastUpdatedIdRef.current = id;
+    if (project.moduleType === "Family Tree") {
       loadTree(id);
-      updateLastOpened("standalone", id);
-    } else if (id && project) {
-      updateLastOpened("standalone", id);
     }
-  }, [id, project?.moduleType, project, loadTree, updateLastOpened]);
+    updateLastOpened("standalone", id);
+  }, [id, project, loadTree, updateLastOpened]);
 
   const isFamilyTree = project?.moduleType === "Family Tree";
   const isTimeline = project?.moduleType === "Timeline";
@@ -50,12 +66,20 @@ export default function WorkspaceShell() {
   const isProfiles = project?.moduleType === "Profiles";
   const hasPanelLayout = isFamilyTree || isTimeline || isIdeas || isProfiles;
 
+  useWindowTitle(project ? `${project.name} - PlotMaster` : "PlotMaster");
+
   if (!project) {
     return (
       <div className="min-h-screen bg-dark-bg flex items-center justify-center">
         <div className="text-center">
-          <p className="text-dark-muted mb-4">Project not found</p>
-          <Button onClick={() => navigate("/")}>Go Home</Button>
+          {hydrating ? (
+            <p className="text-dark-muted mb-4">Loading project…</p>
+          ) : (
+            <>
+              <p className="text-dark-muted mb-4">Project not found</p>
+              <Button onClick={() => navigate("/")}>Go Home</Button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -67,13 +91,20 @@ export default function WorkspaceShell() {
         left={
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate("/")}
+              onClick={() => {
+                if (isTauri()) {
+                  openOrFocusIntroWindow();
+                } else {
+                  setIntroDialogOpen(true);
+                }
+              }}
               className="flex items-center gap-2 px-3 py-1.5 text-dark-muted hover:text-dark-text transition-colors"
+              title="Open projects"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
               </svg>
-              Home
+              Projects
             </button>
             <div className="h-4 w-px bg-dark-accent" />
             <span className="text-dark-text font-medium truncate max-w-[200px]">{project.name}</span>
@@ -249,14 +280,16 @@ export default function WorkspaceShell() {
             {inspectorOpen && <IdeasInspector />}
           </div>
         ) : isProfiles ? (
-          <div className="flex-1 flex min-h-0">
-            <div
-              className="flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out flex"
-              style={{ width: leftSidebarOpen ? 260 : 0 }}
-            >
-              <ProfilesEntitiesPanel />
-            </div>
-            {!leftSidebarOpen && (
+          <>
+            <ProfilesToolbar />
+            <div className="flex-1 flex min-h-0">
+              <div
+                className="flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out flex"
+                style={{ width: leftSidebarOpen ? 260 : 0 }}
+              >
+                <ProfilesEntitiesPanel />
+              </div>
+              {!leftSidebarOpen && (
               <button
                 onClick={() => setLeftSidebarOpen(true)}
                 className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
@@ -268,7 +301,7 @@ export default function WorkspaceShell() {
               </button>
             )}
             <div className="flex-1 flex flex-col min-h-0 min-w-0">
-              <ProfilesCanvasPlaceholder />
+              <ProfilesChartEditor />
               <div
                 className="flex-shrink-0 overflow-hidden transition-[height] duration-200 ease-in-out"
                 style={{ height: scriptPaneOpen ? 240 : 0 }}
@@ -287,6 +320,7 @@ export default function WorkspaceShell() {
             </div>
             {inspectorOpen && <ProfilesInspector />}
           </div>
+          </>
         ) : (
           <>
             <div className="flex-1 flex min-h-0">

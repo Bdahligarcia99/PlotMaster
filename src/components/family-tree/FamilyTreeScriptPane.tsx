@@ -5,6 +5,8 @@ import { generateFamilyTreeScript } from "../../store/familyTreeStore";
 export default function FamilyTreeScriptPane() {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
+  const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
+  const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
   const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
   const nodeInfoTopLeft = useFamilyTreeStore((s) => s.nodeInfoTopLeft);
   const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
@@ -24,8 +26,10 @@ export default function FamilyTreeScriptPane() {
         nodeInfoCenter,
         nodeInfoSize,
         nodeSizesById,
+        generationAnchors,
+        genLabelMode,
       }),
-    [nodes, edges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById]
+    [nodes, edges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById, generationAnchors, genLabelMode]
   );
 
   const handleCopy = async () => {

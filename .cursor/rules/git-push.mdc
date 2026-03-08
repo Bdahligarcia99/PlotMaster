@@ -1,0 +1,14 @@
+---
+description: Always push changes to GitHub after completing work
+alwaysApply: true
+---
+
+# Git Push Workflow
+
+After completing edits or changes to the codebase:
+
+1. **Stage** all changes: `git add -A`
+2. **Commit** with a clear message summarizing the work
+3. **Push** to GitHub: `git push origin <branch>`
+
+Always offer to push (or push automatically) when the user has uncommitted changes and the task is done. Use the current branch from `git branch --show-current`.

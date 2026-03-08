@@ -6,6 +6,8 @@ import {
   snapPosition,
   isChildEdge,
   hasParents,
+  formatGenerationAnchorLabel,
+  GEN_BASELINE_OFFSET,
   PARTNER_DX,
   UNION_DY,
   CHILD_DY,
@@ -14,6 +16,7 @@ import {
   DEFAULT_PERSON_W,
   DEFAULT_UNION_W,
   type UnionNodeData,
+  type GenerationAnchor,
 } from "../../store/familyTreeStore";
 
 export default function FamilyTreeToolbar() {
@@ -32,6 +35,8 @@ export default function FamilyTreeToolbar() {
     setNodeInfoTopLeft,
     setNodeInfoCenter,
     setNodeInfoSize,
+    nodeInfoSpacing,
+    setNodeInfoSpacing,
     singleChildAlignment,
     setSingleChildAlignment,
     childrenRowAlignment3Plus,
@@ -46,6 +51,14 @@ export default function FamilyTreeToolbar() {
     addChild,
     persistUnionSelectionOnChildCreate,
     setPersistUnionSelectionOnChildCreate,
+    addGenerationAnchor,
+    showGenerationAnchors,
+    setShowGenerationAnchors,
+    showGenInheritIndicator,
+    setShowGenInheritIndicator,
+    generationAnchors,
+    genLabelMode,
+    setGenLabelMode,
     marqueeToolActive,
     setMarqueeToolActive,
   } = useFamilyTreeStore();
@@ -58,6 +71,12 @@ export default function FamilyTreeToolbar() {
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortContainerRef = useRef<HTMLDivElement>(null);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
+  const [genAnchorMenuOpen, setGenAnchorMenuOpen] = useState(false);
+  const genAnchorContainerRef = useRef<HTMLDivElement>(null);
+  const genAnchorDropdownRef = useRef<HTMLDivElement>(null);
+  const [personMenuOpen, setPersonMenuOpen] = useState(false);
+  const personContainerRef = useRef<HTMLDivElement>(null);
+  const personDropdownRef = useRef<HTMLDivElement>(null);
   const [coordMenuOpen, setCoordMenuOpen] = useState(false);
   const coordContainerRef = useRef<HTMLDivElement>(null);
   const coordDropdownRef = useRef<HTMLDivElement>(null);
@@ -106,6 +125,42 @@ export default function FamilyTreeToolbar() {
       document.removeEventListener("click", handleClickOutside);
     };
   }, [sortMenuOpen]);
+
+  useEffect(() => {
+    if (!genAnchorMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inContainer = genAnchorContainerRef.current?.contains(target);
+      const inDropdown = genAnchorDropdownRef.current?.contains(target);
+      if (!inContainer && !inDropdown) setGenAnchorMenuOpen(false);
+    };
+    const t = setTimeout(
+      () => document.addEventListener("click", handleClickOutside, { once: true }),
+      0
+    );
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [genAnchorMenuOpen]);
+
+  useEffect(() => {
+    if (!personMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inContainer = personContainerRef.current?.contains(target);
+      const inDropdown = personDropdownRef.current?.contains(target);
+      if (!inContainer && !inDropdown) setPersonMenuOpen(false);
+    };
+    const t = setTimeout(
+      () => document.addEventListener("click", handleClickOutside, { once: true }),
+      0
+    );
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [personMenuOpen]);
 
   useEffect(() => {
     if (!coordMenuOpen) return;
@@ -201,6 +256,16 @@ export default function FamilyTreeToolbar() {
       const anchor = personNodes[0].position.x <= personNodes[1].position.x ? personNodes[0] : personNodes[1];
       const other = anchor.id === personNodes[0].id ? personNodes[1] : personNodes[0];
       updateMap[other.id] = snap(anchor.position.x + PARTNER_DX, anchor.position.y);
+      for (const n of personNodes) {
+        const data = n.data as { genAnchorId?: string | null };
+        if (data.genAnchorId) {
+          const genAnchor = generationAnchors.find((a) => a.id === data.genAnchorId);
+          if (genAnchor) {
+            const pos = updateMap[n.id] ?? n.position;
+            updateMap[n.id] = { x: pos.x, y: snap(pos.x, genAnchor.yTop + GEN_BASELINE_OFFSET).y };
+          }
+        }
+      }
       setMessage(null);
       setNodes((prev) =>
         prev.map((n) => (n.id in updateMap ? { ...n, position: updateMap[n.id] } : n))
@@ -396,6 +461,18 @@ export default function FamilyTreeToolbar() {
       return;
     }
 
+    // Gen-assigned persons: snap Y to band baseline
+    for (const n of personNodes) {
+      const data = n.data as { genAnchorId?: string | null };
+      if (data.genAnchorId) {
+        const genAnchor = generationAnchors.find((a) => a.id === data.genAnchorId);
+        if (genAnchor) {
+          const pos = getEffectivePos(n.id) ?? n.position;
+          updateMap[n.id] = { x: pos.x, y: snap(pos.x, genAnchor.yTop + GEN_BASELINE_OFFSET).y };
+        }
+      }
+    }
+
     setMessage(null);
     setNodes((prev) =>
       prev.map((n) => {
@@ -418,12 +495,88 @@ export default function FamilyTreeToolbar() {
 
   return (
     <div className="flex items-center gap-2 px-3 py-2 bg-dark-surface border-b border-dark-accent/50">
-      <Button variant="primary" size="sm" onClick={() => addPerson()}>
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-        </svg>
-        + Person
-      </Button>
+      <div ref={personContainerRef} className="relative flex rounded-lg overflow-hidden">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => addPerson()}
+          className="rounded-none border-0 rounded-l-lg"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Person
+        </Button>
+        <button
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setPersonMenuOpen((o) => !o);
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="rounded-r-lg px-1.5 py-1.5 text-sm font-medium flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white transition-colors border-l border-blue-500/50 active:bg-blue-800"
+          title="Person spawn options"
+          aria-expanded={personMenuOpen}
+          aria-haspopup="true"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {personMenuOpen &&
+          createPortal(
+            <div
+              ref={personDropdownRef}
+              className="fixed py-1 min-w-[200px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
+              style={{
+                top: personContainerRef.current
+                  ? personContainerRef.current.getBoundingClientRect().bottom + 4
+                  : 0,
+                left: personContainerRef.current
+                  ? personContainerRef.current.getBoundingClientRect().left
+                  : 0,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  addPerson();
+                  setPersonMenuOpen(false);
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+              >
+                Auto (no gen)
+              </button>
+              {generationAnchors.length > 0 && (
+                <>
+                  <hr className="my-1 border-dark-accent/50" />
+                  {[...generationAnchors].sort((a, b) => a.index - b.index).map((anchor: GenerationAnchor) => {
+                    const label = formatGenerationAnchorLabel(anchor, genLabelMode);
+                    const displayLabel = anchor.customLabel ? `Gen ${label} — ${anchor.customLabel}` : `Gen ${label}`;
+                    return (
+                      <button
+                        key={anchor.id}
+                        type="button"
+                        onClick={() => {
+                          addPerson({ genAnchorId: anchor.id });
+                          setPersonMenuOpen(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+                      >
+                        {displayLabel}
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            </div>,
+            document.body
+          )}
+      </div>
       <div className="relative group">
         <Button
           variant="secondary"
@@ -513,6 +666,100 @@ export default function FamilyTreeToolbar() {
       >
         Marquee Select
       </Button>
+      <div ref={genAnchorContainerRef} className="relative flex rounded-lg border border-dark-accent/50">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => addGenerationAnchor()}
+          title="Add generation anchor band"
+          className="rounded-none border-0 rounded-l-lg"
+        >
+          + Gen Anchor
+        </Button>
+        <button
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setGenAnchorMenuOpen((o) => !o);
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center"
+          title="Generation anchor options"
+          aria-expanded={genAnchorMenuOpen}
+          aria-haspopup="true"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {genAnchorMenuOpen &&
+          createPortal(
+            <div
+              ref={genAnchorDropdownRef}
+              className="fixed py-1 min-w-[180px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
+              style={{
+                top: genAnchorContainerRef.current
+                  ? genAnchorContainerRef.current.getBoundingClientRect().bottom + 4
+                  : 0,
+                left: genAnchorContainerRef.current
+                  ? genAnchorContainerRef.current.getBoundingClientRect().left
+                  : 0,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  addGenerationAnchor();
+                  setGenAnchorMenuOpen(false);
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text font-medium"
+              >
+                Add Generation
+              </button>
+              <label className="flex items-center gap-2 px-3 py-2 text-sm text-dark-text cursor-pointer hover:bg-dark-accent/50">
+                <input
+                  type="checkbox"
+                  checked={showGenerationAnchors}
+                  onChange={(e) => setShowGenerationAnchors(e.target.checked)}
+                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                />
+                <span>Show generation anchors</span>
+              </label>
+              <label className="flex items-center gap-2 px-3 py-2 text-sm text-dark-text cursor-pointer hover:bg-dark-accent/50">
+                <input
+                  type="checkbox"
+                  checked={showGenInheritIndicator}
+                  onChange={(e) => setShowGenInheritIndicator(e.target.checked)}
+                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                />
+                <span>Show inherit indicator</span>
+              </label>
+              <hr className="my-1 border-dark-accent/50" />
+              <div className="px-3 py-1 text-[10px] font-medium text-dark-muted uppercase tracking-wide">
+                Label Mode
+              </div>
+              {(["letters", "numbers", "both"] as const).map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => {
+                    setGenLabelMode(opt);
+                    setGenAnchorMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+                >
+                  <span className="w-4">{genLabelMode === opt ? "●" : "○"}</span>
+                  {opt === "letters" ? "Letters" : opt === "numbers" ? "Numbers" : "Both"}
+                </button>
+              ))}
+            </div>,
+            document.body
+          )}
+      </div>
       <div ref={sortContainerRef} className="relative flex rounded-lg border border-dark-accent/50">
         <Button
           variant="secondary"
@@ -655,12 +902,12 @@ export default function FamilyTreeToolbar() {
                 type="button"
                 onClick={() => setNodeInfoTopLeft(!nodeInfoTopLeft)}
                 title={
-                  nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSize
+                  nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSize && !nodeInfoSpacing
                     ? "At least one must be enabled"
                     : undefined
                 }
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-dark-accent/50 text-dark-text disabled:opacity-50"
-                disabled={nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSize}
+                disabled={nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSize && !nodeInfoSpacing}
               >
                 <span className="w-4">{nodeInfoTopLeft ? "✓" : ""}</span>
                 Top-left (x,y)
@@ -669,12 +916,12 @@ export default function FamilyTreeToolbar() {
                 type="button"
                 onClick={() => setNodeInfoCenter(!nodeInfoCenter)}
                 title={
-                  nodeInfoCenter && !nodeInfoTopLeft && !nodeInfoSize
+                  nodeInfoCenter && !nodeInfoTopLeft && !nodeInfoSize && !nodeInfoSpacing
                     ? "At least one must be enabled"
                     : undefined
                 }
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-dark-accent/50 text-dark-text disabled:opacity-50"
-                disabled={nodeInfoCenter && !nodeInfoTopLeft && !nodeInfoSize}
+                disabled={nodeInfoCenter && !nodeInfoTopLeft && !nodeInfoSize && !nodeInfoSpacing}
               >
                 <span className="w-4">{nodeInfoCenter ? "✓" : ""}</span>
                 Center (cx,cy)
@@ -683,15 +930,29 @@ export default function FamilyTreeToolbar() {
                 type="button"
                 onClick={() => setNodeInfoSize(!nodeInfoSize)}
                 title={
-                  nodeInfoSize && !nodeInfoTopLeft && !nodeInfoCenter
+                  nodeInfoSize && !nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSpacing
                     ? "At least one must be enabled"
                     : undefined
                 }
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-dark-accent/50 text-dark-text disabled:opacity-50"
-                disabled={nodeInfoSize && !nodeInfoTopLeft && !nodeInfoCenter}
+                disabled={nodeInfoSize && !nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSpacing}
               >
                 <span className="w-4">{nodeInfoSize ? "✓" : ""}</span>
                 Size (w,h)
+              </button>
+              <button
+                type="button"
+                onClick={() => setNodeInfoSpacing(!nodeInfoSpacing)}
+                title={
+                  nodeInfoSpacing && !nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSize
+                    ? "At least one must be enabled"
+                    : undefined
+                }
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-dark-accent/50 text-dark-text disabled:opacity-50"
+                disabled={nodeInfoSpacing && !nodeInfoTopLeft && !nodeInfoCenter && !nodeInfoSize}
+              >
+                <span className="w-4">{nodeInfoSpacing ? "✓" : ""}</span>
+                Spacing (2 selected)
               </button>
             </div>,
             document.body

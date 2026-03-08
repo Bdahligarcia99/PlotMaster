@@ -6,7 +6,7 @@ const PROFILES_STORAGE_KEY = (projectId: string) =>
 const TEMPLATES_STORAGE_KEY = (projectId: string) =>
   `plotmaster:profiles:templates:${projectId}`;
 
-export type SectionHeadingLevel = "h1" | "h2";
+export type SectionHeadingLevel = "h1" | "h2" | "h3" | "h4";
 
 /** Note block - section-scoped note */
 export interface NoteBlock {
@@ -67,14 +67,21 @@ export interface ChartLayoutTemplate {
   sections: ProfileSection[];
 }
 
+export type ChartLayoutMode = "fill" | "edit" | "createLayout";
+
 interface CharacterProfilesStore {
   activeProjectId: string | null;
   characters: CharacterEntity[];
   selectedCharacterId: string | null;
+  chartLayoutMode: ChartLayoutMode;
+  editLayoutDirty: boolean;
   setActiveProject: (projectId: string | null) => void;
   setSelectedCharacter: (characterId: string | null) => void;
+  setChartLayoutMode: (mode: ChartLayoutMode) => void;
+  setEditLayoutDirty: (dirty: boolean) => void;
   loadCharacters: (projectId: string) => void;
   addCharacter: (projectId: string, name?: string) => string;
+  removeCharacter: (projectId: string, characterId: string) => void;
   updateCharacterName: (projectId: string, characterId: string, name: string) => void;
 
   // Sections
@@ -88,6 +95,7 @@ interface CharacterProfilesStore {
 
   // Content blocks
   addContentBlock: (projectId: string, characterId: string, sectionId: string, blockType: "note" | "attributes" | "image") => string;
+  addAttributeToSection: (projectId: string, characterId: string, sectionId: string) => void;
   updateContentBlock: (projectId: string, characterId: string, sectionId: string, blockId: string, updates: Partial<NoteBlock> | Partial<AttributeBlock> | Partial<ImageBlock>) => void;
   removeContentBlock: (projectId: string, characterId: string, sectionId: string, blockId: string) => void;
   reorderContentBlocks: (projectId: string, characterId: string, sectionId: string, fromIndex: number, toIndex: number) => void;
@@ -106,6 +114,7 @@ interface CharacterProfilesStore {
   applyTemplateToCharacter: (projectId: string, characterId: string, templateId: string, mode: "replace" | "merge") => void;
   renameTemplate: (projectId: string, templateId: string, name: string) => void;
   deleteTemplate: (projectId: string, templateId: string) => void;
+  createTemplateFromSections: (projectId: string, name: string, sections: ProfileSection[]) => string | null;
 }
 
 function generateId() {
@@ -193,7 +202,9 @@ function migrateCharacter(c: {
       sections.push({
         id: cat.id || generateId(),
         label: cat.name || "New section",
-        headingLevel: (cat.headingLevel === "h2" ? "h2" : "h1") as SectionHeadingLevel,
+        headingLevel: (["h1", "h2", "h3", "h4"] as const).includes((cat.headingLevel ?? "h1") as SectionHeadingLevel)
+          ? ((cat.headingLevel ?? "h1") as SectionHeadingLevel)
+          : "h1",
         parentId: null,
         contentBlocks,
         order: idx,
@@ -522,9 +533,19 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     activeProjectId: null,
     characters: [],
     selectedCharacterId: null,
+    chartLayoutMode: "fill" as ChartLayoutMode,
+    editLayoutDirty: false,
 
     setSelectedCharacter: (characterId) => {
-      set({ selectedCharacterId: characterId });
+      set({ selectedCharacterId: characterId, chartLayoutMode: "fill" as ChartLayoutMode, editLayoutDirty: false });
+    },
+
+    setChartLayoutMode: (mode) => {
+      set({ chartLayoutMode: mode, editLayoutDirty: mode !== "edit" ? false : get().editLayoutDirty });
+    },
+
+    setEditLayoutDirty: (dirty) => {
+      set({ editLayoutDirty: dirty });
     },
 
     setActiveProject: (projectId) => {
@@ -551,6 +572,19 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
       return id;
     },
 
+    removeCharacter: (projectId, characterId) => {
+      const existing = loadFromStorage(projectId);
+      const chars = existing.filter((c) => c.id !== characterId);
+      saveToStorage(projectId, chars);
+      const s = get();
+      if (s.activeProjectId === projectId) {
+        set({
+          characters: chars,
+          selectedCharacterId: s.selectedCharacterId === characterId ? null : s.selectedCharacterId,
+        });
+      }
+    },
+
     updateCharacterName: (projectId, characterId, name) => {
       const trimmed = name.trim() || "New Character";
       const existing = loadFromStorage(projectId);
@@ -564,19 +598,33 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     addSection: (projectId, characterId, parentId = null, label = "New section") => {
       const sectionId = generateId();
       const existing = loadFromStorage(projectId);
+      const NEXT_LEVEL: Record<SectionHeadingLevel, SectionHeadingLevel | null> = {
+        h1: "h2",
+        h2: "h3",
+        h3: "h4",
+        h4: null,
+      };
       const chars = existing.map((c) => {
         if (c.id !== characterId) return c;
-        const siblings = (c.sections ?? []).filter((s) => (s.parentId ?? null) === parentId);
+        const allSections = c.sections ?? [];
+        const siblings = allSections.filter((s) => (s.parentId ?? null) === parentId);
         const maxOrder = siblings.length > 0 ? Math.max(...siblings.map((s) => s.order)) + 1 : 0;
+        let headingLevel: SectionHeadingLevel = "h1";
+        if (parentId) {
+          const parent = allSections.find((s) => s.id === parentId);
+          const next = parent ? NEXT_LEVEL[parent.headingLevel ?? "h1"] : "h2";
+          if (!next) return c;
+          headingLevel = next;
+        }
         const section: ProfileSection = {
           id: sectionId,
           label: label.trim() || "New section",
-          headingLevel: parentId ? "h2" : "h1",
+          headingLevel,
           parentId,
           contentBlocks: [],
           order: maxOrder,
         };
-        return { ...c, sections: [...(c.sections ?? []), section] };
+        return { ...c, sections: [...allSections, section] };
       });
       saveToStorage(projectId, chars);
       if (get().activeProjectId === projectId) set({ characters: chars });
@@ -612,11 +660,25 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
 
     removeSection: (projectId, characterId, sectionId) => {
       const existing = loadFromStorage(projectId);
+      function collectDescendantIds(sects: ProfileSection[], sid: string): Set<string> {
+        const ids = new Set<string>([sid]);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const s of sects) {
+            if (s.parentId && ids.has(s.parentId) && !ids.has(s.id)) {
+              ids.add(s.id);
+              changed = true;
+            }
+          }
+        }
+        return ids;
+      }
       const chars = existing.map((c) => {
         if (c.id !== characterId) return c;
-        const sections = (c.sections ?? []).filter(
-          (s) => s.id !== sectionId && s.parentId !== sectionId
-        );
+        const sects = c.sections ?? [];
+        const toRemove = collectDescendantIds(sects, sectionId);
+        const sections = sects.filter((s) => !toRemove.has(s.id));
         return { ...c, sections };
       });
       saveToStorage(projectId, chars);
@@ -643,23 +705,32 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     },
 
     moveSectionTo: (projectId, characterId, sectionId, targetParentId, targetSectionId) => {
+      const NEXT_LEVEL: Record<SectionHeadingLevel, SectionHeadingLevel | null> = {
+        h1: "h2",
+        h2: "h3",
+        h3: "h4",
+        h4: null,
+      };
       const existing = loadFromStorage(projectId);
       const chars = existing.map((c) => {
         if (c.id !== characterId) return c;
-        const movingSection = (c.sections ?? []).find((s) => s.id === sectionId);
-        const targetSection = (c.sections ?? []).find((s) => s.id === targetSectionId);
+        const allSections = c.sections ?? [];
+        const movingSection = allSections.find((s) => s.id === sectionId);
+        const targetSection = allSections.find((s) => s.id === targetSectionId);
         if (!movingSection || !targetSection) return c;
-        const targetSiblings = (c.sections ?? []).filter((s) => (s.parentId ?? null) === targetParentId);
+        const targetSiblings = allSections.filter((s) => (s.parentId ?? null) === targetParentId);
         const sorted = [...targetSiblings].sort((a, b) => a.order - b.order);
         const toIndex = sorted.findIndex((s) => s.id === targetSectionId);
         if (toIndex < 0) return c;
         const needNest = (movingSection.parentId ?? null) !== targetParentId;
-        let sections = c.sections ?? [];
+        let sections = [...allSections];
         if (needNest) {
+          const parent = targetParentId ? allSections.find((s) => s.id === targetParentId) : null;
+          const childLevel: SectionHeadingLevel = targetParentId && parent
+            ? (NEXT_LEVEL[parent.headingLevel ?? "h1"] ?? "h2")
+            : "h1";
           sections = sections.map((s) =>
-            s.id === sectionId
-              ? { ...s, parentId: targetParentId, headingLevel: targetParentId ? "h2" : "h1" as SectionHeadingLevel }
-              : s
+            s.id === sectionId ? { ...s, parentId: targetParentId, headingLevel: childLevel } : s
           );
         }
         const newSiblings = sections.filter((s) => (s.parentId ?? null) === targetParentId);
@@ -677,13 +748,22 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     },
 
     nestSection: (projectId, characterId, sectionId, newParentId) => {
+      const NEXT_LEVEL: Record<SectionHeadingLevel, SectionHeadingLevel | null> = {
+        h1: "h2",
+        h2: "h3",
+        h3: "h4",
+        h4: null,
+      };
       const existing = loadFromStorage(projectId);
       const chars = existing.map((c) => {
         if (c.id !== characterId) return c;
-        const sections = (c.sections ?? []).map((s) =>
-          s.id === sectionId
-            ? { ...s, parentId: newParentId, headingLevel: newParentId ? "h2" : "h1" as SectionHeadingLevel }
-            : s
+        const allSections = c.sections ?? [];
+        const parent = newParentId ? allSections.find((s) => s.id === newParentId) : null;
+        const childLevel: SectionHeadingLevel = newParentId && parent
+          ? (NEXT_LEVEL[parent.headingLevel ?? "h1"] ?? "h2")
+          : "h1";
+        const sections = allSections.map((s) =>
+          s.id === sectionId ? { ...s, parentId: newParentId, headingLevel: childLevel } : s
         );
         return { ...c, sections };
       });
@@ -702,7 +782,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
           if (blockType === "note") {
             block = { type: "note", id: blockId, content: "" };
           } else if (blockType === "attributes") {
-            block = { type: "attributes", id: blockId, keyValuePairs: {}, attributeOrder: [] };
+            block = { type: "attributes", id: blockId, keyValuePairs: { "Attribute 1": "" }, attributeOrder: ["Attribute 1"] };
           } else {
             block = { type: "image", id: blockId };
           }
@@ -713,6 +793,24 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
       saveToStorage(projectId, chars);
       if (get().activeProjectId === projectId) set({ characters: chars });
       return blockId;
+    },
+
+    addAttributeToSection: (projectId, characterId, sectionId) => {
+      const existing = loadFromStorage(projectId);
+      const char = existing.find((c) => c.id === characterId);
+      if (!char) return;
+      const section = (char.sections ?? []).find((s) => s.id === sectionId);
+      if (!section) return;
+      const attrsBlocks = (section.contentBlocks ?? []).filter((b): b is AttributeBlock => b.type === "attributes");
+      const totalAttrCount = attrsBlocks.reduce((sum, b) => sum + (b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {})).length, 0);
+      const nextKey = `Attribute ${totalAttrCount + 1}`;
+
+      if (attrsBlocks.length === 0) {
+        get().addContentBlock(projectId, characterId, sectionId, "attributes");
+      } else {
+        const lastBlock = attrsBlocks[attrsBlocks.length - 1];
+        get().addAttributeKey(projectId, characterId, sectionId, lastBlock.id, nextKey);
+      }
     },
 
     updateContentBlock: (projectId, characterId, sectionId, blockId, updates) => {
@@ -961,6 +1059,23 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     deleteTemplate: (projectId, templateId) => {
       const templates = loadTemplatesFromStorage(projectId).filter((t) => t.id !== templateId);
       saveTemplatesToStorage(projectId, templates);
+    },
+
+    createTemplateFromSections: (projectId, name, sections) => {
+      if (!sections || sections.length === 0) return null;
+      const templateSections = sectionsToTemplateFormat(sections);
+      const templates = loadTemplatesFromStorage(projectId);
+      const dupCount = templates.filter((t) => t.name === name.trim()).length;
+      const finalName = dupCount > 0 ? `${name.trim()} (${dupCount + 1})` : name.trim() || "Untitled";
+      const template: ChartLayoutTemplate = {
+        id: generateId(),
+        name: finalName,
+        createdAt: Date.now(),
+        sections: templateSections,
+      };
+      const next = [...templates, template];
+      saveTemplatesToStorage(projectId, next);
+      return template.id;
     },
   })
 );

@@ -1,3 +1,3 @@
 #!/bin/bash
 cd "$(dirname "$0")"
-npm run dev -- --open
+npm run desktop
