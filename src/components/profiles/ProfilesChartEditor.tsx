@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
   DndContext,
@@ -16,6 +16,8 @@ import {
   type AttributeBlock,
   type ImageBlock,
   type SectionHeadingLevel,
+  type AttributeMetaItem,
+  type AttributeType,
 } from "../../store/characterProfilesStore";
 import Button from "../ui/Button";
 
@@ -25,6 +27,193 @@ function getOrderedAttributeEntries(block: AttributeBlock): [string, string][] {
   return order
     .filter((k) => k in pairs)
     .map((k) => [k, pairs[k] ?? ""]);
+}
+
+function getAttributeMeta(block: AttributeBlock, key: string): AttributeMetaItem | undefined {
+  return (block.attributeMeta ?? {})[key];
+}
+
+function AttributeValueInput({
+  value,
+  onChange,
+  meta,
+  inputId,
+  placeholder,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  meta?: AttributeMetaItem;
+  inputId: string;
+  placeholder?: string;
+  className?: string;
+}) {
+  const type = meta?.type ?? "text";
+  const options = meta?.options ?? [];
+  const allowCustom = meta?.allowCustom ?? false;
+
+  if (type === "number") {
+    return (
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={className}
+      />
+    );
+  }
+
+  if (type === "select" && options.length > 0) {
+    if (allowCustom) {
+      return (
+        <>
+          <input
+            list={`opts-${inputId}`}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            className={className}
+          />
+          <datalist id={`opts-${inputId}`}>
+            {options.map((o) => (
+              <option key={o} value={o} />
+            ))}
+          </datalist>
+        </>
+      );
+    }
+    return (
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={className}
+      >
+        <option value="">{placeholder ?? "Select..."}</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+        {value && !options.includes(value) && (
+          <option value={value}>{value} (custom)</option>
+        )}
+      </select>
+    );
+  }
+
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+}
+
+function AttributeMetaEditor({
+  keyName,
+  meta,
+  onSave,
+  onClose,
+  anchorRect,
+}: {
+  keyName: string;
+  meta?: AttributeMetaItem;
+  onSave: (m: Partial<AttributeMetaItem>) => void;
+  onClose: () => void;
+  anchorRect: DOMRect | null;
+}) {
+  const [type, setType] = useState<AttributeType>(meta?.type ?? "text");
+  const [optionsText, setOptionsText] = useState((meta?.options ?? []).join("\n"));
+  const [allowCustom, setAllowCustom] = useState(meta?.allowCustom ?? false);
+
+  const handleSave = () => {
+    const opts = optionsText
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    onSave({
+      type,
+      options: type === "select" ? opts : undefined,
+      allowCustom: type === "select" ? allowCustom : undefined,
+    });
+    onClose();
+  };
+
+  const rect = anchorRect;
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (popoverRef.current && !popoverRef.current.contains(target)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onClose]);
+
+  return (
+    <div
+      ref={popoverRef}
+      className="fixed z-[9999] rounded-lg border border-dark-accent bg-dark-surface shadow-xl p-3 min-w-[200px] max-w-[280px]"
+      style={{
+        top: rect ? rect.bottom + 4 : 0,
+        left: rect ? rect.left : 0,
+      }}
+    >
+      <div className="text-xs font-medium text-dark-muted mb-2">Attribute: {keyName}</div>
+      <div className="space-y-2">
+        <div>
+          <label className="block text-[10px] text-dark-muted mb-0.5">Type</label>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value as AttributeType)}
+            className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
+          >
+            <option value="text">Text</option>
+            <option value="number">Number</option>
+            <option value="select">Select</option>
+          </select>
+        </div>
+        {type === "select" && (
+          <>
+            <div>
+              <label className="block text-[10px] text-dark-muted mb-0.5">Options (one per line)</label>
+              <textarea
+                value={optionsText}
+                onChange={(e) => setOptionsText(e.target.value)}
+                rows={3}
+                placeholder={"Brown\nGreen\nBlue"}
+                className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded resize-y"
+              />
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allowCustom}
+                onChange={(e) => setAllowCustom(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-xs text-dark-text">Allow custom values</span>
+            </label>
+          </>
+        )}
+      </div>
+      <div className="flex justify-end gap-1 mt-2">
+        <button type="button" onClick={onClose} className="px-2 py-1 text-xs text-dark-muted hover:text-dark-text">
+          Cancel
+        </button>
+        <button type="button" onClick={handleSave} className="px-2 py-1 text-xs bg-blue-600 text-white rounded">
+          Save
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function DragHandle({ listeners, attributes }: { listeners?: object; attributes?: object }) {
@@ -168,8 +357,11 @@ export default function ProfilesChartEditor() {
   const updateAttributeKey = useCharacterProfilesStore((s) => s.updateAttributeKey);
   const removeAttributeKey = useCharacterProfilesStore((s) => s.removeAttributeKey);
   const renameAttributeKey = useCharacterProfilesStore((s) => s.renameAttributeKey);
+  const updateAttributeMeta = useCharacterProfilesStore((s) => s.updateAttributeMeta);
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [metaEditorFor, setMetaEditorFor] = useState<{ blockId: string; key: string } | null>(null);
+  const [metaEditorAnchorRect, setMetaEditorAnchorRect] = useState<DOMRect | null>(null);
   const [editingKeyBlockId, setEditingKeyBlockId] = useState<string | null>(null);
   const [draftKey, setDraftKey] = useState("");
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -493,25 +685,64 @@ export default function ProfilesChartEditor() {
                                                 {key}
                                               </button>
                                             )}
-                                            <input
-                                              type="text"
-                                              value={value}
-                                              onChange={(e) => {
+                                            <div className="flex-1 min-w-0">
+                                              <AttributeValueInput
+                                                value={value}
+                                                onChange={(v) => {
+                                                  if (projectId && selectedCharacterId) {
+                                                    updateAttributeKey(
+                                                      projectId,
+                                                      selectedCharacterId,
+                                                      section.id,
+                                                      block.id,
+                                                      key,
+                                                      v
+                                                    );
+                                                  }
+                                                }}
+                                                meta={getAttributeMeta(block, key)}
+                                                inputId={`${block.id}-${key}`}
+                                                placeholder="Value"
+                                                className="w-full px-2 py-1.5 text-sm bg-dark-bg border border-dark-accent rounded text-dark-text focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                              />
+                                            </div>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              const target = e.currentTarget;
+                                              const isOpen = metaEditorFor?.blockId === block.id && metaEditorFor?.key === key;
+                                              setMetaEditorFor(isOpen ? null : { blockId: block.id, key });
+                                              setMetaEditorAnchorRect(isOpen ? null : target.getBoundingClientRect());
+                                            }}
+                                            className="p-1.5 text-dark-muted hover:text-blue-400 hover:bg-blue-500/10 rounded transition-colors"
+                                            title="Attribute type & options"
+                                          >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            </svg>
+                                          </button>
+                                          {metaEditorFor?.blockId === block.id && metaEditorFor?.key === key && (
+                                            <AttributeMetaEditor
+                                              keyName={key}
+                                              meta={getAttributeMeta(block, key)}
+                                              onSave={(m) => {
                                                 if (projectId && selectedCharacterId) {
-                                                  updateAttributeKey(
+                                                  updateAttributeMeta(
                                                     projectId,
                                                     selectedCharacterId,
                                                     section.id,
                                                     block.id,
                                                     key,
-                                                    e.target.value
+                                                    m
                                                   );
                                                 }
                                               }}
-                                              placeholder="Value"
-                                              className="px-2 py-1.5 text-sm bg-dark-bg border border-dark-accent rounded text-dark-text focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                              onClose={() => setMetaEditorFor(null)}
+                                              anchorRect={metaEditorAnchorRect}
                                             />
-                                          </div>
+                                          )}
                                           <button
                                             type="button"
                                             onClick={() => handleRemoveAttributeKey(section.id, block.id, key)}

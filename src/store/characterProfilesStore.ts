@@ -15,12 +15,22 @@ export interface NoteBlock {
   content: string;
 }
 
-/** Attribute block - key/value pairs with order */
+export type AttributeType = "text" | "number" | "select";
+
+/** Metadata per attribute key - optional; missing = treat as text */
+export interface AttributeMetaItem {
+  type?: AttributeType;
+  options?: string[];
+  allowCustom?: boolean;
+}
+
+/** Attribute block - key/value pairs with order and optional metadata */
 export interface AttributeBlock {
   type: "attributes";
   id: string;
   keyValuePairs: Record<string, string>;
   attributeOrder?: string[];
+  attributeMeta?: Record<string, AttributeMetaItem>;
 }
 
 /** Image block - placeholder with optional label and URL */
@@ -88,6 +98,7 @@ interface CharacterProfilesStore {
   removeAttributeKey: (projectId: string, characterId: string, sectionId: string, blockId: string, key: string) => void;
   renameAttributeKey: (projectId: string, characterId: string, sectionId: string, blockId: string, oldKey: string, newKey: string) => void;
   reorderAttributeKeys: (projectId: string, characterId: string, sectionId: string, blockId: string, fromIndex: number, toIndex: number) => void;
+  updateAttributeMeta: (projectId: string, characterId: string, sectionId: string, blockId: string, key: string, meta: Partial<AttributeMetaItem>) => void;
 
   // Chart layout templates
   listTemplates: (projectId: string) => ChartLayoutTemplate[];
@@ -269,11 +280,25 @@ function sectionsToTemplateFormat(sections: ProfileSection[]): ProfileSection[] 
         const keys = b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {});
         const keyValuePairs: Record<string, string> = {};
         for (const k of keys) if (k in (b.keyValuePairs ?? {})) keyValuePairs[k] = "";
+        const meta = b.attributeMeta ?? {};
+        const attributeMeta: Record<string, AttributeMetaItem> = {};
+        for (const k of keys) {
+          if (meta[k]) {
+            const m = meta[k];
+            const opts = m.options ?? [];
+            attributeMeta[k] = {
+              type: m.type ?? "text",
+              options: [...new Set(opts)],
+              allowCustom: m.allowCustom ?? false,
+            };
+          }
+        }
         return {
           type: "attributes" as const,
           id: generateId(),
           keyValuePairs,
           attributeOrder: keys.filter((k) => k in keyValuePairs),
+          attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined,
         };
       }
       if (b.type === "image") {
@@ -340,20 +365,37 @@ function applyTemplateSections(
             const block = (existing.contentBlocks ?? []).find(
               (b): b is AttributeBlock => b.type === "attributes"
             );
+            const tbMeta = tb.attributeMeta ?? {};
             if (block) {
               const pairs = { ...block.keyValuePairs };
               const order = [...(block.attributeOrder ?? Object.keys(pairs))];
+              const attributeMeta = { ...(block.attributeMeta ?? {}) };
               for (const k of keysToAdd) {
                 pairs[k] = "";
                 order.push(k);
                 attrKeys.add(k);
+                if (tbMeta[k]) {
+                  const m = tbMeta[k];
+                  attributeMeta[k] = {
+                    type: m.type ?? "text",
+                    options: m.options ? [...new Set(m.options)] : undefined,
+                    allowCustom: m.allowCustom,
+                  };
+                }
               }
               existing.contentBlocks = (existing.contentBlocks ?? []).map((b) =>
                 b.type === "attributes" && b.id === block.id
-                  ? { ...b, keyValuePairs: pairs, attributeOrder: order }
+                  ? { ...b, keyValuePairs: pairs, attributeOrder: order, attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined }
                   : b
               );
             } else {
+              const attributeMeta: Record<string, AttributeMetaItem> = {};
+              for (const k of keysToAdd) {
+                if (tbMeta[k]) {
+                  const m = tbMeta[k];
+                  attributeMeta[k] = { type: m.type ?? "text", options: m.options ? [...new Set(m.options)] : undefined, allowCustom: m.allowCustom };
+                }
+              }
               existing.contentBlocks = [
                 ...(existing.contentBlocks ?? []),
                 {
@@ -361,6 +403,7 @@ function applyTemplateSections(
                   id: generateId(),
                   keyValuePairs: Object.fromEntries(keysToAdd.map((k) => [k, ""])),
                   attributeOrder: keysToAdd,
+                  attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined,
                 },
               ];
               keysToAdd.forEach((k) => attrKeys.add(k));
@@ -400,11 +443,24 @@ function templateSectionToCharacter(
     if (b.type === "note") return { type: "note" as const, id: generateId(), content: "" };
     if (b.type === "attributes") {
       const keys = b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {});
+      const meta = b.attributeMeta ?? {};
+      const attributeMeta: Record<string, AttributeMetaItem> = {};
+      for (const k of keys) {
+        if (meta[k]) {
+          const m = meta[k];
+          attributeMeta[k] = {
+            type: m.type ?? "text",
+            options: m.options ? [...new Set(m.options)] : undefined,
+            allowCustom: m.allowCustom,
+          };
+        }
+      }
       return {
         type: "attributes" as const,
         id: generateId(),
         keyValuePairs: Object.fromEntries(keys.map((k) => [k, ""])),
         attributeOrder: keys,
+        attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined,
       };
     }
     if (b.type === "image") return { type: "image" as const, id: generateId(), label: b.label };
@@ -770,7 +826,9 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
             const pairs = { ...b.keyValuePairs };
             delete pairs[key];
             const order = (b.attributeOrder ?? Object.keys(b.keyValuePairs)).filter((k) => k !== key);
-            return { ...b, keyValuePairs: pairs, attributeOrder: order };
+            const attributeMeta = { ...(b.attributeMeta ?? {}) };
+            delete attributeMeta[key];
+            return { ...b, keyValuePairs: pairs, attributeOrder: order, attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined };
           });
           return { ...s, contentBlocks: blocks };
         });
@@ -795,7 +853,34 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
             delete pairs[oldKey];
             pairs[trimmed] = val;
             const order = (b.attributeOrder ?? Object.keys(b.keyValuePairs)).map((k) => (k === oldKey ? trimmed : k));
-            return { ...b, keyValuePairs: pairs, attributeOrder: order };
+            const attributeMeta = { ...(b.attributeMeta ?? {}) };
+            if (oldKey in attributeMeta) {
+              attributeMeta[trimmed] = attributeMeta[oldKey];
+              delete attributeMeta[oldKey];
+            }
+            return { ...b, keyValuePairs: pairs, attributeOrder: order, attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined };
+          });
+          return { ...s, contentBlocks: blocks };
+        });
+        return { ...c, sections };
+      });
+      saveToStorage(projectId, chars);
+      if (get().activeProjectId === projectId) set({ characters: chars });
+    },
+
+    updateAttributeMeta: (projectId, characterId, sectionId, blockId, key, meta) => {
+      const existing = loadFromStorage(projectId);
+      const chars = existing.map((c) => {
+        if (c.id !== characterId) return c;
+        const sections = (c.sections ?? []).map((s) => {
+          if (s.id !== sectionId) return s;
+          const blocks = (s.contentBlocks ?? []).map((b) => {
+            if (b.type !== "attributes" || b.id !== blockId || !(b.keyValuePairs ?? {})[key]) return b;
+            const current = (b.attributeMeta ?? {})[key] ?? {};
+            const nextMeta = { ...current, ...meta };
+            if (nextMeta.options) nextMeta.options = [...new Set(nextMeta.options)];
+            const attributeMeta = { ...(b.attributeMeta ?? {}), [key]: nextMeta };
+            return { ...b, attributeMeta };
           });
           return { ...s, contentBlocks: blocks };
         });
