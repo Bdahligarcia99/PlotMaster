@@ -1,7 +1,18 @@
+import { useState, useEffect, useRef } from "react";
 import type { Edge } from "reactflow";
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+} from "@dnd-kit/core";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, isChildEdge } from "../../store/familyTreeStore";
+import type { ParentRole } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, getPersonNameParts, getUnionIdsForPerson, isChildEdge } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
 
 function ParentsSection({
@@ -15,55 +26,29 @@ function ParentsSection({
   edges: Edge[];
   onSelectParent: (id: string) => void;
 }) {
-  const parentUnions = edges
+  const parentUnionIds = edges
     .filter((e) => isChildEdge(e) && e.target === personId)
     .map((e) => e.source);
 
-  if (parentUnions.length === 0) {
-    return (
-      <div className="mb-4">
-        <label className="block text-dark-muted text-sm mb-2">Parents</label>
-        <p className="text-dark-muted text-sm">—</p>
-      </div>
-    );
+  const parentIds = new Set<string>();
+  for (const unionId of parentUnionIds) {
+    const unionNode = nodes.find((n) => n.id === unionId && n.type === "union");
+    if (!unionNode) continue;
+    const data = unionNode.data as UnionNodeData;
+    const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
+    const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
+    [leftId, rightId].forEach((id) => { if (id) parentIds.add(id); });
   }
 
-  const unionId = parentUnions[0]!;
-  const unionNode = nodes.find((n) => n.id === unionId && n.type === "union");
-  if (!unionNode) {
-    return (
-      <div className="mb-4">
-        <label className="block text-dark-muted text-sm mb-2">Parents</label>
-        <p className="text-dark-muted text-sm">—</p>
-      </div>
-    );
-  }
-
-  const unionData = unionNode.data as UnionNodeData;
-  const leftId = unionData.leftPartnerId ?? unionData.partnerIds?.[0];
-  const rightId = unionData.rightPartnerId ?? unionData.partnerIds?.[1];
-  const parentIds = [leftId, rightId].filter((id): id is string => id != null);
-
-  const parentNodes = parentIds.map((id) => nodes.find((n) => n.id === id && n.type === "person"));
-  const names = parentNodes.map(
-    (n) => (n?.data as PersonNodeData | undefined)?.name ?? "Unknown"
-  );
-
-  const hasMultipleUnions = parentUnions.length > 1;
+  if (parentIds.size === 0) return null;
 
   return (
     <div className="mb-4">
-      <label className="block text-dark-muted text-sm mb-2">
-        Parents{hasMultipleUnions ? " (showing first)" : ""}
-      </label>
-      {hasMultipleUnions && (
-        <p className="text-dark-muted text-xs mb-1">
-          Multiple parent links detected.
-        </p>
-      )}
+      <label className="block text-dark-muted text-sm mb-2">Parents</label>
       <div className="space-y-1">
-        {parentIds.map((id, i) => {
-          const name = names[i] ?? "Unknown";
+        {Array.from(parentIds).map((id) => {
+          const node = nodes.find((n) => n.id === id && n.type === "person");
+          const name = node?.data ? getPersonDisplayName(node.data as PersonNodeData, id, nodes) : id;
           return (
             <button
               key={id}
@@ -75,6 +60,65 @@ function ParentsSection({
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function getSiblingsForPerson(
+  personId: string,
+  nodes: { id: string; type?: string; data: unknown }[],
+  edges: Edge[]
+): { id: string; displayName: string }[] {
+  const parentUnionIds = edges
+    .filter((e) => isChildEdge(e) && e.target === personId)
+    .map((e) => e.source);
+
+  const siblingIds = new Set<string>();
+  for (const unionId of parentUnionIds) {
+    const childIds = edges
+      .filter((e) => isChildEdge(e) && e.source === unionId)
+      .map((e) => e.target);
+    childIds.forEach((id) => {
+      if (id !== personId) siblingIds.add(id);
+    });
+  }
+
+  return Array.from(siblingIds).map((id) => {
+    const node = nodes.find((n) => n.id === id && n.type === "person") as { data?: unknown } | undefined;
+    const displayName = node?.data ? getPersonDisplayName(node.data as PersonNodeData, id, nodes) : id;
+    return { id, displayName };
+  });
+}
+
+function SiblingsSection({
+  personId,
+  nodes,
+  edges,
+  onSelectSibling,
+}: {
+  personId: string;
+  nodes: { id: string; type?: string; data: unknown }[];
+  edges: Edge[];
+  onSelectSibling: (id: string) => void;
+}) {
+  const siblings = getSiblingsForPerson(personId, nodes, edges);
+  if (siblings.length === 0) return null;
+
+  return (
+    <div className="mb-4">
+      <label className="block text-dark-muted text-sm mb-2">Siblings</label>
+      <div className="space-y-1">
+        {siblings.map(({ id, displayName }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onSelectSibling(id)}
+            className="block w-full text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
+          >
+            {displayName}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -92,7 +136,7 @@ function PartnersDisplay({
     : unionData.partnerIds ?? [];
   const names = ids.map((pid) => {
     const partner = nodes.find((n) => n.id === pid && n.type === "person");
-    return (partner?.data as PersonNodeData | undefined)?.name ?? pid;
+    return partner?.data ? getPersonDisplayName(partner.data as PersonNodeData, pid ?? undefined, nodes) : String(pid ?? "");
   });
   const sep = unionData.leftPartnerId && unionData.rightPartnerId ? " \u2014 " : ", ";
   return <p className="text-dark-text text-sm">{names.join(sep) || "\u2014"}</p>;
@@ -114,6 +158,451 @@ function getSwapPartnersState(
     return { canSwap: false, tooltip: "Partner nodes not found." };
   }
   return { canSwap: true, tooltip: "Swap partners" };
+}
+
+function UnionRoleControls({
+  unionId,
+  unionData,
+  nodes,
+  updateUnionPartnerRole,
+}: {
+  unionId: string;
+  unionData: UnionNodeData;
+  nodes: { id: string; type?: string; data: unknown }[];
+  updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
+}) {
+  const leftId = unionData.leftPartnerId ?? unionData.partnerIds?.[0];
+  const rightId = unionData.rightPartnerId ?? unionData.partnerIds?.[1];
+  if (!leftId || !rightId) return null;
+  const leftName = nodes.find((n) => n.id === leftId && n.type === "person")?.data
+    ? getPersonDisplayName(nodes.find((n) => n.id === leftId)!.data as PersonNodeData, leftId, nodes)
+    : "Left";
+  const rightName = nodes.find((n) => n.id === rightId && n.type === "person")?.data
+    ? getPersonDisplayName(nodes.find((n) => n.id === rightId)!.data as PersonNodeData, rightId, nodes)
+    : "Right";
+  const roleOpts: { value: string; label: string }[] = [
+    { value: "", label: "Not set" },
+    { value: "father", label: "Father" },
+    { value: "mother", label: "Mother" },
+  ];
+  return (
+    <div className="mb-4 space-y-2">
+      <label className="block text-dark-muted text-sm mb-2">Parent roles</label>
+      <div className="space-y-2">
+        <div>
+          <span className="block text-dark-muted text-xs mb-1">{leftName}</span>
+          <select
+            value={unionData.leftPartnerRole ?? ""}
+            onChange={(e) =>
+              updateUnionPartnerRole(unionId, "left", (e.target.value || null) as ParentRole | null)
+            }
+            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
+          >
+            {roleOpts.map((o) => (
+              <option key={o.value || "_"} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <span className="block text-dark-muted text-xs mb-1">{rightName}</span>
+          <select
+            value={unionData.rightPartnerRole ?? ""}
+            onChange={(e) =>
+              updateUnionPartnerRole(unionId, "right", (e.target.value || null) as ParentRole | null)
+            }
+            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
+          >
+            {roleOpts.map((o) => (
+              <option key={o.value || "_"} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ParentUnionInfo = {
+  unionId: string;
+  unionNode: { id: string; data: unknown };
+  slot: "left" | "right";
+  otherPartnerId: string;
+  otherPartnerName: string;
+  children: { id: string; displayName: string }[];
+};
+
+function getParentUnionsForPerson(
+  personId: string,
+  nodes: { id: string; type?: string; data: unknown }[],
+  edges: Edge[]
+): ParentUnionInfo[] {
+  const result: ParentUnionInfo[] = [];
+  const unionNodes = nodes.filter((n) => n.type === "union");
+  for (const unionNode of unionNodes) {
+    const data = unionNode.data as UnionNodeData;
+    const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
+    const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
+    if (personId === leftId && rightId) {
+      const otherName = nodes.find((n) => n.id === rightId && n.type === "person")?.data
+        ? getPersonDisplayName(nodes.find((n) => n.id === rightId)!.data as PersonNodeData, rightId, nodes)
+        : "Partner";
+      const childIds = edges
+        .filter((e) => isChildEdge(e) && e.source === unionNode.id)
+        .map((e) => e.target);
+      const children = childIds.map((id) => {
+        const childNode = nodes.find((n) => n.id === id && n.type === "person");
+        const displayName = childNode?.data
+          ? getPersonDisplayName(childNode.data as PersonNodeData, id, nodes)
+          : id;
+        return { id, displayName };
+      });
+      result.push({
+        unionId: unionNode.id,
+        unionNode,
+        slot: "left",
+        otherPartnerId: rightId,
+        otherPartnerName: otherName,
+        children,
+      });
+    } else if (personId === rightId && leftId) {
+      const otherName = nodes.find((n) => n.id === leftId && n.type === "person")?.data
+        ? getPersonDisplayName(nodes.find((n) => n.id === leftId)!.data as PersonNodeData, leftId, nodes)
+        : "Partner";
+      const childIds = edges
+        .filter((e) => isChildEdge(e) && e.source === unionNode.id)
+        .map((e) => e.target);
+      const children = childIds.map((id) => {
+        const childNode = nodes.find((n) => n.id === id && n.type === "person");
+        const displayName = childNode?.data
+          ? getPersonDisplayName(childNode.data as PersonNodeData, id, nodes)
+          : id;
+        return { id, displayName };
+      });
+      result.push({
+        unionId: unionNode.id,
+        unionNode,
+        slot: "right",
+        otherPartnerId: leftId,
+        otherPartnerName: otherName,
+        children,
+      });
+    }
+  }
+  return result;
+}
+
+/** Draggable child for moving between union blocks */
+function DraggableChild({
+  childId,
+  fromUnionId,
+  displayName,
+  onSelect,
+  onRemove,
+}: {
+  childId: string;
+  fromUnionId: string;
+  displayName: string;
+  onSelect: (id: string) => void;
+  onRemove?: (childId: string, displayName: string, e: React.MouseEvent) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `child-${childId}`,
+    data: { childId, fromUnionId },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={`flex items-center gap-1 text-dark-text text-sm hover:text-blue-400 hover:underline ${isDragging ? "opacity-50" : ""} cursor-grab active:cursor-grabbing`}
+    >
+      <span className="text-dark-muted select-none" aria-hidden>⋮⋮</span>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onSelect(childId); }}
+        className="flex-1 text-left"
+      >
+        {displayName}
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onRemove(childId, displayName, e); }}
+          title="Remove from union"
+          className="text-dark-muted hover:text-red-500 px-1 text-xs shrink-0"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Droppable children list for a union block */
+function DroppableChildrenList({
+  unionId,
+  children,
+  onSelect,
+  onRemove,
+}: {
+  unionId: string;
+  children: { id: string; displayName: string }[];
+  onSelect: (id: string) => void;
+  onRemove?: (childId: string, displayName: string, e: React.MouseEvent) => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: unionId });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`min-h-[24px] space-y-1 rounded px-2 py-1 ${isOver ? "bg-blue-500/20 border border-dashed border-blue-500/50" : ""}`}
+    >
+      {children.map(({ id, displayName }) => (
+        <DraggableChild
+          key={id}
+          childId={id}
+          fromUnionId={unionId}
+          displayName={displayName}
+          onSelect={onSelect}
+          onRemove={onRemove}
+        />
+      ))}
+    </div>
+  );
+}
+
+
+function SwapSidesSection({
+  personId,
+  nodes,
+  edges,
+  swapPersonUnionSides,
+}: {
+  personId: string;
+  nodes: { id: string; type?: string; data: unknown }[];
+  edges: Edge[];
+  swapPersonUnionSides: (personId: string) => boolean;
+}) {
+  const parentUnions = getParentUnionsForPerson(personId, nodes, edges);
+  if (parentUnions.length < 2) return null;
+  return (
+    <div className="mb-4">
+      <label className="block text-dark-muted text-sm mb-2">Connections</label>
+      <button
+        type="button"
+        onClick={() => swapPersonUnionSides(personId)}
+        title="Swap which side each union connects from (left ↔ right)"
+        className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent"
+      >
+        Swap Sides
+      </button>
+    </div>
+  );
+}
+
+function OrphanWarningModal({
+  open,
+  displayName,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  displayName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" role="dialog" aria-modal aria-labelledby="orphan-warning-title">
+      <div className="mx-4 max-w-sm rounded-lg border border-dark-accent bg-dark-surface p-4 shadow-xl">
+        <h3 id="orphan-warning-title" className="text-sm font-medium text-dark-text mb-2">
+          Remove from tree?
+        </h3>
+        <p className="text-dark-muted text-sm mb-4">
+          If you remove {displayName} from this union, they belong to no other union and will be removed from the tree.
+        </p>
+        <div className="flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-1.5 text-sm rounded border border-dark-accent/50 hover:border-dark-accent text-dark-text"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="px-3 py-1.5 text-sm rounded bg-red-600 hover:bg-red-500 text-white"
+          >
+            Remove from tree
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Modal shown when removing a person from their only union (they will be orphaned and removed from tree). */
+
+
+
+/** One block per union: Partners, Role, Children. Connections at bottom. */
+function PersonUnionsSection({
+  personId,
+  nodes,
+  edges,
+  onSelectNode,
+  updateUnionPartnerRole,
+  swapPersonUnionSides,
+  moveChildToUnion,
+  removePartnerFromUnion,
+  removeChildFromUnion,
+  removeNodes,
+}: {
+  personId: string;
+  nodes: { id: string; type?: string; data: unknown }[];
+  edges: Edge[];
+  onSelectNode: (id: string) => void;
+  updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
+  swapPersonUnionSides: (personId: string) => boolean;
+  moveChildToUnion: (childId: string, fromUnionId: string, toUnionId: string) => boolean;
+  removePartnerFromUnion: (unionId: string, personId: string) => string | null;
+  removeChildFromUnion: (unionId: string, childId: string) => string | null;
+  removeNodes: (nodeIds: string[]) => void;
+}) {
+  const parentUnions = getParentUnionsForPerson(personId, nodes, edges);
+  if (parentUnions.length === 0) return null;
+
+  const [orphanModal, setOrphanModal] = useState<{
+    open: boolean;
+    personId: string;
+    displayName: string;
+    unionId: string;
+    kind: "partner" | "child";
+  }>({ open: false, personId: "", displayName: "", unionId: "", kind: "partner" });
+
+  const handleRemovePartner = (unionId: string, partnerId: string, displayName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const unionIds = getUnionIdsForPerson(partnerId, edges);
+    if (unionIds.size <= 1) {
+      setOrphanModal({ open: true, personId: partnerId, displayName, unionId, kind: "partner" });
+    } else {
+      const err = removePartnerFromUnion(unionId, partnerId);
+      if (err) alert(err);
+    }
+  };
+
+  const handleRemoveChild = (unionId: string, childId: string, displayName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const unionIds = getUnionIdsForPerson(childId, edges);
+    if (unionIds.size <= 1) {
+      setOrphanModal({ open: true, personId: childId, displayName, unionId, kind: "child" });
+    } else {
+      removeChildFromUnion(unionId, childId);
+    }
+  };
+
+  const confirmOrphanRemove = () => {
+    if (orphanModal.kind === "partner") {
+      const err = removePartnerFromUnion(orphanModal.unionId, orphanModal.personId);
+      if (err) {
+        alert(err);
+        return;
+      }
+    } else {
+      const err = removeChildFromUnion(orphanModal.unionId, orphanModal.personId);
+      if (err) {
+        alert(err);
+        return;
+      }
+    }
+    removeNodes([orphanModal.personId]);
+    setOrphanModal((o) => ({ ...o, open: false }));
+  };
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    const data = active.data.current as { childId?: string; fromUnionId?: string } | undefined;
+    if (!data?.childId || !data?.fromUnionId) return;
+    const toUnionId = String(over.id);
+    if (toUnionId === data.fromUnionId) return;
+    moveChildToUnion(data.childId, data.fromUnionId, toUnionId);
+  };
+
+  return (
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <div className="space-y-4">
+        {parentUnions.map((union) => (
+          <div
+            key={union.unionId}
+            className="rounded-lg border border-dark-accent/40 bg-dark-bg/30 px-3 py-3"
+          >
+            <div className="space-y-2">
+              <div>
+                <label className="block text-dark-muted text-sm mb-1">Partners</label>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onSelectNode(union.otherPartnerId)}
+                    className="flex-1 text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
+                  >
+                    {union.otherPartnerName}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => handleRemovePartner(union.unionId, union.otherPartnerId, union.otherPartnerName, e)}
+                    title="Remove from union"
+                    className="text-dark-muted hover:text-red-500 px-1 text-xs"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-dark-muted text-sm mb-1">Role</label>
+                <span className="text-dark-muted text-xs block mb-0.5">With {union.otherPartnerName}</span>
+                <select
+                  value={((union.unionNode.data as UnionNodeData)[union.slot === "left" ? "leftPartnerRole" : "rightPartnerRole"] ?? "")}
+                  onChange={(e) =>
+                    updateUnionPartnerRole(union.unionId, union.slot, (e.target.value || null) as ParentRole | null)
+                  }
+                  className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Unassigned</option>
+                  <option value="father">Father</option>
+                  <option value="mother">Mother</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-dark-muted text-sm mb-1">Children</label>
+                <DroppableChildrenList
+                  unionId={union.unionId}
+                  children={union.children}
+                  onSelect={onSelectNode}
+                  onRemove={(childId, displayName, e) => handleRemoveChild(union.unionId, childId, displayName, e)}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4">
+        <SwapSidesSection
+          personId={personId}
+          nodes={nodes}
+          edges={edges}
+          swapPersonUnionSides={swapPersonUnionSides}
+        />
+      </div>
+      <OrphanWarningModal
+        open={orphanModal.open}
+        displayName={orphanModal.displayName}
+        onConfirm={confirmOrphanRemove}
+        onCancel={() => setOrphanModal((o) => ({ ...o, open: false }))}
+      />
+    </DndContext>
+  );
 }
 
 function SwapPartnersButton({
@@ -138,6 +627,30 @@ function SwapPartnersButton({
       className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-dark-accent/50"
     >
       Swap Partners
+    </button>
+  );
+}
+
+function SwapUnionSidesButton({
+  unionData,
+  unionId,
+  swapUnionHandleSides,
+}: {
+  unionData: UnionNodeData;
+  unionId: string;
+  swapUnionHandleSides: (id: string) => boolean;
+}) {
+  const leftId = unionData.leftPartnerId ?? unionData.partnerIds?.[0];
+  const rightId = unionData.rightPartnerId ?? unionData.partnerIds?.[1];
+  if (!leftId || !rightId) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => swapUnionHandleSides(unionId)}
+      title="Swap which side each partner's edge connects to (left ↔ right) to reduce crossings"
+      className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent"
+    >
+      Swap Sides
     </button>
   );
 }
@@ -175,17 +688,81 @@ export default function FamilyTreeInspector() {
     anchorNodeId,
     setAnchorNodeId,
     setSelectedNodeIds,
-    updateNodeName,
+    updatePersonNameParts,
+    updatePersonNicknames,
     updateNodeNotes,
     swapUnionPartners,
+    swapUnionHandleSides,
+    swapPersonUnionSides,
+    updateUnionPartnerRole,
+    moveChildToUnion,
+    removePartnerFromUnion,
+    removeChildFromUnion,
+    removeNodes,
     generationAnchors,
     genLabelMode,
     updateNodeGenAnchor,
+    nameRoleSuggestions,
+    setReviewNamesModalOpen,
   } = useFamilyTreeStore();
 
   const selectedNode = primarySelectedNodeId
     ? nodes.find((n) => n.id === primarySelectedNodeId)
     : null;
+
+  const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [nicknamesInput, setNicknamesInput] = useState("");
+
+  const firstRef = useRef<HTMLInputElement>(null);
+  const middleRef = useRef<HTMLInputElement>(null);
+  const lastRef = useRef<HTMLInputElement>(null);
+  const nicknamesRef = useRef<HTMLInputElement>(null);
+
+  const refs = [firstRef, middleRef, lastRef, nicknamesRef];
+
+  useEffect(() => {
+    if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
+      const d = selectedNode.data as PersonNodeData;
+      const parts = getPersonNameParts(d);
+      setFirstName(parts.first);
+      setMiddleName(parts.middle);
+      setLastName(parts.last);
+      const nicks = d.nicknames ?? [];
+      setNicknamesInput(nicks.join(", "));
+    }
+  }, [selectedNode?.id, (selectedNode?.data as PersonNodeData)?.firstName, (selectedNode?.data as PersonNodeData)?.middleName, (selectedNode?.data as PersonNodeData)?.lastName, (selectedNode?.data as PersonNodeData)?.name, (selectedNode?.data as PersonNodeData)?.nicknames]);
+
+  useEffect(() => {
+    if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
+      firstRef.current?.focus();
+    }
+  }, [selectedNode?.id]);
+
+  const saveNameParts = () => {
+    if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
+      updatePersonNameParts(selectedNode.id, { firstName, middleName, lastName });
+    }
+  };
+
+  const saveNicknames = () => {
+    if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
+      const parsed = nicknamesInput
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      updatePersonNicknames(selectedNode.id, parsed);
+    }
+  };
+
+  const makeTabHandler = (index: number, shift: boolean) => (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    const n = 4;
+    const nextIndex = shift ? (index - 1 + n) % n : (index + 1) % n;
+    refs[nextIndex]?.current?.focus();
+  };
 
   if (!selectedNode) {
     return (
@@ -198,7 +775,7 @@ export default function FamilyTreeInspector() {
     );
   }
 
-  const data = selectedNode.data;
+  const nodeData = selectedNode.data;
 
   return (
     <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
@@ -206,9 +783,9 @@ export default function FamilyTreeInspector() {
         <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide flex-1">
           Inspector
         </h3>
-        {data.kind === "union" && (
+        {nodeData.kind === "union" && (
           <SwapPartnersIconButton
-            unionData={data as UnionNodeData}
+            unionData={nodeData as UnionNodeData}
             unionId={selectedNode.id}
             swapUnionPartners={swapUnionPartners}
             nodes={nodes}
@@ -217,8 +794,38 @@ export default function FamilyTreeInspector() {
       </div>
       <p className="text-dark-muted text-xs mb-3 font-mono">{selectedNode.id}</p>
 
-      {data.kind === "person" ? (
+      {nodeData.kind === "person" ? (
         <>
+          {(() => {
+            const suggestionsForNode = nameRoleSuggestions.filter((s) => s.nodeId === selectedNode.id);
+            const parentUnions = getParentUnionsForPerson(selectedNode.id, nodes, edges);
+            const hasUnresolvedRole = parentUnions.some((pu) => {
+              const d = pu.unionNode.data as UnionNodeData;
+              return !(pu.slot === "left" ? d.leftPartnerRole : d.rightPartnerRole);
+            });
+            if (suggestionsForNode.length === 0 && !hasUnresolvedRole) return null;
+            return (
+              <div className="mb-4 p-3 rounded-lg border border-amber-500/50 bg-amber-500/10 space-y-2">
+                {hasUnresolvedRole && (
+                  <p className="text-amber-600 text-sm">Role not set – please select Father or Mother.</p>
+                )}
+                {suggestionsForNode.length > 0 && (
+                  <div>
+                    <p className="text-amber-600 text-sm mb-1">
+                      Suggested: {suggestionsForNode.length} change{suggestionsForNode.length === 1 ? "" : "s"} available
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setReviewNamesModalOpen(true)}
+                      className="text-xs px-2 py-1 rounded border border-amber-500/50 hover:bg-amber-500/20 text-amber-600"
+                    >
+                      Review suggestions
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="mb-4 flex flex-col gap-2">
             {anchorNodeId === selectedNode.id ? (
               <button
@@ -241,7 +848,7 @@ export default function FamilyTreeInspector() {
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Generation anchor</label>
             <select
-              value={(data as PersonNodeData).genAnchorId ?? ""}
+              value={(nodeData as PersonNodeData).genAnchorId ?? ""}
               onChange={(e) => updateNodeGenAnchor(selectedNode.id, e.target.value || null)}
               className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
             >
@@ -260,21 +867,73 @@ export default function FamilyTreeInspector() {
             edges={edges}
             onSelectParent={(id) => setSelectedNodeIds([id])}
           />
-          <Input
-            label="Name"
-            value={data.name}
-            onChange={(e) => updateNodeName(selectedNode.id, e.target.value)}
-            onBlur={(e) => {
-              const trimmed = e.target.value.trim();
-              if (trimmed !== e.target.value) {
-                updateNodeName(selectedNode.id, trimmed);
-              }
-            }}
+          <SiblingsSection
+            personId={selectedNode.id}
+            nodes={nodes}
+            edges={edges}
+            onSelectSibling={(id) => setSelectedNodeIds([id])}
           />
+          <PersonUnionsSection
+            personId={selectedNode.id}
+            nodes={nodes}
+            edges={edges}
+            onSelectNode={(id) => setSelectedNodeIds([id])}
+            updateUnionPartnerRole={updateUnionPartnerRole}
+            swapPersonUnionSides={swapPersonUnionSides}
+            moveChildToUnion={moveChildToUnion}
+            removePartnerFromUnion={removePartnerFromUnion}
+            removeChildFromUnion={removeChildFromUnion}
+            removeNodes={removeNodes}
+          />
+          <div className="mb-4">
+            <div className="space-y-2">
+              <Input
+                ref={firstRef}
+                label="First name"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                onBlur={saveNameParts}
+                onKeyDown={(e) => {
+                  if (e.key === "Tab") makeTabHandler(0, e.shiftKey)(e);
+                }}
+              />
+              <Input
+                ref={middleRef}
+                label="Middle name"
+                value={middleName}
+                onChange={(e) => setMiddleName(e.target.value)}
+                onBlur={saveNameParts}
+                onKeyDown={(e) => {
+                  if (e.key === "Tab") makeTabHandler(1, e.shiftKey)(e);
+                }}
+              />
+              <Input
+                ref={lastRef}
+                label="Last name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                onBlur={saveNameParts}
+                onKeyDown={(e) => {
+                  if (e.key === "Tab") makeTabHandler(2, e.shiftKey)(e);
+                }}
+              />
+              <Input
+                ref={nicknamesRef}
+                label="Nicknames"
+                value={nicknamesInput}
+                onChange={(e) => setNicknamesInput(e.target.value)}
+                onBlur={saveNicknames}
+                onKeyDown={(e) => {
+                  if (e.key === "Tab") makeTabHandler(3, e.shiftKey)(e);
+                }}
+                placeholder="Bob, Bobby, Robert"
+              />
+            </div>
+          </div>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Notes</label>
             <textarea
-              value={data.notes}
+              value={nodeData.notes}
               onChange={(e) => updateNodeNotes(selectedNode.id, e.target.value)}
               className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm resize-y min-h-[80px] focus:outline-none focus:border-blue-500"
               placeholder="Notes..."
@@ -285,20 +944,31 @@ export default function FamilyTreeInspector() {
         <>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Partners</label>
-            <PartnersDisplay nodes={nodes} unionData={data as UnionNodeData} />
+            <PartnersDisplay nodes={nodes} unionData={nodeData as UnionNodeData} />
           </div>
-          <div className="mb-4">
+          <UnionRoleControls
+            unionId={selectedNode.id}
+            unionData={nodeData as UnionNodeData}
+            nodes={nodes}
+            updateUnionPartnerRole={updateUnionPartnerRole}
+          />
+          <div className="mb-4 flex flex-wrap gap-2">
             <SwapPartnersButton
-              unionData={data as UnionNodeData}
+              unionData={nodeData as UnionNodeData}
               unionId={selectedNode.id}
               swapUnionPartners={swapUnionPartners}
               nodes={nodes}
+            />
+            <SwapUnionSidesButton
+              unionData={nodeData as UnionNodeData}
+              unionId={selectedNode.id}
+              swapUnionHandleSides={swapUnionHandleSides}
             />
           </div>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Notes</label>
             <textarea
-              value={data.notes}
+              value={nodeData.notes}
               onChange={(e) => updateNodeNotes(selectedNode.id, e.target.value)}
               className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm resize-y min-h-[80px] focus:outline-none focus:border-blue-500"
               placeholder="Notes..."

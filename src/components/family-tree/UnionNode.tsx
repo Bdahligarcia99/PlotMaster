@@ -3,8 +3,10 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import type { UnionNodeData } from "../../store/familyTreeStore";
 import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H } from "../../store/familyTreeStore";
 
-function UnionNode({ id, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
+function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
   const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
+  const exportCaptureFlags = useFamilyTreeStore((s) => s.exportCaptureFlags);
+  const showNotesForExport = exportCaptureFlags?.includeNotes && data.notes?.trim();
   const nodeInfoTopLeft = useFamilyTreeStore((s) => s.nodeInfoTopLeft);
   const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
   const nodeInfoSize = useFamilyTreeStore((s) => s.nodeInfoSize);
@@ -50,6 +52,7 @@ function UnionNode({ id, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
   const size = nodeSizesById[id] ?? { width: DEFAULT_UNION_W, height: DEFAULT_UNION_H };
   const centerX = Math.round(x + size.width / 2);
   const centerY = Math.round(y + size.height / 2);
+  const isBackward = data.unionType === "backward";
 
   return (
     <div className="relative group" onPointerDown={handleRootPointerDown}>
@@ -67,12 +70,22 @@ function UnionNode({ id, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
         className={`px-3 py-2 rounded-lg border min-w-[60px] flex flex-col items-center justify-center transition-colors ${
           selected
             ? "bg-dark-accent/80 border-blue-500 shadow-md"
-            : "bg-dark-accent/50 border-dark-accent hover:border-dark-muted"
+            : isBackward
+              ? "bg-dark-accent/50 border-amber-500/70 hover:border-amber-500"
+              : "bg-dark-accent/50 border-dark-accent hover:border-dark-muted"
         }`}
       >
-        <Handle type="target" position={Position.Top} id="partners" className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
+        <Handle type="target" position={Position.Top} id="leftPartner" style={{ left: "25%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
+        <Handle type="target" position={Position.Top} id="rightPartner" style={{ left: "75%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="source" position={Position.Bottom} id="children" className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
-        <span className="text-dark-muted text-xs font-medium">{"<=>"}</span>
+        <span className="text-dark-muted text-xs font-medium" title={isBackward ? "Backward union (children → parents)" : undefined}>
+          {isBackward ? "⇑" : "<=>"}
+        </span>
+        {showNotesForExport && (
+          <span className="text-[10px] text-dark-muted mt-0.5 line-clamp-2 max-w-full break-words text-center">
+            {data.notes.trim()}
+          </span>
+        )}
       </div>
     </div>
   );

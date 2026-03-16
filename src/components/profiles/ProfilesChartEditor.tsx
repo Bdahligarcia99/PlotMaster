@@ -9,6 +9,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import AttributeValueInput from "./AttributeValueInput";
 import CreateLayoutEditor from "./CreateLayoutEditor";
 import {
   useCharacterProfilesStore,
@@ -16,12 +17,28 @@ import {
   type NoteBlock,
   type AttributeBlock,
   type ImageBlock,
+  type ProfileSection,
   type SectionHeadingLevel,
   type AttributeMetaItem,
   type AttributeType,
 } from "../../store/characterProfilesStore";
+import {
+  addSectionToDraft,
+  updateSectionInDraft,
+  removeSectionFromDraft,
+  reorderSectionsInDraft,
+  moveSectionToInDraft,
+  addContentBlockToDraft,
+  addAttributeToSectionInDraft,
+  updateContentBlockInDraft,
+  removeContentBlockFromDraft,
+  reorderContentBlocksInDraft,
+  removeAttributeKeyFromDraft,
+  renameAttributeKeyInDraft,
+  updateAttributeMetaInDraft,
+} from "../../utils/profileSectionDraftHelpers";
 import Button from "../ui/Button";
-import AutoResizeTextarea from "../ui/AutoResizeTextarea";
+import NoteTextarea from "../ui/NoteTextarea";
 
 function getOrderedAttributeEntries(block: AttributeBlock): [string, string][] {
   const pairs = block.keyValuePairs ?? {};
@@ -33,86 +50,6 @@ function getOrderedAttributeEntries(block: AttributeBlock): [string, string][] {
 
 function getAttributeMeta(block: AttributeBlock, key: string): AttributeMetaItem | undefined {
   return (block.attributeMeta ?? {})[key];
-}
-
-function AttributeValueInput({
-  value,
-  onChange,
-  meta,
-  inputId,
-  placeholder,
-  className,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  meta?: AttributeMetaItem;
-  inputId: string;
-  placeholder?: string;
-  className?: string;
-}) {
-  const type = meta?.type ?? "text";
-  const options = meta?.options ?? [];
-  const allowCustom = meta?.allowCustom ?? false;
-
-  if (type === "number") {
-    return (
-      <input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={className}
-      />
-    );
-  }
-
-  if (type === "select" && options.length > 0) {
-    if (allowCustom) {
-      return (
-        <>
-          <input
-            list={`opts-${inputId}`}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            className={className}
-          />
-          <datalist id={`opts-${inputId}`}>
-            {options.map((o) => (
-              <option key={o} value={o} />
-            ))}
-          </datalist>
-        </>
-      );
-    }
-    return (
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={className}
-      >
-        <option value="">{placeholder ?? "Select..."}</option>
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-        {value && !options.includes(value) && (
-          <option value={value}>{value} (custom)</option>
-        )}
-      </select>
-    );
-  }
-
-  return (
-    <input
-      type="text"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className={className}
-    />
-  );
 }
 
 function AttributeMetaEditor({
@@ -131,17 +68,32 @@ function AttributeMetaEditor({
   const [type, setType] = useState<AttributeType>(meta?.type ?? "text");
   const [optionsText, setOptionsText] = useState((meta?.options ?? []).join("\n"));
   const [allowCustom, setAllowCustom] = useState(meta?.allowCustom ?? false);
+  const [min, setMin] = useState<string>(meta?.min != null ? String(meta.min) : "");
+  const [max, setMax] = useState<string>(meta?.max != null ? String(meta.max) : "");
+  const [step, setStep] = useState<string>(meta?.step != null ? String(meta.step) : "1");
 
   const handleSave = () => {
     const opts = optionsText
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-    onSave({
+    const payload: Partial<AttributeMetaItem> = {
       type,
       options: type === "select" ? opts : undefined,
       allowCustom: type === "select" ? allowCustom : undefined,
-    });
+      min: undefined,
+      max: undefined,
+      step: undefined,
+    };
+    if (type === "number" || type === "numberScroll") {
+      const minNum = min.trim() === "" ? undefined : parseFloat(min);
+      const maxNum = max.trim() === "" ? undefined : parseFloat(max);
+      const stepNum = step.trim() === "" ? undefined : parseFloat(step);
+      if (!Number.isNaN(minNum)) payload.min = minNum;
+      if (!Number.isNaN(maxNum)) payload.max = maxNum;
+      if (!Number.isNaN(stepNum)) payload.step = stepNum;
+    }
+    onSave(payload);
     onClose();
   };
 
@@ -179,9 +131,49 @@ function AttributeMetaEditor({
           >
             <option value="text">Text</option>
             <option value="number">Number</option>
+            <option value="numberScroll">Number (Scrollable)</option>
             <option value="select">Select</option>
+            <option value="date">Date</option>
           </select>
         </div>
+        {(type === "number" || type === "numberScroll") && (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="block text-[10px] text-dark-muted mb-0.5">Min</label>
+                <input
+                  type="number"
+                  value={min}
+                  onChange={(e) => setMin(e.target.value)}
+                  placeholder="—"
+                  className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-dark-muted mb-0.5">Max</label>
+                <input
+                  type="number"
+                  value={max}
+                  onChange={(e) => setMax(e.target.value)}
+                  placeholder="—"
+                  className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-dark-muted mb-0.5">Step</label>
+                <input
+                  type="number"
+                  value={step}
+                  onChange={(e) => setStep(e.target.value)}
+                  placeholder="1"
+                  min={0.0001}
+                  step={0.1}
+                  className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
+                />
+              </div>
+            </div>
+          </>
+        )}
         {type === "select" && (
           <>
             <div>
@@ -234,55 +226,38 @@ function DragHandle({ listeners, attributes }: { listeners?: object; attributes?
   );
 }
 
-const NOTE_COLLAPSE_LINES = 4;
-const NOTE_PREVIEW_LINES = 3;
-
 function NoteBlockRow({
   note,
   onUpdate,
   onRemove,
   compact,
+  readOnly,
 }: {
   note: NoteBlock;
   onUpdate: (content: string) => void;
   onRemove?: () => void;
   compact?: boolean;
+  readOnly?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const content = note.content ?? "";
-  const lines = content.split("\n");
-  const isLong = lines.length > NOTE_COLLAPSE_LINES;
 
   return (
     <div className={`group flex gap-2 ${compact ? "py-1" : "py-2"}`}>
       <div className="flex-1 min-w-0">
-        <div className={isLong && !expanded ? "max-h-[6.5rem] overflow-y-auto" : undefined}>
-          <AutoResizeTextarea
-            value={content}
-            onChange={onUpdate}
-            onBlur={(e) => onUpdate(e.currentTarget.value)}
-            placeholder="Add a note or description..."
-            className={`w-full px-2 py-1.5 text-sm bg-dark-bg/50 border border-dark-accent/40 rounded text-dark-text placeholder:text-dark-muted focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 min-h-[3rem] ${
-              compact ? "text-xs" : ""
-            }`}
-          />
-        </div>
-        {isLong && (
-          <button
-            type="button"
-            onClick={() => setExpanded((e) => !e)}
-            className="mt-1 text-xs text-blue-400 hover:text-blue-300"
-          >
-            {expanded ? "Show less" : "Show more"}
-          </button>
-        )}
+        <NoteTextarea
+          value={content}
+          onChange={onUpdate}
+          placeholder="Add a label or description..."
+          compact={compact}
+          readOnly={readOnly}
+        />
       </div>
       {onRemove && (
         <button
           type="button"
           onClick={onRemove}
           className="p-1.5 text-dark-muted hover:text-red-400 hover:bg-red-500/10 rounded transition-colors self-start"
-          title="Remove note"
+          title="Remove label"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -447,11 +422,158 @@ function SortableContentBlock({
   );
 }
 
+/** Read-only layout view for comparison mode – list layout only, no edit controls */
+function CharacterLayoutReadOnlyView({
+  characterName,
+  sections,
+}: {
+  characterName: string;
+  sections: ProfileSection[];
+}) {
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const ordered = getOrderedSections(sections);
+  const sectionById = new Map(sections.map((s) => [s.id, s]));
+  const hasCollapsedAncestor = (id: string) => {
+    let pid: string | null = sectionById.get(id)?.parentId ?? null;
+    while (pid) {
+      if (collapsedSections.has(pid)) return true;
+      pid = sectionById.get(pid)?.parentId ?? null;
+    }
+    return false;
+  };
+  const visible = ordered.filter((s) => !hasCollapsedAncestor(s.id));
+  const h1Sections = visible.filter((s) => s.parentId === null);
+  const getChildren = (parentId: string) =>
+    visible.filter((s) => s.parentId === parentId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  const toggle = (id: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const renderSection = (section: ProfileSection): React.ReactNode => {
+    const level = (section.headingLevel ?? "h1") as SectionHeadingLevel;
+    const levelStyles: Record<SectionHeadingLevel, string> = {
+      h1: "ml-0",
+      h2: "ml-4",
+      h3: "ml-8",
+      h4: "ml-12",
+    };
+    const nameStyles: Record<SectionHeadingLevel, string> = {
+      h1: "text-sm font-semibold uppercase tracking-wide",
+      h2: "text-sm font-medium",
+      h3: "text-xs font-medium",
+      h4: "text-xs font-normal text-dark-muted",
+    };
+    const blocks = section.contentBlocks ?? [];
+    const isCol = collapsedSections.has(section.id);
+    const children = getChildren(section.id);
+
+    return (
+      <React.Fragment key={section.id}>
+        <section
+          className={`border border-dark-accent/30 rounded-lg overflow-hidden bg-dark-bg/30 ${levelStyles[level]}`}
+        >
+          <div className="px-3 py-2 bg-dark-accent/20 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => toggle(section.id)}
+              className="p-0.5 text-dark-muted hover:text-dark-text"
+              title={isCol ? "Expand" : "Collapse"}
+            >
+              <span className={isCol ? "" : "inline-block rotate-90"}>▶</span>
+            </button>
+            <span className={`flex-1 px-2 py-1 ${nameStyles[level]}`}>{section.label}</span>
+          </div>
+          {!isCol && (
+            <div className="px-3 pb-3 pt-1 space-y-3">
+              {blocks.map((block) => {
+                if (block.type === "note") {
+                  return (
+                    <div key={block.id} className="py-2 border-b border-dark-accent/20 last:border-0">
+                      <div className="text-sm text-dark-text whitespace-pre-wrap">{block.content ?? ""}</div>
+                    </div>
+                  );
+                }
+                if (block.type === "image") {
+                  return (
+                    <div key={block.id} className="py-2 border-b border-dark-accent/20 last:border-0">
+                      <div className="text-xs text-dark-muted mb-1">{block.label || "Image"}</div>
+                      {block.imageUrl ? (
+                        <img
+                          src={block.imageUrl}
+                          alt={block.label || ""}
+                          className="max-h-48 object-contain rounded"
+                        />
+                      ) : (
+                        <div className="py-8 text-center text-dark-muted text-xs border border-dashed border-dark-accent/40 rounded">
+                          Image placeholder
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                if (block.type === "attributes") {
+                  const entries = getOrderedAttributeEntries(block);
+                  return (
+                    <div key={block.id} className="space-y-1">
+                      {entries.length === 0 ? (
+                        <p className="text-dark-muted text-xs py-2">No attributes.</p>
+                      ) : (
+                        entries.map(([key, value]) => (
+                          <div
+                            key={key}
+                            className="flex gap-2 py-2 border-b border-dark-accent/20 last:border-0"
+                          >
+                            <span className="px-2 py-1.5 text-sm text-dark-muted truncate">{key}</span>
+                            <span className="flex-1 px-2 py-1.5 text-sm text-dark-text truncate">{value}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })}
+            </div>
+          )}
+        </section>
+        {!isCol && children.length > 0 && (
+          <div className="space-y-6">
+            {children.map((c) => renderSection(c))}
+          </div>
+        )}
+      </React.Fragment>
+    );
+  };
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex-shrink-0 px-3 py-2 border-b border-dark-accent/50 bg-dark-accent/20">
+        <h3 className="text-sm font-medium text-dark-text truncate">{characterName}</h3>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="max-w-2xl space-y-6">
+          {h1Sections.length === 0 ? (
+            <p className="text-dark-muted text-sm py-4">No sections.</p>
+          ) : (
+            h1Sections.map((h1) => renderSection(h1))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilesChartEditor() {
   const { id: projectId } = useParams<{ id: string }>();
   const characters = useCharacterProfilesStore((s) => s.characters);
   const selectedCharacterId = useCharacterProfilesStore((s) => s.selectedCharacterId);
-  const addSection = useCharacterProfilesStore((s) => s.addSection);
+  const comparisonCharacterId = useCharacterProfilesStore((s) => s.comparisonCharacterId);
+  const exitComparison = useCharacterProfilesStore((s) => s.exitComparison);
   const updateSectionLabel = useCharacterProfilesStore((s) => s.updateSectionLabel);
   const updateSectionHeadingLevel = useCharacterProfilesStore((s) => s.updateSectionHeadingLevel);
   const removeSection = useCharacterProfilesStore((s) => s.removeSection);
@@ -460,19 +582,34 @@ export default function ProfilesChartEditor() {
   const addContentBlock = useCharacterProfilesStore((s) => s.addContentBlock);
   const addAttributeToSection = useCharacterProfilesStore((s) => s.addAttributeToSection);
   const updateContentBlock = useCharacterProfilesStore((s) => s.updateContentBlock);
-  const removeContentBlock = useCharacterProfilesStore((s) => s.removeContentBlock);
   const reorderContentBlocks = useCharacterProfilesStore((s) => s.reorderContentBlocks);
   const updateAttributeKey = useCharacterProfilesStore((s) => s.updateAttributeKey);
-  const removeAttributeKey = useCharacterProfilesStore((s) => s.removeAttributeKey);
   const renameAttributeKey = useCharacterProfilesStore((s) => s.renameAttributeKey);
   const updateAttributeMeta = useCharacterProfilesStore((s) => s.updateAttributeMeta);
+  const createTemplateFromSections = useCharacterProfilesStore((s) => s.createTemplateFromSections);
   const saveTemplateFromCharacter = useCharacterProfilesStore((s) => s.saveTemplateFromCharacter);
   const chartLayoutMode = useCharacterProfilesStore((s) => s.chartLayoutMode);
   const setChartLayoutMode = useCharacterProfilesStore((s) => s.setChartLayoutMode);
-  const setEditLayoutDirty = useCharacterProfilesStore((s) => s.setEditLayoutDirty);
+  const editLayoutDirty = useCharacterProfilesStore((s) => s.editLayoutDirty);
+  const editLayoutDraftSections = useCharacterProfilesStore((s) => s.editLayoutDraftSections);
+  const setEditLayoutDraftSections = useCharacterProfilesStore((s) => s.setEditLayoutDraftSections);
+  const applyEditLayoutDraftToCharacter = useCharacterProfilesStore((s) => s.applyEditLayoutDraftToCharacter);
+  const chartSectionLayoutMode = useCharacterProfilesStore((s) => s.chartSectionLayoutMode);
+  const unlinkCharacterFromTemplate = useCharacterProfilesStore((s) => s.unlinkCharacterFromTemplate);
+  const getTemplateById = useCharacterProfilesStore((s) => s.getTemplateById);
 
-  const canEditStructure = chartLayoutMode === "edit";
+  const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
+  const linkedTemplate = projectId && selectedCharacter?.linkedTemplateId
+    ? getTemplateById(projectId, selectedCharacter.linkedTemplateId)
+    : null;
+  const isLinked = Boolean(linkedTemplate);
+  const canEditStructure = chartLayoutMode === "edit" && !isLinked;
   const isFillMode = chartLayoutMode === "fill";
+
+  const sourceSections = canEditStructure
+    ? editLayoutDraftSections
+    : (selectedCharacter?.sections ?? []);
+  const sections = getOrderedSections(sourceSections);
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [metaEditorFor, setMetaEditorFor] = useState<{ blockId: string; key: string } | null>(null);
@@ -485,39 +622,39 @@ export default function ProfilesChartEditor() {
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [saveTemplateName, setSaveTemplateName] = useState("");
   const [saveTemplateError, setSaveTemplateError] = useState<string | null>(null);
-
-  const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
-  const sections = selectedCharacter ? getOrderedSections(selectedCharacter.sections ?? []) : [];
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [unlinkConfirmOpen, setUnlinkConfirmOpen] = useState(false);
 
   const handleAddSection = (parentId?: string | null) => {
-    if (!projectId || !selectedCharacterId || !canEditStructure) return;
-    addSection(projectId, selectedCharacterId, parentId ?? null);
-    setEditLayoutDirty(true);
+    if (!canEditStructure) return;
+    setEditLayoutDraftSections(addSectionToDraft(sourceSections, parentId ?? null));
   };
 
   const handleSaveSectionEdit = (sectionId: string) => {
-    if (!projectId || !selectedCharacterId) return;
     const trimmed = draftSectionLabel.trim() || "New section";
-    updateSectionLabel(projectId, selectedCharacterId, sectionId, trimmed);
     setEditingSectionId(null);
-    if (canEditStructure) setEditLayoutDirty(true);
+    if (canEditStructure) {
+      setEditLayoutDraftSections(updateSectionInDraft(sourceSections, sectionId, { label: trimmed }));
+    } else if (projectId && selectedCharacterId) {
+      updateSectionLabel(projectId, selectedCharacterId, sectionId, trimmed);
+    }
   };
 
   const handleSaveKeyEdit = (sectionId: string, blockId: string, oldKey: string) => {
-    if (!projectId || !selectedCharacterId) return;
     const trimmed = draftKey.trim();
-    if (trimmed && trimmed !== oldKey) {
-      renameAttributeKey(projectId, selectedCharacterId, sectionId, blockId, oldKey, trimmed);
-      if (canEditStructure) setEditLayoutDirty(true);
-    }
     setEditingKey(null);
     setEditingKeyBlockId(null);
+    if (!trimmed || trimmed === oldKey) return;
+    if (canEditStructure) {
+      setEditLayoutDraftSections(renameAttributeKeyInDraft(sourceSections, sectionId, blockId, oldKey, trimmed));
+    } else if (projectId && selectedCharacterId) {
+      renameAttributeKey(projectId, selectedCharacterId, sectionId, blockId, oldKey, trimmed);
+    }
   };
 
   const handleRemoveAttributeKey = (sectionId: string, blockId: string, key: string) => {
-    if (!projectId || !selectedCharacterId || !canEditStructure) return;
-    removeAttributeKey(projectId, selectedCharacterId, sectionId, blockId, key);
-    setEditLayoutDirty(true);
+    if (!canEditStructure) return;
+    setEditLayoutDraftSections(removeAttributeKeyFromDraft(sourceSections, sectionId, blockId, key));
     if (editingKeyBlockId === blockId && editingKey === key) {
       setEditingKey(null);
       setEditingKeyBlockId(null);
@@ -543,12 +680,17 @@ export default function ProfilesChartEditor() {
     return false;
   };
   const visibleSections = sections.filter((s) => !hasCollapsedAncestor(s.id));
+  const h1Sections = sections.filter((s) => (s.parentId ?? null) === null);
+  const getChildren = (parentId: string | null) =>
+    visibleSections
+      .filter((s) => (s.parentId ?? null) === parentId)
+      .sort((a, b) => a.order - b.order);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over || !projectId || !selectedCharacterId) return;
+    if (!over) return;
     const activeId = String(active.id);
     const overId = String(over.id);
     if (activeId === overId) return;
@@ -561,16 +703,28 @@ export default function ProfilesChartEditor() {
       if (!activeSection || !overSection) return;
       const parentId = activeSection.parentId ?? null;
       const overParentId = overSection.parentId ?? null;
-      if (parentId !== overParentId) {
-        moveSectionTo(projectId, selectedCharacterId, sectionId, overParentId, overSectionId);
-        setEditLayoutDirty(true);
-      } else {
-        const siblings = sections.filter((s) => (s.parentId ?? null) === parentId);
-        const fromIndex = siblings.findIndex((s) => s.id === sectionId);
-        const toIndex = siblings.findIndex((s) => s.id === overSectionId);
-        if (fromIndex >= 0 && toIndex >= 0) {
-          reorderSections(projectId, selectedCharacterId, parentId, fromIndex, toIndex);
-          setEditLayoutDirty(true);
+      if (canEditStructure) {
+        const next = parentId !== overParentId
+          ? moveSectionToInDraft(sourceSections, sectionId, overParentId, overSectionId)
+          : (() => {
+              const siblings = sourceSections.filter((s) => (s.parentId ?? null) === parentId);
+              const sorted = [...siblings].sort((a, b) => a.order - b.order);
+              const fromIndex = sorted.findIndex((s) => s.id === sectionId);
+              const toIndex = sorted.findIndex((s) => s.id === overSectionId);
+              if (fromIndex < 0 || toIndex < 0) return sourceSections;
+              return reorderSectionsInDraft(sourceSections, parentId, fromIndex, toIndex);
+            })();
+        setEditLayoutDraftSections(next);
+      } else if (projectId && selectedCharacterId) {
+        if (parentId !== overParentId) {
+          moveSectionTo(projectId, selectedCharacterId, sectionId, overParentId, overSectionId);
+        } else {
+          const siblings = sections.filter((s) => (s.parentId ?? null) === parentId);
+          const fromIndex = siblings.findIndex((s) => s.id === sectionId);
+          const toIndex = siblings.findIndex((s) => s.id === overSectionId);
+          if (fromIndex >= 0 && toIndex >= 0) {
+            reorderSections(projectId, selectedCharacterId, parentId, fromIndex, toIndex);
+          }
         }
       }
     } else if (activeId.startsWith("block-") && overId.startsWith("block-")) {
@@ -581,9 +735,11 @@ export default function ProfilesChartEditor() {
       const blocks = section.contentBlocks ?? [];
       const fromIndex = blocks.findIndex((b) => b.id === activeBlockId);
       const toIndex = blocks.findIndex((b) => b.id === overBlockId);
-      if (fromIndex >= 0 && toIndex >= 0) {
+      if (fromIndex < 0 || toIndex < 0) return;
+      if (canEditStructure) {
+        setEditLayoutDraftSections(reorderContentBlocksInDraft(sourceSections, section.id, fromIndex, toIndex));
+      } else if (projectId && selectedCharacterId) {
         reorderContentBlocks(projectId, selectedCharacterId, section.id, fromIndex, toIndex);
-        setEditLayoutDirty(true);
       }
     }
   };
@@ -607,30 +763,93 @@ export default function ProfilesChartEditor() {
     );
   }
 
+  const comparisonCharacter = comparisonCharacterId
+    ? characters.find((c) => c.id === comparisonCharacterId)
+    : null;
+  const isComparisonMode = Boolean(comparisonCharacter);
+
+  if (isComparisonMode && comparisonCharacter) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0 bg-dark-surface/30 overflow-hidden">
+        <div className="flex-shrink-0 p-4 border-b border-dark-accent/50 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
+              Comparing: {selectedCharacter.name} & {comparisonCharacter.name}
+            </h2>
+          </div>
+          <Button variant="secondary" size="sm" onClick={exitComparison} title="Exit comparison view">
+            Exit comparison
+          </Button>
+        </div>
+        <div className="flex-1 flex min-h-0 overflow-hidden">
+          <div className="flex-1 min-w-0 border-r border-dark-accent/50 overflow-hidden">
+            <CharacterLayoutReadOnlyView
+              characterName={selectedCharacter.name}
+              sections={selectedCharacter.sections ?? []}
+            />
+          </div>
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <CharacterLayoutReadOnlyView
+              characterName={comparisonCharacter.name}
+              sections={comparisonCharacter.sections ?? []}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const handleUnlink = () => {
+    if (projectId && selectedCharacterId) {
+      unlinkCharacterFromTemplate(projectId, selectedCharacterId);
+      setUnlinkConfirmOpen(false);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-dark-surface/30 overflow-hidden">
-      <div className="p-4 border-b border-dark-accent/50 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
-            {selectedCharacter.name}
-          </h2>
-          {chartLayoutMode === "edit" && (
-            <span className="px-2 py-0.5 text-xs bg-amber-500/20 text-amber-400 rounded border border-amber-500/40">
-              Edit layout
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {isFillMode ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setChartLayoutMode("edit")}
-              title="Edit layout structure"
-            >
-              Edit layout
-            </Button>
-          ) : (
+      <div className="p-4 border-b border-dark-accent/50 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
+              {selectedCharacter.name}
+            </h2>
+            {chartLayoutMode === "edit" && !isLinked && (
+              <span className="px-2 py-0.5 text-xs bg-amber-500/20 text-amber-400 rounded border border-amber-500/40">
+                Edit layout
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {isLinked ? (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled
+                  title={`Layout is linked to "${linkedTemplate?.name ?? ""}". Edit the template to change the layout.`}
+                >
+                  Edit layout
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setUnlinkConfirmOpen(true)}
+                  title="Unlink and keep current layout"
+                >
+                  Unlink
+                </Button>
+              </>
+            ) : isFillMode ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setChartLayoutMode("edit")}
+                title="Edit layout structure"
+              >
+                Edit layout
+              </Button>
+            ) : (
             <>
               <Button
                 variant="secondary"
@@ -646,29 +865,48 @@ export default function ProfilesChartEditor() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => setSaveTemplateOpen(true)}
-                title="Save layout as template"
+                onClick={() => {
+                  if (editLayoutDirty) setDiscardConfirmOpen(true);
+                  else setChartLayoutMode("fill");
+                }}
+                title={editLayoutDirty ? "Discard changes and close" : "Close"}
               >
-                Save as template
+                {editLayoutDirty ? "Cancel" : "Close"}
               </Button>
               <Button
                 variant="primary"
                 size="sm"
                 onClick={() => {
-                  setEditLayoutDirty(false);
-                  setChartLayoutMode("fill");
+                  if (projectId && selectedCharacterId) {
+                    applyEditLayoutDraftToCharacter(projectId, selectedCharacterId);
+                  }
                 }}
-                title="Done editing layout"
+                disabled={!editLayoutDirty}
+                title="Save layout changes to character"
               >
-                Done
+                Save changes
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setSaveTemplateOpen(true)}
+                title="Save layout as template"
+              >
+                Save as template
               </Button>
             </>
           )}
         </div>
+        </div>
+        {isLinked && (
+          <div className="px-3 py-2 rounded border border-blue-500/40 bg-blue-500/10 text-blue-300 text-xs">
+            Layout from &quot;{linkedTemplate?.name ?? "template"}&quot;. Edit the template to update this character.
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <div className="max-w-2xl space-y-6">
+          <div className={chartSectionLayoutMode === "grid" ? "w-full space-y-6" : "max-w-2xl space-y-6"}>
             {visibleSections.length === 0 ? (
               <p className="text-dark-muted text-sm py-4">
                 No sections yet. Add a top-level section (H1) from the toolbar or the button above.
@@ -678,24 +916,26 @@ export default function ProfilesChartEditor() {
                 items={visibleSections.map((s) => `section-${s.id}`)}
                 strategy={verticalListSortingStrategy}
               >
-                {visibleSections.map((section) => {
-                  const level = section.headingLevel ?? "h1";
-                  const levelStyles: Record<SectionHeadingLevel, string> = {
-                    h1: "ml-0",
-                    h2: "ml-4",
-                    h3: "ml-8",
-                    h4: "ml-12",
-                  };
-                  const nameStyles: Record<SectionHeadingLevel, string> = {
-                    h1: "text-sm font-semibold uppercase tracking-wide",
-                    h2: "text-sm font-medium",
-                    h3: "text-xs font-medium",
-                    h4: "text-xs font-normal text-dark-muted",
-                  };
-                  const blocks = section.contentBlocks ?? [];
+                {h1Sections.map((h1) =>
+                  (function renderSectionNode(section: ProfileSection): React.ReactNode {
+                    const level = section.headingLevel ?? "h1";
+                    const levelStyles: Record<SectionHeadingLevel, string> = {
+                      h1: "ml-0",
+                      h2: "ml-4",
+                      h3: "ml-8",
+                      h4: "ml-12",
+                    };
+                    const nameStyles: Record<SectionHeadingLevel, string> = {
+                      h1: "text-sm font-semibold uppercase tracking-wide",
+                      h2: "text-sm font-medium",
+                      h3: "text-xs font-medium",
+                      h4: "text-xs font-normal text-dark-muted",
+                    };
+                    const blocks = section.contentBlocks ?? [];
 
-                  return (
-                    <SortableSectionBlock key={section.id} id={`section-${section.id}`} showDragHandle={canEditStructure}>
+                    return (
+                    <React.Fragment key={section.id}>
+                    <SortableSectionBlock id={`section-${section.id}`} showDragHandle={canEditStructure}>
                       <section
                         className={`border border-dark-accent/30 rounded-lg overflow-hidden bg-dark-bg/30 ${levelStyles[level]}`}
                       >
@@ -744,9 +984,10 @@ export default function ProfilesChartEditor() {
                                 key={l}
                                 type="button"
                                 onClick={() => {
-                                  if (projectId && selectedCharacterId) {
+                                  if (canEditStructure) {
+                                    setEditLayoutDraftSections(updateSectionInDraft(sourceSections, section.id, { headingLevel: l }));
+                                  } else if (projectId && selectedCharacterId) {
                                     updateSectionHeadingLevel(projectId, selectedCharacterId, section.id, l);
-                                    setEditLayoutDirty(true);
                                   }
                                 }}
                                 title={`Set as ${l.toUpperCase()}`}
@@ -776,9 +1017,10 @@ export default function ProfilesChartEditor() {
                             <button
                               type="button"
                               onClick={() => {
-                                if (projectId && selectedCharacterId) {
+                                if (canEditStructure) {
+                                  setEditLayoutDraftSections(removeSectionFromDraft(sourceSections, section.id));
+                                } else if (projectId && selectedCharacterId) {
                                   removeSection(projectId, selectedCharacterId, section.id);
-                                  setEditLayoutDirty(true);
                                 }
                               }}
                               className="p-1.5 text-dark-muted hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
@@ -808,23 +1050,15 @@ export default function ProfilesChartEditor() {
                                     >
                                       <NoteBlockRow
                                         note={block}
-                                    onUpdate={(content) =>
-                                      projectId &&
-                                      selectedCharacterId &&
-                                      updateContentBlock(
-                                        projectId,
-                                        selectedCharacterId,
-                                        section.id,
-                                        block.id,
-                                        { content }
-                                      )
-                                    }
-                                        onRemove={canEditStructure ? () => {
-                                          if (projectId && selectedCharacterId) {
-                                            removeContentBlock(projectId, selectedCharacterId, section.id, block.id);
-                                            setEditLayoutDirty(true);
+                                        readOnly={isFillMode}
+                                        onUpdate={(content) => {
+                                          if (canEditStructure) {
+                                            setEditLayoutDraftSections(updateContentBlockInDraft(sourceSections, section.id, block.id, { content }));
+                                          } else if (projectId && selectedCharacterId) {
+                                            updateContentBlock(projectId, selectedCharacterId, section.id, block.id, { content });
                                           }
-                                        } : undefined}
+                                        }}
+                                        onRemove={canEditStructure ? () => setEditLayoutDraftSections(removeContentBlockFromDraft(sourceSections, section.id, block.id)) : undefined}
                                       />
                                     </SortableContentBlock>
                                   );
@@ -838,24 +1072,15 @@ export default function ProfilesChartEditor() {
                                     >
                                       <ImageBlockRow
                                         block={block}
-                                    allowUpload={isFillMode}
-                                    onUpdate={(updates) =>
-                                      projectId &&
-                                      selectedCharacterId &&
-                                      updateContentBlock(
-                                        projectId,
-                                        selectedCharacterId,
-                                        section.id,
-                                        block.id,
-                                        updates
-                                      )
-                                    }
-                                        onRemove={canEditStructure ? () => {
-                                          if (projectId && selectedCharacterId) {
-                                            removeContentBlock(projectId, selectedCharacterId, section.id, block.id);
-                                            setEditLayoutDirty(true);
+                                        allowUpload={isFillMode}
+                                        onUpdate={(updates) => {
+                                          if (canEditStructure) {
+                                            setEditLayoutDraftSections(updateContentBlockInDraft(sourceSections, section.id, block.id, updates));
+                                          } else if (projectId && selectedCharacterId) {
+                                            updateContentBlock(projectId, selectedCharacterId, section.id, block.id, updates);
                                           }
-                                        } : undefined}
+                                        }}
+                                        onRemove={canEditStructure ? () => setEditLayoutDraftSections(removeContentBlockFromDraft(sourceSections, section.id, block.id)) : undefined}
                                       />
                                     </SortableContentBlock>
                                   );
@@ -871,7 +1096,7 @@ export default function ProfilesChartEditor() {
                                       <div className="space-y-1">
                                     {entries.length === 0 ? (
                                       <p className="text-dark-muted text-xs py-2 px-2">
-                                        {canEditStructure ? "No attributes. Click + New attribute below." : "No attributes."}
+                                        {canEditStructure ? "No attributes. Click Add Attribute Field below." : "No attributes."}
                                       </p>
                                     ) : (
                                       entries.map(([key, value]) => (
@@ -916,17 +1141,14 @@ export default function ProfilesChartEditor() {
                                               <AttributeValueInput
                                                 value={value}
                                                 onChange={(v) => {
-                                                  if (projectId && selectedCharacterId) {
-                                                    updateAttributeKey(
-                                                      projectId,
-                                                      selectedCharacterId,
-                                                      section.id,
-                                                      block.id,
-                                                      key,
-                                                      v
-                                                    );
+                                                  if (canEditStructure) {
+                                                    const pairs = { ...(block.keyValuePairs ?? {}), [key]: v };
+                                                    setEditLayoutDraftSections(updateContentBlockInDraft(sourceSections, section.id, block.id, { keyValuePairs: pairs }));
+                                                  } else if (projectId && selectedCharacterId) {
+                                                    updateAttributeKey(projectId, selectedCharacterId, section.id, block.id, key, v);
                                                   }
                                                 }}
+                                                customDataTypes={selectedCharacter?.customDataTypes ?? []}
                                                 meta={getAttributeMeta(block, key)}
                                                 inputId={`${block.id}-${key}`}
                                                 placeholder="Value"
@@ -957,16 +1179,10 @@ export default function ProfilesChartEditor() {
                                                   keyName={key}
                                                   meta={getAttributeMeta(block, key)}
                                                   onSave={(m) => {
-                                                    if (projectId && selectedCharacterId) {
-                                                      updateAttributeMeta(
-                                                        projectId,
-                                                        selectedCharacterId,
-                                                        section.id,
-                                                        block.id,
-                                                        key,
-                                                        m
-                                                      );
-                                                      setEditLayoutDirty(true);
+                                                    if (canEditStructure) {
+                                                      setEditLayoutDraftSections(updateAttributeMetaInDraft(sourceSections, section.id, block.id, key, m));
+                                                    } else if (projectId && selectedCharacterId) {
+                                                      updateAttributeMeta(projectId, selectedCharacterId, section.id, block.id, key, m);
                                                     }
                                                   }}
                                                   onClose={() => setMetaEditorFor(null)}
@@ -1002,40 +1218,44 @@ export default function ProfilesChartEditor() {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (projectId && selectedCharacterId) {
+                                  if (canEditStructure) {
+                                    setEditLayoutDraftSections(addContentBlockToDraft(sourceSections, section.id, "note"));
+                                  } else if (projectId && selectedCharacterId) {
                                     addContentBlock(projectId, selectedCharacterId, section.id, "note");
-                                    setEditLayoutDirty(true);
                                   }
                                 }}
                                 className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text hover:border-dark-accent transition-colors"
-                                title="Add notes block with textarea"
+                                title="Add label"
                               >
-                                Add notes
+                                Add Label
                               </button>
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (projectId && selectedCharacterId) {
+                                  if (canEditStructure) {
+                                    setEditLayoutDraftSections(addAttributeToSectionInDraft(sourceSections, section.id));
+                                  } else if (projectId && selectedCharacterId) {
                                     addAttributeToSection(projectId, selectedCharacterId, section.id);
-                                    setEditLayoutDirty(true);
                                   }
                                 }}
                                 className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text hover:border-dark-accent transition-colors"
-                                title="Add new attribute"
+                                title="Add attribute field"
                               >
-                                + New attribute
+                                Add Attribute Field
                               </button>
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (projectId && selectedCharacterId) {
+                                  if (canEditStructure) {
+                                    setEditLayoutDraftSections(addContentBlockToDraft(sourceSections, section.id, "image"));
+                                  } else if (projectId && selectedCharacterId) {
                                     addContentBlock(projectId, selectedCharacterId, section.id, "image");
-                                    setEditLayoutDirty(true);
                                   }
                                 }}
                                 className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text hover:border-dark-accent transition-colors"
+                                title="Add image container"
                               >
-                                + Image
+                                Add Image Container
                               </button>
                             </div>
                             )}
@@ -1044,8 +1264,21 @@ export default function ProfilesChartEditor() {
                         )}
                       </section>
                     </SortableSectionBlock>
-                  );
-                })}
+                    {!collapsedSections.has(section.id) && (() => {
+                      const children = getChildren(section.id);
+                      if (children.length === 0) return null;
+                      const useGrid = (section.headingLevel === "h1") && chartSectionLayoutMode === "grid";
+                      return (
+                        <div key={`children-${section.id}`} className={useGrid ? "grid grid-cols-2 gap-4 items-start" : "space-y-6"}>
+                          {children.map((child) =>
+                            renderSectionNode(child)
+                          )}
+                        </div>
+                      );
+                    })()}
+                    </React.Fragment>
+                    );
+                  })(h1))}
               </SortableContext>
             )}
           </div>
@@ -1076,14 +1309,16 @@ export default function ProfilesChartEditor() {
               className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded mb-2 text-dark-text"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  if (projectId && selectedCharacterId && sections.length > 0) {
+                  const secs = canEditStructure ? sourceSections : (selectedCharacter?.sections ?? []);
+                  if (projectId && secs.length > 0) {
                     const name = saveTemplateName.trim() || "Untitled";
-                    const id = saveTemplateFromCharacter(projectId, selectedCharacterId, name);
+                    const id = canEditStructure
+                      ? createTemplateFromSections(projectId, name, sourceSections, selectedCharacter?.customDataTypes ?? [])
+                      : (selectedCharacterId ? saveTemplateFromCharacter(projectId, selectedCharacterId, name) : null);
                     if (id) {
                       setSaveTemplateOpen(false);
                       setSaveTemplateName("");
                       setSaveTemplateError(null);
-                      setEditLayoutDirty(false);
                     } else {
                       setSaveTemplateError("Could not save template.");
                     }
@@ -1110,24 +1345,71 @@ export default function ProfilesChartEditor() {
                 size="sm"
                 onClick={() => {
                   setSaveTemplateError(null);
-                  if (!projectId || !selectedCharacterId) return;
-                  if (sections.length === 0) {
+                  if (!projectId) return;
+                  const secs = canEditStructure ? sourceSections : (selectedCharacter?.sections ?? []);
+                  if (secs.length === 0) {
                     setSaveTemplateError("Add at least one section before saving.");
                     return;
                   }
                   const name = saveTemplateName.trim() || "Untitled";
-                  const id = saveTemplateFromCharacter(projectId, selectedCharacterId, name);
+                  const id = canEditStructure
+                    ? createTemplateFromSections(projectId, name, sourceSections, selectedCharacter?.customDataTypes ?? [])
+                    : (selectedCharacterId ? saveTemplateFromCharacter(projectId, selectedCharacterId, name) : null);
                   if (id) {
                     setSaveTemplateOpen(false);
                     setSaveTemplateName("");
                     setSaveTemplateError(null);
-                    setEditLayoutDirty(false);
                   } else {
                     setSaveTemplateError("Could not save template.");
                   }
                 }}
               >
                 Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {discardConfirmOpen && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
+          <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
+            <h3 className="text-sm font-medium text-dark-text mb-2">Discard layout changes?</h3>
+            <p className="text-sm text-dark-muted mb-4">
+              All unsaved layout changes will be lost. This cannot be undone. Do you want to proceed?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setDiscardConfirmOpen(false)}>
+                Keep editing
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  setDiscardConfirmOpen(false);
+                  setChartLayoutMode("fill");
+                }}
+              >
+                Discard
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {unlinkConfirmOpen && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
+          <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
+            <h3 className="text-sm font-medium text-dark-text mb-2">Unlink from template?</h3>
+            <p className="text-sm text-dark-muted mb-4">
+              This character will keep its current layout but will no longer receive updates when the template changes. Continue?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setUnlinkConfirmOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleUnlink}>
+                Unlink
               </Button>
             </div>
           </div>

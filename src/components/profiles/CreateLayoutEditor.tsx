@@ -13,20 +13,28 @@ import {
   useCharacterProfilesStore,
   getOrderedSections,
   type ProfileSection,
-  type NoteBlock,
   type AttributeBlock,
-  type ImageBlock,
-  type ContentBlock,
   type SectionHeadingLevel,
   type AttributeMetaItem,
   type AttributeType,
+  type CustomDataType,
 } from "../../store/characterProfilesStore";
+import {
+  addSectionToDraft,
+  updateSectionInDraft,
+  removeSectionFromDraft,
+  addContentBlockToDraft,
+  addAttributeToSectionInDraft,
+  updateContentBlockInDraft,
+  removeContentBlockFromDraft,
+  reorderContentBlocksInDraft,
+  updateAttributeMetaInDraft,
+  removeAttributeKeyFromDraft,
+  renameAttributeKeyInDraft,
+} from "../../utils/profileSectionDraftHelpers";
+import AttributeValueInput from "./AttributeValueInput";
 import Button from "../ui/Button";
-import AutoResizeTextarea from "../ui/AutoResizeTextarea";
-
-function generateId() {
-  return `_${Math.random().toString(36).slice(2, 11)}`;
-}
+import NoteTextarea from "../ui/NoteTextarea";
 
 function getOrderedAttributeEntries(block: AttributeBlock): [string, string][] {
   const pairs = block.keyValuePairs ?? {};
@@ -80,202 +88,98 @@ const NEXT_LEVEL: Record<SectionHeadingLevel, SectionHeadingLevel | null> = {
   h4: null,
 };
 
-/** Mutate sections in memory - for create layout draft */
-function addSectionToDraft(sections: ProfileSection[], parentId: string | null): ProfileSection[] {
-  const sectionId = generateId();
-  const siblings = sections.filter((s) => (s.parentId ?? null) === parentId);
-  const maxOrder = siblings.length > 0 ? Math.max(...siblings.map((s) => s.order)) + 1 : 0;
-  let headingLevel: SectionHeadingLevel = "h1";
-  if (parentId) {
-    const parent = sections.find((s) => s.id === parentId);
-    const next = parent ? NEXT_LEVEL[parent.headingLevel ?? "h1"] : "h2";
-    if (!next) return sections; // H4 has no children
-    headingLevel = next;
-  }
-  const section: ProfileSection = {
-    id: sectionId,
-    label: "New section",
-    headingLevel,
-    parentId,
-    contentBlocks: [],
-    order: maxOrder,
-  };
-  return [...sections, section];
+function generateId() {
+  return `_${Math.random().toString(36).slice(2, 11)}`;
 }
 
-function updateSectionInDraft(sections: ProfileSection[], sectionId: string, updates: Partial<ProfileSection>): ProfileSection[] {
-  return sections.map((s) => (s.id === sectionId ? { ...s, ...updates } : s));
-}
-
-function collectDescendantIds(sections: ProfileSection[], sectionId: string): Set<string> {
-  const ids = new Set<string>([sectionId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const s of sections) {
-      if (s.parentId && ids.has(s.parentId) && !ids.has(s.id)) {
-        ids.add(s.id);
-        changed = true;
-      }
-    }
-  }
-  return ids;
-}
-
-function removeSectionFromDraft(sections: ProfileSection[], sectionId: string): ProfileSection[] {
-  const toRemove = collectDescendantIds(sections, sectionId);
-  return sections.filter((s) => !toRemove.has(s.id));
-}
-
-function addContentBlockToDraft(sections: ProfileSection[], sectionId: string, blockType: "note" | "attributes" | "image"): ProfileSection[] {
-  const blockId = generateId();
-  let block: ContentBlock;
-  if (blockType === "note") block = { type: "note", id: blockId, content: "" };
-  else if (blockType === "attributes") block = { type: "attributes", id: blockId, keyValuePairs: { "Attribute 1": "" }, attributeOrder: ["Attribute 1"] };
-  else block = { type: "image", id: blockId };
-  return sections.map((s) =>
-    s.id === sectionId ? { ...s, contentBlocks: [...(s.contentBlocks ?? []), block] } : s
-  );
-}
-
-/** Add an attribute to a section: creates attributes block with "Attribute 1" if none, otherwise appends to last block as "Attribute 2", "Attribute 3", etc. */
-function addAttributeToSectionInDraft(sections: ProfileSection[], sectionId: string): ProfileSection[] {
-  const section = sections.find((s) => s.id === sectionId);
-  if (!section) return sections;
-  const blocks = section.contentBlocks ?? [];
-  const attrsBlocks = blocks.filter((b): b is AttributeBlock => b.type === "attributes");
-  const totalAttrCount = attrsBlocks.reduce((sum, b) => sum + (b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {})).length, 0);
-  const nextKey = `Attribute ${totalAttrCount + 1}`;
-
-  if (attrsBlocks.length === 0) {
-    return addContentBlockToDraft(sections, sectionId, "attributes");
-  }
-  const lastBlock = attrsBlocks[attrsBlocks.length - 1];
-  return addAttributeKeyToDraft(sections, sectionId, lastBlock.id, nextKey);
-}
-
-function updateContentBlockInDraft(sections: ProfileSection[], sectionId: string, blockId: string, updates: Partial<NoteBlock> | Partial<AttributeBlock> | Partial<ImageBlock>): ProfileSection[] {
-  return sections.map((s) => {
-    if (s.id !== sectionId) return s;
-    const blocks = (s.contentBlocks ?? []).map((b) => (b.id === blockId ? { ...b, ...updates } as ContentBlock : b));
-    return { ...s, contentBlocks: blocks };
-  });
-}
-
-function removeContentBlockFromDraft(sections: ProfileSection[], sectionId: string, blockId: string): ProfileSection[] {
-  return sections.map((s) =>
-    s.id === sectionId ? { ...s, contentBlocks: (s.contentBlocks ?? []).filter((b) => b.id !== blockId) } : s
-  );
-}
-
-function reorderContentBlocksInDraft(sections: ProfileSection[], sectionId: string, fromIndex: number, toIndex: number): ProfileSection[] {
-  return sections.map((s) => {
-    if (s.id !== sectionId) return s;
-    const blocks = [...(s.contentBlocks ?? [])];
-    const [removed] = blocks.splice(fromIndex, 1);
-    if (!removed) return s;
-    blocks.splice(toIndex, 0, removed);
-    return { ...s, contentBlocks: blocks };
-  });
-}
-
-function addAttributeKeyToDraft(sections: ProfileSection[], sectionId: string, blockId: string, key = "New attribute"): ProfileSection[] {
-  return sections.map((s) => {
-    if (s.id !== sectionId) return s;
-    const blocks = (s.contentBlocks ?? []).map((b) => {
-      if (b.type !== "attributes" || b.id !== blockId) return b;
-      const pairs = { ...b.keyValuePairs };
-      let finalKey = key;
-      if (key in pairs) {
-        const base = key.replace(/\s*\d+$/, "").trim() || key;
-        let n = 2;
-        while (`${base} ${n}` in pairs) n++;
-        finalKey = `${base} ${n}`;
-      }
-      pairs[finalKey] = "";
-      const order = [...(b.attributeOrder ?? Object.keys(b.keyValuePairs)), finalKey];
-      return { ...b, keyValuePairs: pairs, attributeOrder: order };
-    });
-    return { ...s, contentBlocks: blocks };
-  });
-}
-
-function updateAttributeMetaInDraft(sections: ProfileSection[], sectionId: string, blockId: string, key: string, meta: Partial<AttributeMetaItem>): ProfileSection[] {
-  return sections.map((s) => {
-    if (s.id !== sectionId) return s;
-    const blocks = (s.contentBlocks ?? []).map((b) => {
-      if (b.type !== "attributes" || b.id !== blockId || !(b.keyValuePairs ?? {})[key]) return b;
-      const current = (b.attributeMeta ?? {})[key] ?? {};
-      const nextMeta = { ...current, ...meta };
-      if (nextMeta.options) nextMeta.options = [...new Set(nextMeta.options)];
-      const attributeMeta = { ...(b.attributeMeta ?? {}), [key]: nextMeta };
-      return { ...b, attributeMeta };
-    });
-    return { ...s, contentBlocks: blocks };
-  });
-}
-
-function removeAttributeKeyFromDraft(sections: ProfileSection[], sectionId: string, blockId: string, key: string): ProfileSection[] {
-  return sections.map((s) => {
-    if (s.id !== sectionId) return s;
-    const blocks = (s.contentBlocks ?? []).map((b) => {
-      if (b.type !== "attributes" || b.id !== blockId) return b;
-      const pairs = { ...b.keyValuePairs };
-      delete pairs[key];
-      const order = (b.attributeOrder ?? []).filter((k) => k !== key);
-      const attributeMeta = { ...(b.attributeMeta ?? {}) };
-      delete attributeMeta[key];
-      return { ...b, keyValuePairs: pairs, attributeOrder: order, attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined };
-    });
-    return { ...s, contentBlocks: blocks };
-  });
-}
-
-function renameAttributeKeyInDraft(sections: ProfileSection[], sectionId: string, blockId: string, oldKey: string, newKey: string): ProfileSection[] {
-  const trimmed = newKey.trim();
-  if (!trimmed || trimmed === oldKey) return sections;
-  return sections.map((s) => {
-    if (s.id !== sectionId) return s;
-    const blocks = (s.contentBlocks ?? []).map((b) => {
-      if (b.type !== "attributes" || b.id !== blockId || !(b.keyValuePairs ?? {})[oldKey]) return b;
-      const pairs = { ...b.keyValuePairs };
-      const val = pairs[oldKey];
-      delete pairs[oldKey];
-      pairs[trimmed] = val;
-      const order = (b.attributeOrder ?? []).map((k) => (k === oldKey ? trimmed : k));
-      const attributeMeta = { ...(b.attributeMeta ?? {}) };
-      if (oldKey in attributeMeta) {
-        attributeMeta[trimmed] = attributeMeta[oldKey];
-        delete attributeMeta[oldKey];
-      }
-      return { ...b, keyValuePairs: pairs, attributeOrder: order, attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined };
-    });
-    return { ...s, contentBlocks: blocks };
-  });
-}
-
-// Reuse AttributeMetaEditor from chart - we'll inline a minimal version
 function AttributeMetaEditorPopover({
   keyName,
   meta,
+  customDataTypes,
+  onAddCustomDataType,
   onSave,
   onClose,
   anchorRect,
 }: {
   keyName: string;
   meta?: AttributeMetaItem;
+  customDataTypes: CustomDataType[];
+  onAddCustomDataType: (name: string, options: string[]) => string;
   onSave: (m: Partial<AttributeMetaItem>) => void;
   onClose: () => void;
   anchorRect: DOMRect | null;
 }) {
-  const [type, setType] = useState<AttributeType>(meta?.type ?? "text");
+  const rawType = meta?.type ?? "text";
+  const isCustom = rawType === "custom";
+  const [type, setType] = useState<AttributeType>(isCustom ? "custom" : rawType);
+  const [customTypeId, setCustomTypeId] = useState<string | undefined>(meta?.customTypeId);
   const [optionsText, setOptionsText] = useState((meta?.options ?? []).join("\n"));
   const [allowCustom, setAllowCustom] = useState(meta?.allowCustom ?? false);
+  const [min, setMin] = useState<string>(meta?.min != null ? String(meta.min) : "");
+  const [max, setMax] = useState<string>(meta?.max != null ? String(meta.max) : "");
+  const [step, setStep] = useState<string>(meta?.step != null ? String(meta.step) : "1");
+  const [showCreateType, setShowCreateType] = useState(false);
+  const [newTypeName, setNewTypeName] = useState("");
+  const [newTypeOptions, setNewTypeOptions] = useState("");
   const rect = anchorRect;
+
+  const selectOptions = [
+    { value: "text", label: "Text" },
+    { value: "number", label: "Number" },
+    { value: "numberScroll", label: "Number (Scrollable)" },
+    { value: "select", label: "Select" },
+    { value: "date", label: "Date" },
+    ...customDataTypes.map((t) => ({ value: `custom:${t.id}`, label: t.name })),
+    { value: "__create__", label: "Create new data type…" },
+  ];
+
+  const handleTypeChange = (val: string) => {
+    if (val === "__create__") {
+      setShowCreateType(true);
+      return;
+    }
+    setShowCreateType(false);
+    if (val.startsWith("custom:")) {
+      setType("custom");
+      setCustomTypeId(val.slice(7));
+    } else {
+      setType(val as AttributeType);
+      setCustomTypeId(undefined);
+    }
+  };
+
+  const handleCreateType = () => {
+    const name = newTypeName.trim() || "New Type";
+    const opts = newTypeOptions.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (opts.length === 0) opts.push("");
+    const id = onAddCustomDataType(name, opts);
+    setType("custom");
+    setCustomTypeId(id);
+    setShowCreateType(false);
+    setNewTypeName("");
+    setNewTypeOptions("");
+  };
 
   const handleSave = () => {
     const opts = optionsText.split("\n").map((s) => s.trim()).filter(Boolean);
-    onSave({ type, options: type === "select" ? opts : undefined, allowCustom: type === "select" ? allowCustom : undefined });
+    const payload: Partial<AttributeMetaItem> = {
+      type,
+      customTypeId: type === "custom" ? customTypeId : undefined,
+      options: type === "select" ? opts : undefined,
+      allowCustom: (type === "select" || type === "custom") ? allowCustom : undefined,
+      min: undefined,
+      max: undefined,
+      step: undefined,
+    };
+    if (type === "number" || type === "numberScroll") {
+      const minNum = min.trim() === "" ? undefined : parseFloat(min);
+      const maxNum = max.trim() === "" ? undefined : parseFloat(max);
+      const stepNum = step.trim() === "" ? undefined : parseFloat(step);
+      if (!Number.isNaN(minNum)) payload.min = minNum;
+      if (!Number.isNaN(maxNum)) payload.max = maxNum;
+      if (!Number.isNaN(stepNum)) payload.step = stepNum;
+    }
+    onSave(payload);
     onClose();
   };
 
@@ -288,12 +192,54 @@ function AttributeMetaEditorPopover({
       <div className="space-y-2">
         <div>
           <label className="block text-[10px] text-dark-muted mb-0.5">Type</label>
-          <select value={type} onChange={(e) => setType(e.target.value as AttributeType)} className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded">
-            <option value="text">Text</option>
-            <option value="number">Number</option>
-            <option value="select">Select</option>
+          <select
+            value={type === "custom" && customTypeId ? `custom:${customTypeId}` : type}
+            onChange={(e) => handleTypeChange(e.target.value)}
+            className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded text-dark-text"
+          >
+            {selectOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
           </select>
         </div>
+        {showCreateType && (
+          <div className="space-y-2 p-2 rounded border border-dark-accent/50 bg-dark-bg/50">
+            <input
+              type="text"
+              value={newTypeName}
+              onChange={(e) => setNewTypeName(e.target.value)}
+              placeholder="Type name (e.g. Blood Type)"
+              className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
+            />
+            <textarea
+              value={newTypeOptions}
+              onChange={(e) => setNewTypeOptions(e.target.value)}
+              rows={3}
+              placeholder="Options, one per line"
+              className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded resize-y"
+            />
+            <div className="flex gap-1">
+              <button type="button" onClick={() => setShowCreateType(false)} className="px-2 py-1 text-xs text-dark-muted">Cancel</button>
+              <button type="button" onClick={handleCreateType} className="px-2 py-1 text-xs bg-blue-600 text-white rounded">Create & assign</button>
+            </div>
+          </div>
+        )}
+        {(type === "number" || type === "numberScroll") && (
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-[10px] text-dark-muted mb-0.5">Min</label>
+              <input type="number" value={min} onChange={(e) => setMin(e.target.value)} placeholder="—" className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-dark-muted mb-0.5">Max</label>
+              <input type="number" value={max} onChange={(e) => setMax(e.target.value)} placeholder="—" className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-dark-muted mb-0.5">Step</label>
+              <input type="number" value={step} onChange={(e) => setStep(e.target.value)} placeholder="1" min={0.0001} step={0.1} className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded" />
+            </div>
+          </div>
+        )}
         {type === "select" && (
           <>
             <div>
@@ -305,6 +251,12 @@ function AttributeMetaEditorPopover({
               <span className="text-xs text-dark-text">Allow custom values</span>
             </label>
           </>
+        )}
+        {type === "custom" && !showCreateType && (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={allowCustom} onChange={(e) => setAllowCustom(e.target.checked)} className="rounded" />
+            <span className="text-xs text-dark-text">Allow custom values</span>
+          </label>
         )}
       </div>
       <div className="flex justify-end gap-1 mt-2">
@@ -319,8 +271,20 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
   const { id: projectId } = useParams<{ id: string }>();
   const setChartLayoutMode = useCharacterProfilesStore((s) => s.setChartLayoutMode);
   const createTemplateFromSections = useCharacterProfilesStore((s) => s.createTemplateFromSections);
+  const updateTemplate = useCharacterProfilesStore((s) => s.updateTemplate);
+  const listTemplates = useCharacterProfilesStore((s) => s.listTemplates);
+  const sections = useCharacterProfilesStore((s) => s.createLayoutDraftSections);
+  const setCreateLayoutDraftSections = useCharacterProfilesStore((s) => s.setCreateLayoutDraftSections);
+  const createLayoutDraftDataTypes = useCharacterProfilesStore((s) => s.createLayoutDraftDataTypes);
+  const setCreateLayoutDraftDataTypes = useCharacterProfilesStore((s) => s.setCreateLayoutDraftDataTypes);
+  const createLayoutDraftBuiltinDataTypes = useCharacterProfilesStore((s) => s.createLayoutDraftBuiltinDataTypes);
+  const editingTemplateId = useCharacterProfilesStore((s) => s.editingTemplateId);
+  const createLayoutDirty = useCharacterProfilesStore((s) => s.createLayoutDirty);
+  const chartSectionLayoutMode = useCharacterProfilesStore((s) => s.chartSectionLayoutMode);
 
-  const [sections, setSections] = useState<ProfileSection[]>([]);
+  const editingTemplateName = projectId && editingTemplateId
+    ? listTemplates(projectId).find((t) => t.id === editingTemplateId)?.name
+    : undefined;
   const [templateName, setTemplateName] = useState("");
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -333,10 +297,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
   const [metaEditorFor, setMetaEditorFor] = useState<{ blockId: string; key: string } | null>(null);
   const [metaEditorAnchorRect, setMetaEditorAnchorRect] = useState<DOMRect | null>(null);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
-  const [expandedNoteBlocks, setExpandedNoteBlocks] = useState<Set<string>>(new Set());
-
   const orderedSections = getOrderedSections(sections);
-  const hasProgress = sections.length > 0;
   const sectionById = new Map(sections.map((s) => [s.id, s]));
 
   const hasCollapsedAncestor = (sectionId: string): boolean => {
@@ -349,6 +310,8 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
   };
 
   const visibleSections = orderedSections.filter((s) => !hasCollapsedAncestor(s.id));
+  const h1Sections = visibleSections.filter((s) => s.parentId === null);
+  const getDirectChildren = (parentId: string) => visibleSections.filter((s) => s.parentId === parentId);
 
   const getAddChildLabel = (level: SectionHeadingLevel): string | null => {
     const next = NEXT_LEVEL[level];
@@ -356,7 +319,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
   };
 
   const handleAddSection = (parentId?: string | null) => {
-    setSections((prev) => addSectionToDraft(prev, parentId ?? null));
+    setCreateLayoutDraftSections(addSectionToDraft(sections, parentId ?? null));
   };
 
   const handleSaveAsTemplate = () => {
@@ -367,7 +330,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
     }
     const name = templateName.trim() || "Untitled";
     if (!projectId) return;
-    const id = createTemplateFromSections(projectId, name, sections);
+    const id = createTemplateFromSections(projectId, name, sections, createLayoutDraftDataTypes, createLayoutDraftBuiltinDataTypes);
     if (id) {
       setChartLayoutMode("fill");
       onClose();
@@ -376,8 +339,24 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
     }
   };
 
-  const handleCancel = () => {
-    if (hasProgress) {
+  const handleSaveChanges = () => {
+    if (!editingTemplateId) return;
+    setSaveError(null);
+    const pid = projectId ?? useCharacterProfilesStore.getState().activeProjectId ?? "";
+    if (!pid) {
+      setSaveError("No project selected. Cannot save template.");
+      return;
+    }
+    const ok = updateTemplate(pid, editingTemplateId);
+    if (!ok) {
+      setSaveError("Could not save template. Check the console for details.");
+      return;
+    }
+    // Stay in editor; user clicks Close when done
+  };
+
+  const handleExit = () => {
+    if (createLayoutDirty) {
       setDiscardConfirmOpen(true);
       return;
     }
@@ -407,7 +386,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
     const fromIndex = blocks.findIndex((b) => b.id === activeBlockId);
     const toIndex = blocks.findIndex((b) => b.id === overBlockId);
     if (fromIndex >= 0 && toIndex >= 0) {
-      setSections((p) => reorderContentBlocksInDraft(p, section.id, fromIndex, toIndex));
+      setCreateLayoutDraftSections(reorderContentBlocksInDraft(sections, section.id, fromIndex, toIndex));
     }
   };
 
@@ -415,13 +394,29 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
     <div className="flex-1 flex flex-col min-h-0 bg-dark-surface/30 overflow-hidden">
       <div className="p-4 border-b border-dark-accent/50 flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">New Layout</h2>
-          <p className="text-dark-muted text-xs mt-1">Define structure only (sections, attributes, notes, images). No character data.</p>
+          <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
+            {editingTemplateName ? `Editing: ${editingTemplateName}` : "New Layout"}
+          </h2>
+          <p className="text-dark-muted text-xs mt-1">Define structure only (sections, attributes, labels, images). No character data.</p>
+          {saveError && editingTemplateId && (
+            <p className="text-xs text-red-400 mt-2">{saveError}</p>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={handleCancel}>
-            Cancel
+          <Button variant="secondary" size="sm" onClick={handleExit}>
+            {createLayoutDirty ? "Cancel" : "Close"}
           </Button>
+          <Button variant="secondary" size="sm" onClick={() => handleAddSection(null)} title="Add top-level section (H1)">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m7 7v-7" />
+            </svg>
+            +H1
+          </Button>
+          {editingTemplateId != null && (
+            <Button variant="primary" size="sm" onClick={handleSaveChanges} disabled={!createLayoutDirty}>
+              Save changes
+            </Button>
+          )}
           <Button variant="primary" size="sm" onClick={() => setSaveModalOpen(true)}>
             Save as template
           </Button>
@@ -429,119 +424,95 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
       </div>
 
       <div className="p-4 overflow-y-auto">
-        <div className="max-w-2xl space-y-6">
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => handleAddSection(null)} title="Add top-level section (H1)">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m7 7v-7" />
-              </svg>
-              +H1
-            </Button>
-          </div>
-
+        <div className={chartSectionLayoutMode === "grid" ? "w-full space-y-6" : "max-w-2xl space-y-6"}>
           {visibleSections.length === 0 ? (
             <p className="text-dark-muted text-sm py-4">No sections yet. Add a top-level section to start.</p>
           ) : (
             <DndContext sensors={sensors} onDragEnd={handleBlockDragEnd}>
-            <div className="space-y-4">
-              {visibleSections.map((section) => {
-                const level = (section.headingLevel ?? "h1") as SectionHeadingLevel;
-                const levelStyles: Record<SectionHeadingLevel, string> = { h1: "ml-0", h2: "ml-4", h3: "ml-8", h4: "ml-12" };
-                const nameStyles: Record<SectionHeadingLevel, string> = {
-                  h1: "text-sm font-semibold uppercase tracking-wide",
-                  h2: "text-sm font-medium",
-                  h3: "text-xs font-medium",
-                  h4: "text-xs font-normal text-dark-muted",
-                };
-                const blocks = section.contentBlocks ?? [];
-                const isCollapsed = collapsedSections.has(section.id);
-                const addChildLabel = getAddChildLabel(level);
+            <div className="space-y-6">
+              {h1Sections.map((section) => {
+                const renderSectionWithChildren = (sec: ProfileSection): ReactNode => {
+                  const lvl = (sec.headingLevel ?? "h1") as SectionHeadingLevel;
+                  const lvlStyles: Record<SectionHeadingLevel, string> = { h1: "ml-0", h2: "ml-4", h3: "ml-8", h4: "ml-12" };
+                  const nmStyles: Record<SectionHeadingLevel, string> = {
+                    h1: "text-sm font-semibold uppercase tracking-wide",
+                    h2: "text-sm font-medium",
+                    h3: "text-xs font-medium",
+                    h4: "text-xs font-normal text-dark-muted",
+                  };
+                  const blks = sec.contentBlocks ?? [];
+                  const isCol = collapsedSections.has(sec.id);
+                  const addLbl = getAddChildLabel(lvl);
+                  const children = getDirectChildren(sec.id);
+                  const useGrid = (sec.headingLevel === "h1") && chartSectionLayoutMode === "grid";
 
-                return (
-                  <section key={section.id} className={`border border-dark-accent/30 rounded-lg overflow-hidden bg-dark-bg/30 ${levelStyles[level]}`}>
-                    <div className="px-3 py-2 bg-dark-accent/20 flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCollapsedSections((prev) => { const n = new Set(prev); n.has(section.id) ? n.delete(section.id) : n.add(section.id); return n; })}
-                        className="p-0.5 text-dark-muted hover:text-dark-text"
-                        title={isCollapsed ? "Expand (show descendants)" : "Collapse (hide descendants)"}
-                      >
-                        <span className={isCollapsed ? "" : "inline-block rotate-90"}>▶</span>
-                      </button>
-                      {editingSectionId === section.id ? (
-                        <input
-                          type="text"
-                          value={draftSectionLabel}
-                          onChange={(e) => setDraftSectionLabel(e.target.value)}
-                          onBlur={() => {
-                            const trimmed = draftSectionLabel.trim() || "New section";
-                            setSections((p) => updateSectionInDraft(p, section.id, { label: trimmed }));
-                            setEditingSectionId(null);
-                          }}
-                          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                          autoFocus
-                          className={`flex-1 px-2 py-1 bg-dark-bg border border-blue-500 rounded ${nameStyles[level]}`}
-                        />
-                      ) : (
-                        <button type="button" onClick={() => { setEditingSectionId(section.id); setDraftSectionLabel(section.label); }} className={`flex-1 text-left px-2 py-1 ${nameStyles[level]}`}>
-                          {section.label}
-                        </button>
-                      )}
-                      <div className="flex gap-1">
-                        {!isCollapsed && addChildLabel && (
+                  return (
+                    <span key={sec.id} className="contents">
+                      <section className={`border border-dark-accent/30 rounded-lg overflow-hidden bg-dark-bg/30 ${lvlStyles[lvl]}`}>
+                        <div className="px-3 py-2 bg-dark-accent/20 flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() => handleAddSection(section.id)}
-                            className="px-2 py-1 text-xs font-medium text-dark-muted hover:text-blue-400 rounded border border-dark-accent/40 hover:border-blue-500/50"
-                            title={`Add ${addChildLabel.replace("+", "")} as child of this ${level.toUpperCase()}`}
+                            onClick={() => setCollapsedSections((prev) => { const n = new Set(prev); n.has(sec.id) ? n.delete(sec.id) : n.add(sec.id); return n; })}
+                            className="p-0.5 text-dark-muted hover:text-dark-text"
+                            title={isCol ? "Expand (show descendants)" : "Collapse (hide descendants)"}
                           >
-                            {addChildLabel}
+                            <span className={isCol ? "" : "inline-block rotate-90"}>▶</span>
                           </button>
-                        )}
-                        <button type="button" onClick={() => setSections((p) => removeSectionFromDraft(p, section.id))} className="p-1.5 text-dark-muted hover:text-red-400 rounded" title="Remove section and all descendants">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                      </div>
-                    </div>
-                    {!collapsedSections.has(section.id) && (
-                      <SortableContext
-                        items={blocks.map((b) => `block-${b.id}`)}
-                        strategy={verticalListSortingStrategy}
-                      >
-                      <div className="px-3 pb-3 pt-1 space-y-3">
-                        {blocks.map((block) => {
+                          {editingSectionId === sec.id ? (
+                            <input
+                              type="text"
+                              value={draftSectionLabel}
+                              onChange={(e) => setDraftSectionLabel(e.target.value)}
+                              onBlur={() => {
+                                const trimmed = draftSectionLabel.trim() || "New section";
+                                setCreateLayoutDraftSections(updateSectionInDraft(sections, sec.id, { label: trimmed }));
+                                setEditingSectionId(null);
+                              }}
+                              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                              autoFocus
+                              className={`flex-1 px-2 py-1 bg-dark-bg border border-blue-500 rounded ${nmStyles[lvl]}`}
+                            />
+                          ) : (
+                            <button type="button" onClick={() => { setEditingSectionId(sec.id); setDraftSectionLabel(sec.label); }} className={`flex-1 text-left px-2 py-1 ${nmStyles[lvl]}`}>
+                              {sec.label}
+                            </button>
+                          )}
+                          <div className="flex gap-1">
+                            {!isCol && addLbl && (
+                              <button
+                                type="button"
+                                onClick={() => handleAddSection(sec.id)}
+                                className="px-2 py-1 text-xs font-medium text-dark-muted hover:text-blue-400 rounded border border-dark-accent/40 hover:border-blue-500/50"
+                                title={`Add ${addLbl.replace("+", "")} as child of this ${lvl.toUpperCase()}`}
+                              >
+                                {addLbl}
+                              </button>
+                            )}
+                            <button type="button" onClick={() => setCreateLayoutDraftSections(removeSectionFromDraft(sections, sec.id))} className="p-1.5 text-dark-muted hover:text-red-400 rounded" title="Remove section and all descendants">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                          </div>
+                        </div>
+                        {!isCol && (
+                          <SortableContext
+                            items={blks.map((b) => `block-${b.id}`)}
+                            strategy={verticalListSortingStrategy}
+                          >
+                          <div className="px-3 pb-3 pt-1 space-y-3">
+                            {blks.map((block) => {
                           if (block.type === "note") {
                             const noteContent = block.content ?? "";
-                            const noteLines = noteContent.split("\n");
-                            const isLongNote = noteLines.length > 4;
-                            const noteExpanded = expandedNoteBlocks.has(block.id);
                             return (
                               <SortableContentBlock key={block.id} id={`block-${block.id}`} showDragHandle>
                                 <div className="py-2 border-b border-dark-accent/20 flex items-start gap-2">
                                 <div className="flex-1 min-w-0">
-                                  <div className={isLongNote && !noteExpanded ? "max-h-[6.5rem] overflow-y-auto" : undefined}>
-                                    <AutoResizeTextarea
-                                      value={noteContent}
-                                      onChange={(v) => setSections((p) => updateContentBlockInDraft(p, section.id, block.id, { content: v }))}
-                                      placeholder="Note content…"
-                                      className="w-full px-2 py-1.5 text-sm bg-dark-bg border border-dark-accent/40 rounded text-dark-text placeholder:text-dark-muted focus:outline-none focus:border-blue-500 min-h-[4rem]"
-                                    />
-                                  </div>
-                                  {isLongNote && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setExpandedNoteBlocks((s) => {
-                                        const n = new Set(s);
-                                        n.has(block.id) ? n.delete(block.id) : n.add(block.id);
-                                        return n;
-                                      })}
-                                      className="mt-1 text-xs text-blue-400 hover:text-blue-300"
-                                    >
-                                      {noteExpanded ? "Show less" : "Show more"}
-                                    </button>
-                                  )}
+                                  <NoteTextarea
+                                    value={noteContent}
+                                    onChange={(v) => setCreateLayoutDraftSections(updateContentBlockInDraft(sections, sec.id, block.id, { content: v }))}
+                                    placeholder="Label content…"
+                                  />
                                 </div>
-                                <button type="button" onClick={() => setSections((p) => removeContentBlockFromDraft(p, section.id, block.id))} className="p-1.5 text-dark-muted hover:text-red-400 rounded flex-shrink-0">
+                                <button type="button" onClick={() => setCreateLayoutDraftSections(removeContentBlockFromDraft(sections, sec.id, block.id))} className="p-1.5 text-dark-muted hover:text-red-400 rounded flex-shrink-0">
                                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                 </button>
                               </div>
@@ -557,7 +528,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
                                     <input
                                       type="text"
                                       value={block.label ?? ""}
-                                      onChange={(e) => setSections((p) => updateContentBlockInDraft(p, section.id, block.id, { label: e.target.value }))}
+                                      onChange={(e) => setCreateLayoutDraftSections(updateContentBlockInDraft(sections, sec.id, block.id, { label: e.target.value }))}
                                       placeholder="Image label (optional)"
                                       className="w-full px-2 py-1.5 text-sm bg-dark-bg border border-dark-accent/40 rounded text-dark-text placeholder:text-dark-muted mb-2"
                                     />
@@ -568,7 +539,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
                                       </span>
                                     </div>
                                   </div>
-                                  <button type="button" onClick={() => setSections((p) => removeContentBlockFromDraft(p, section.id, block.id))} className="p-1.5 text-dark-muted hover:text-red-400 rounded flex-shrink-0">
+                                  <button type="button" onClick={() => setCreateLayoutDraftSections(removeContentBlockFromDraft(sections, sec.id, block.id))} className="p-1.5 text-dark-muted hover:text-red-400 rounded flex-shrink-0">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                   </button>
                                 </div>
@@ -590,7 +561,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
                                         onChange={(e) => setDraftKey(e.target.value)}
                                         onBlur={() => {
                                           const trimmed = draftKey.trim();
-                                          if (trimmed && trimmed !== key) setSections((p) => renameAttributeKeyInDraft(p, section.id, block.id, key, trimmed));
+                                          if (trimmed && trimmed !== key) setCreateLayoutDraftSections(renameAttributeKeyInDraft(sections, sec.id, block.id, key, trimmed));
                                           setEditingKey(null);
                                           setEditingKeyBlockId(null);
                                         }}
@@ -599,20 +570,34 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
                                         className="flex-1 px-2 py-1.5 text-sm bg-dark-bg border border-blue-500 rounded"
                                       />
                                     ) : (
-                                      <button type="button" onClick={() => { setEditingKey(key); setEditingKeyBlockId(block.id); setDraftKey(key); }} className="flex-1 text-left px-2 py-1.5 text-sm hover:bg-dark-accent/30 rounded truncate min-w-0">
-                                        {key}
-                                      </button>
+                                      <>
+                                        <span className="flex-1 px-2 py-1.5 text-sm text-dark-text truncate min-w-0">
+                                          {key}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => { setEditingKey(key); setEditingKeyBlockId(block.id); setDraftKey(key); }}
+                                          className="p-1.5 text-dark-muted hover:text-blue-400 rounded"
+                                          title="Edit attribute name"
+                                        >
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                        </button>
+                                      </>
                                     )}
-                                    <input
-                                      type="text"
-                                      value={value}
-                                      onChange={(e) => setSections((p) => {
-                                        const pairs = { ...(block.keyValuePairs ?? {}), [key]: e.target.value };
-                                        return updateContentBlockInDraft(p, section.id, block.id, { keyValuePairs: pairs });
-                                      })}
-                                      placeholder="Value"
-                                      className="flex-1 min-w-0 px-2 py-1.5 text-sm bg-dark-bg border border-dark-accent/40 rounded text-dark-text placeholder:text-dark-muted focus:outline-none focus:border-blue-500"
-                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <AttributeValueInput
+                                        value={value}
+                                        onChange={(v) => {
+                                          const pairs = { ...(block.keyValuePairs ?? {}), [key]: v };
+                                          setCreateLayoutDraftSections(updateContentBlockInDraft(sections, sec.id, block.id, { keyValuePairs: pairs }));
+                                        }}
+                                        meta={getAttributeMeta(block, key)}
+                                        customDataTypes={createLayoutDraftDataTypes}
+                                        inputId={`${block.id}-${key}`}
+                                        placeholder="Value"
+                                        className="w-full px-2 py-1.5 text-sm bg-dark-bg border border-dark-accent/40 rounded text-dark-text placeholder:text-dark-muted focus:outline-none focus:border-blue-500"
+                                      />
+                                    </div>
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -629,12 +614,18 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
                                       <AttributeMetaEditorPopover
                                         keyName={key}
                                         meta={getAttributeMeta(block, key)}
-                                        onSave={(m) => setSections((p) => updateAttributeMetaInDraft(p, section.id, block.id, key, m))}
+                                        customDataTypes={createLayoutDraftDataTypes}
+                                        onAddCustomDataType={(name, options) => {
+                                          const id = generateId();
+                                          setCreateLayoutDraftDataTypes([...createLayoutDraftDataTypes, { id, name, options }]);
+                                          return id;
+                                        }}
+                                        onSave={(m) => setCreateLayoutDraftSections(updateAttributeMetaInDraft(sections, sec.id, block.id, key, m))}
                                         onClose={() => setMetaEditorFor(null)}
                                         anchorRect={metaEditorAnchorRect}
                                       />
                                     )}
-                                    <button type="button" onClick={() => setSections((p) => removeAttributeKeyFromDraft(p, section.id, block.id, key))} className="p-1.5 text-dark-muted hover:text-red-400 rounded">
+                                    <button type="button" onClick={() => setCreateLayoutDraftSections(removeAttributeKeyFromDraft(sections, sec.id, block.id, key))} className="p-1.5 text-dark-muted hover:text-red-400 rounded">
                                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                     </button>
                                   </div>
@@ -646,21 +637,29 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
                           return null;
                         })}
                         <div className="flex flex-wrap gap-2 pt-2 border-t border-dark-accent/20">
-                          <button type="button" onClick={() => setSections((p) => addContentBlockToDraft(p, section.id, "note"))} className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text" title="Add notes block with textarea">
-                            Add notes
+                          <button type="button" onClick={() => setCreateLayoutDraftSections(addContentBlockToDraft(sections, sec.id, "note"))} className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text" title="Add label">
+                            Add Label
                           </button>
-                          <button type="button" onClick={() => setSections((p) => addAttributeToSectionInDraft(p, section.id))} className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text" title="Add new attribute">
-                            + New attribute
+                          <button type="button" onClick={() => setCreateLayoutDraftSections(addAttributeToSectionInDraft(sections, sec.id))} className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text" title="Add attribute field">
+                            Add Attribute Field
                           </button>
-                          <button type="button" onClick={() => setSections((p) => addContentBlockToDraft(p, section.id, "image"))} className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text" title="Add image container">
-                            + Image
+                          <button type="button" onClick={() => setCreateLayoutDraftSections(addContentBlockToDraft(sections, sec.id, "image"))} className="text-xs px-2 py-1.5 rounded border border-dark-accent/40 text-dark-muted hover:text-dark-text" title="Add image container">
+                            Add Image Container
                           </button>
                         </div>
                       </div>
                       </SortableContext>
-                    )}
-                  </section>
-                );
+                        )}
+                      </section>
+                      {!isCol && children.length > 0 && (
+                        <div key={`children-${sec.id}`} className={useGrid ? "grid grid-cols-2 gap-4 items-start" : "space-y-6"}>
+                          {children.map((child) => renderSectionWithChildren(child))}
+                        </div>
+                      )}
+                    </span>
+                  );
+                };
+                return renderSectionWithChildren(section);
               })}
             </div>
             </DndContext>
@@ -692,7 +691,9 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
       {discardConfirmOpen && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
           <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
-            <h3 className="text-sm font-medium text-dark-text mb-2">Discard new layout?</h3>
+            <h3 className="text-sm font-medium text-dark-text mb-2">
+              {editingTemplateId ? "Discard changes?" : "Discard new layout?"}
+            </h3>
             <p className="text-sm text-dark-muted mb-4">
               All progress will be deleted. This cannot be undone. Do you want to proceed?
             </p>

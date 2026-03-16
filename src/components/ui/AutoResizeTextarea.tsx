@@ -1,15 +1,19 @@
 import { useRef, useEffect, useCallback } from "react";
 
-function resizeTextarea(ta: HTMLTextAreaElement | null) {
+/** Minimum height in px; default ~2.5rem for one line with padding. Use smaller (e.g. 28) for tighter single-line. */
+function resizeTextarea(ta: HTMLTextAreaElement | null, minHeightPx = 40) {
   if (!ta) return;
   ta.style.height = "auto";
-  ta.style.height = `${ta.scrollHeight}px`;
+  const h = Math.max(minHeightPx, ta.scrollHeight);
+  ta.style.height = `${h}px`;
 }
 
 export interface AutoResizeTextareaProps
   extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> {
   value: string;
   onChange?: (value: string) => void;
+  /** Min height in px when wrapping to content. Default 40. Use ~28 for single-line minimal. */
+  minHeightPx?: number;
 }
 
 export default function AutoResizeTextarea({
@@ -17,6 +21,7 @@ export default function AutoResizeTextarea({
   onChange,
   onInput,
   className = "",
+  minHeightPx = 40,
   ...rest
 }: AutoResizeTextareaProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -24,14 +29,16 @@ export default function AutoResizeTextarea({
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLTextAreaElement>) => {
       onInput?.(e);
-      resizeTextarea(ref.current);
+      resizeTextarea(ref.current, minHeightPx);
     },
-    [onInput]
+    [onInput, minHeightPx]
   );
 
   useEffect(() => {
-    resizeTextarea(ref.current);
-  }, [value]);
+    resizeTextarea(ref.current, minHeightPx);
+  }, [value, minHeightPx]);
+
+  const minHeightClass = minHeightPx <= 28 ? "min-h-[1.75rem]" : "min-h-[2.5rem]";
 
   return (
     <textarea
@@ -40,7 +47,8 @@ export default function AutoResizeTextarea({
       onChange={(e) => onChange?.(e.target.value)}
       onInput={handleInput}
       rows={1}
-      className={`overflow-hidden resize-none min-h-[2.5rem] ${className}`}
+      wrap="soft"
+      className={`overflow-hidden resize-none whitespace-pre-wrap ${minHeightClass} ${className}`}
       {...rest}
     />
   );

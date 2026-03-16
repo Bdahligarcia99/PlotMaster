@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, isChildEdge } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge } from "../../store/familyTreeStore";
+import Button from "../ui/Button";
 
 export interface FamilyUnit {
   unionId: string;
@@ -33,6 +35,7 @@ function buildFamilyUnits(
 
     const leftId = data.leftPartnerId ?? partnerIds[0];
     const rightId = data.rightPartnerId ?? partnerIds[1];
+    if (leftId == null || rightId == null) continue;
     const leftPerson = personById.get(leftId);
     const rightPerson = personById.get(rightId);
     if (!leftPerson || !rightPerson) continue;
@@ -58,23 +61,42 @@ function buildFamilyUnits(
 
 function getPersonName(nodes: Node<PersonNodeData | UnionNodeData>[], id: string): string {
   const n = nodes.find((x) => x.id === id && (x.data as { kind?: string }).kind === "person");
-  return (n?.data as PersonNodeData)?.name || "New Person";
+  if (!n) return "New Person";
+  return getPersonDisplayName(n.data as PersonNodeData, n.id, nodes);
 }
 
 interface FamilyTreeLeftSidebarProps {
   onSelectNode?: () => void;
 }
 
-export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSidebarProps) {
+function getDisplayName(
+  nodes: Node<PersonNodeData | UnionNodeData>[],
+  id: string,
+  kind: "person" | "union"
+): string {
+  const n = nodes.find((x) => x.id === id);
+  if (!n) return "Entity";
+  if (kind === "person") return getPersonDisplayName(n.data as PersonNodeData, n.id, nodes);
+  const d = n.data as UnionNodeData;
+  const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
+  const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
+  const leftName = leftId != null ? getPersonName(nodes, leftId) : "?";
+  const rightName = rightId != null ? getPersonName(nodes, rightId) : "?";
+  return `${leftName} ↔ ${rightName}`;
+}
+
+export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: FamilyTreeLeftSidebarProps) {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
+  const removeNodes = useFamilyTreeStore((s) => s.removeNodes);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const isSelected = (id: string) => selectedNodeIds.includes(id);
 
@@ -188,7 +210,6 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
       setSelectedNodeIds([id]);
       setLastEntityClickedId(id);
     }
-    if (onSelectNode) onSelectNode();
   };
 
   const startEditingPerson = (e: React.MouseEvent, personId: string, currentName: string) => {
@@ -208,6 +229,30 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
     setEditingPersonId(null);
   };
 
+  const hasSelection = selectedNodeIds.length > 0;
+  const canDelete = hasSelection && editingPersonId == null;
+
+  const handleDeleteClick = () => {
+    if (!canDelete) return;
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = () => {
+    removeNodes(selectedNodeIds);
+    setDeleteConfirmOpen(false);
+  };
+
+  const confirmMessage =
+    selectedNodeIds.length === 1
+      ? (() => {
+          const id = selectedNodeIds[0]!;
+          const node = nodes.find((n) => n.id === id);
+          const kind = (node?.data?.kind ?? "person") as "person" | "union";
+          const name = getDisplayName(nodes, id, kind);
+          return `Delete ${name}? This will remove them and their connections. This action cannot be undone.`;
+        })()
+      : `Delete ${selectedNodeIds.length} selected entities? This will remove them and their connections. This action cannot be undone.`;
+
   return (
     <div className="w-full min-w-0 flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden">
       <div className="p-4 border-b border-dark-accent/50">
@@ -224,7 +269,8 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
           readOnly
         />
       </div>
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 overflow-y-auto p-2">
         {familyUnits.length === 0 && unlinkedPeople.length === 0 ? (
           <p className="text-dark-muted text-sm py-4 text-center">No entities yet.</p>
         ) : (
@@ -495,7 +541,41 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
             )}
           </div>
         )}
+        </div>
+
+        <div className="p-3 border-t border-dark-accent/50 flex-shrink-0">
+        <button
+          type="button"
+          onClick={handleDeleteClick}
+          disabled={!canDelete}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent border-dark-accent/50 text-dark-muted hover:text-red-400 hover:border-red-500/50 hover:bg-red-500/10"
+          title={hasSelection ? "Delete selected entities" : "Select entities to delete"}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          Delete
+        </button>
+        </div>
       </div>
+
+      {deleteConfirmOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
+            <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
+              <p className="text-sm text-dark-text mb-3">{confirmMessage}</p>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setDeleteConfirmOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="danger" size="sm" onClick={handleConfirmDelete}>
+                  Delete
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

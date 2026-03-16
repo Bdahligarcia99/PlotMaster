@@ -1,110 +1,129 @@
-import { useMemo, useState } from "react";
-import { useCharacterProfilesStore } from "../../store/characterProfilesStore";
-import type { CharacterEntity } from "../../store/characterProfilesStore";
-import { getOrderedSections } from "../../store/characterProfilesStore";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { useParams } from "react-router-dom";
+import {
+  useCharacterProfilesStore,
+  generateProfilesScript,
+} from "../../store/characterProfilesStore";
+import { parseProfilesScript } from "../../parseProfilesScript";
 
-function generateProfilesScript(
-  characters: CharacterEntity[],
-  options: { compact?: boolean }
-): string {
-  if (characters.length === 0) {
-    return `@profiles
-  (No characters yet. Add characters in the Entities panel.)`;
+const INDENT = "  ";
+
+/** Compute smart indent for the next line based on current line */
+function getSmartIndent(lines: string[], cursorLineIndex: number): string {
+  if (cursorLineIndex < 0) return "";
+  const currentLine = lines[cursorLineIndex] ?? "";
+  const trimmed = currentLine.trim();
+  const currentIndent = currentLine.match(/^\s*/)?.[0] ?? "";
+
+  // After section (h1-h4 "..."): indent one level for children
+  if (/^(h1|h2|h3|h4)\s+"/.test(trimmed)) {
+    return currentIndent + INDENT;
   }
-
-  const lines: string[] = ["@profiles"];
-
-  for (const char of characters) {
-    const name = char.name.trim() || "Unnamed";
-    lines.push(`  [${name}] {`);
-
-    const sections = getOrderedSections(char.sections ?? []);
-    if (sections.length === 0) {
-      lines.push("    —");
-    } else {
-      for (const sec of sections) {
-        const secName = sec.label?.trim() || "Section";
-        const baseIndent = sec.parentId ? "      " : "    ";
-        const blockIndent = sec.parentId ? "        " : "      ";
-
-        if (options.compact) {
-          const parts: string[] = [];
-          for (const block of sec.contentBlocks ?? []) {
-            if (block.type === "note" && block.content.trim()) {
-              parts.push(block.content.trim().replace(/\n/g, " "));
-            }
-            if (block.type === "attributes" && Object.keys(block.keyValuePairs ?? {}).length > 0) {
-              const attrStr = (block.attributeOrder ?? Object.keys(block.keyValuePairs ?? {}))
-                .filter((k) => k in (block.keyValuePairs ?? {}))
-                .map((k) => `${k}: ${(block.keyValuePairs ?? {})[k]}`)
-                .join(", ");
-              parts.push(attrStr);
-            }
-            if (block.type === "image" && (block.label || block.imageUrl)) {
-              parts.push(block.label ? `[Image: ${block.label}]` : "[Image]");
-            }
-          }
-          lines.push(`${baseIndent}${secName}: ${parts.join(" | ") || "—"}`);
-        } else {
-          lines.push(`${baseIndent}${secName}:`);
-          for (const block of sec.contentBlocks ?? []) {
-            if (block.type === "note") {
-              if (block.content.trim()) {
-                block.content.split("\n").forEach((line) => {
-                  lines.push(`${blockIndent}Note: ${line.trim() || "—"}`);
-                });
-              }
-            }
-            if (block.type === "attributes") {
-              const pairs = block.keyValuePairs ?? {};
-              const order = block.attributeOrder ?? Object.keys(pairs);
-              const entries = order.filter((k) => k in pairs).map((k) => [k, pairs[k]]);
-              if (entries.length === 0) {
-                lines.push(`${blockIndent}—`);
-              } else {
-                for (const [key, value] of entries) {
-                  lines.push(`${blockIndent}${key}: ${value}`);
-                }
-              }
-            }
-            if (block.type === "image") {
-              const imgLabel = block.label ? ` (${block.label})` : "";
-              const imgUrl = block.imageUrl ? `: ${block.imageUrl}` : "";
-              lines.push(`${blockIndent}[Image${imgLabel}${imgUrl}]`);
-            }
-          }
-          if ((sec.contentBlocks ?? []).length === 0) {
-            lines.push(`${blockIndent}—`);
-          }
-        }
+  // After attributes keyword: indent for key-value pairs
+  if (/^\s*attributes\s*$/.test(currentLine)) {
+    return currentIndent + INDENT;
+  }
+  // After note/image: same indent (sibling)
+  if (/^\s*note\s+"/.test(currentLine) || /^\s*image\s+"/.test(currentLine)) {
+    return currentIndent;
+  }
+  // After key: value in attributes block: same indent
+  if (/^\s+\S+:\s*/.test(currentLine)) {
+    return currentIndent;
+  }
+  // After opening brace or empty line: use previous non-empty line's indent
+  if (trimmed === "" || trimmed === "{") {
+    for (let i = cursorLineIndex - 1; i >= 0; i--) {
+      const prev = lines[i] ?? "";
+      const prevTrimmed = prev.trim();
+      if (prevTrimmed && prevTrimmed !== "{") {
+        const prevIndent = prev.match(/^\s*/)?.[0] ?? "";
+        if (/^(h1|h2|h3|h4)\s+"/.test(prevTrimmed)) return prevIndent + INDENT;
+        return prevIndent;
       }
     }
-    lines.push("  }");
-    lines.push("");
   }
-
-  return lines.join("\n").trimEnd();
+  // Default: maintain current indent
+  return currentIndent;
 }
 
 export default function ProfilesScriptPane() {
+  const { id: projectId } = useParams<{ id: string }>();
   const characters = useCharacterProfilesStore((s) => s.characters);
-  const [scriptPanelLayout, setScriptPanelLayout] = useState<
-    "split" | "codeOnly" | "viewOnly"
-  >("viewOnly");
+  const selectedCharacterId = useCharacterProfilesStore((s) => s.selectedCharacterId);
+  const chartLayoutMode = useCharacterProfilesStore((s) => s.chartLayoutMode);
+  const createLayoutDraftSections = useCharacterProfilesStore(
+    (s) => s.createLayoutDraftSections
+  );
+  const createLayoutDraftDataTypes = useCharacterProfilesStore(
+    (s) => s.createLayoutDraftDataTypes
+  );
+  const scriptPanelLayout = useCharacterProfilesStore((s) => s.scriptPanelLayout);
+  const setScriptPanelLayout = useCharacterProfilesStore(
+    (s) => s.setScriptPanelLayout
+  );
+  const applyProfilesFromScript = useCharacterProfilesStore(
+    (s) => s.applyProfilesFromScript
+  );
+  const setCreateLayoutDraftSections = useCharacterProfilesStore(
+    (s) => s.setCreateLayoutDraftSections
+  );
+  const setCreateLayoutDraftDataTypes = useCharacterProfilesStore(
+    (s) => s.setCreateLayoutDraftDataTypes
+  );
+  const setCreateLayoutDraftBuiltinDataTypes = useCharacterProfilesStore(
+    (s) => s.setCreateLayoutDraftBuiltinDataTypes
+  );
+  const createLayoutDraftBuiltinDataTypes = useCharacterProfilesStore(
+    (s) => s.createLayoutDraftBuiltinDataTypes
+  );
   const [copied, setCopied] = useState(false);
   const [compactDeclarations, setCompactDeclarations] = useState(false);
+  const [editorContent, setEditorContent] = useState("");
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [runSuccess, setRunSuccess] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const script = useMemo(
-    () =>
-      generateProfilesScript(characters, {
+  const generatedScript = useMemo(() => {
+    if (chartLayoutMode === "createLayout") {
+      return generateProfilesScript(createLayoutDraftSections, {
         compact: compactDeclarations,
-      }),
-    [characters, compactDeclarations]
-  );
+        characterName: "New Layout",
+        source: "template",
+        customDataTypes: createLayoutDraftDataTypes,
+        builtinDataTypes: createLayoutDraftBuiltinDataTypes,
+      });
+    }
+    // fill/edit: show only the selected character
+    const selectedChar = selectedCharacterId
+      ? characters.find((c) => c.id === selectedCharacterId)
+      : null;
+    return generateProfilesScript(selectedChar ? [selectedChar] : [], {
+      compact: compactDeclarations,
+      source: "characters",
+    });
+  }, [
+    chartLayoutMode,
+    characters,
+    selectedCharacterId,
+    createLayoutDraftSections,
+    createLayoutDraftDataTypes,
+    createLayoutDraftBuiltinDataTypes,
+    compactDeclarations,
+  ]);
+
+  // Sync editor from store when not dirty
+  useEffect(() => {
+    if (!editorDirty) {
+      setEditorContent(generatedScript);
+    }
+  }, [generatedScript, editorDirty]);
 
   const handleCopy = async () => {
+    const text = scriptPanelLayout === "viewOnly" ? generatedScript : editorContent;
     try {
-      await navigator.clipboard.writeText(script);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -112,8 +131,137 @@ export default function ProfilesScriptPane() {
     }
   };
 
+  const handleRun = useCallback(() => {
+    setParseError(null);
+    setRunSuccess(false);
+    const result = parseProfilesScript(editorContent);
+
+    if (!result.ok) {
+      setParseError(
+        result.error.line != null
+          ? `Line ${result.error.line}: ${result.error.message}`
+          : result.error.message
+      );
+      return;
+    }
+
+    if (!projectId) {
+      setParseError("No project loaded.");
+      return;
+    }
+
+    if (chartLayoutMode === "createLayout") {
+      const customDataTypes = result.customDataTypes ?? [];
+      const builtinDataTypes = result.builtinDataTypes ?? [];
+      setCreateLayoutDraftDataTypes(customDataTypes);
+      setCreateLayoutDraftBuiltinDataTypes(builtinDataTypes);
+      const first = result.characters[0];
+      if (first) {
+        setCreateLayoutDraftSections(first.sections ?? []);
+        const normalized = generateProfilesScript(first.sections ?? [], {
+          compact: compactDeclarations,
+          characterName: "New Layout",
+          source: "template",
+          customDataTypes,
+          builtinDataTypes,
+        });
+        setEditorContent(normalized);
+      } else {
+        setCreateLayoutDraftSections([]);
+        setEditorContent(
+          generateProfilesScript([], {
+            compact: compactDeclarations,
+            source: "template",
+            customDataTypes,
+            builtinDataTypes,
+          })
+        );
+      }
+    } else {
+      applyProfilesFromScript(projectId, result.characters);
+      const normalized = generateProfilesScript(result.characters, {
+        compact: compactDeclarations,
+        source: "characters",
+      });
+      setEditorContent(normalized);
+    }
+
+    setEditorDirty(false);
+    setRunSuccess(true);
+    setTimeout(() => setRunSuccess(false), 2000);
+  }, [
+    editorContent,
+    projectId,
+    chartLayoutMode,
+    compactDeclarations,
+    applyProfilesFromScript,
+    setCreateLayoutDraftSections,
+    setCreateLayoutDraftDataTypes,
+    setCreateLayoutDraftBuiltinDataTypes,
+  ]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleRun();
+      return;
+    }
+
+    const ta = e.currentTarget;
+    if (e.key === "Enter") {
+      const start = ta.selectionStart;
+      const text = ta.value;
+      const before = text.slice(0, start);
+      const after = text.slice(start);
+      const lines = before.split("\n");
+      const cursorLineIndex = lines.length - 1;
+      const indent = getSmartIndent(lines, cursorLineIndex);
+      e.preventDefault();
+      const newText = before + "\n" + indent + after;
+      const newCursor = start + 1 + indent.length;
+      setEditorContent(newText);
+      setEditorDirty(true);
+      setParseError(null);
+      requestAnimationFrame(() => {
+        ta.setSelectionRange(newCursor, newCursor);
+      });
+      return;
+    }
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const text = ta.value;
+      const before = text.slice(0, start);
+      const after = text.slice(end);
+      setEditorContent(before + INDENT + after);
+      setEditorDirty(true);
+      requestAnimationFrame(() => {
+        ta.setSelectionRange(start + INDENT.length, start + INDENT.length);
+      });
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setEditorContent(e.target.value);
+    setEditorDirty(true);
+    setParseError(null);
+  };
+
   const showCode = scriptPanelLayout === "split" || scriptPanelLayout === "codeOnly";
   const showView = scriptPanelLayout === "split" || scriptPanelLayout === "viewOnly";
+
+  // Working mode: can edit/run when createLayout, or a character is selected, or no characters yet (bootstrap)
+  const hasWorkingMode =
+    chartLayoutMode === "createLayout" ||
+    selectedCharacterId != null ||
+    characters.length === 0;
+
+  // View has content only when we have a selection to show
+  const hasViewContent =
+    (chartLayoutMode === "createLayout" && (createLayoutDraftSections?.length ?? 0) > 0) ||
+    (chartLayoutMode !== "createLayout" && selectedCharacterId != null && characters.some((c) => c.id === selectedCharacterId));
 
   const layoutBtn = (mode: "split" | "codeOnly" | "viewOnly", label: string) => (
     <button
@@ -142,6 +290,40 @@ export default function ProfilesScriptPane() {
           {layoutBtn("codeOnly", "Code")}
           {layoutBtn("viewOnly", "View")}
         </div>
+        <div className="flex items-center gap-2">
+          {showCode ? (
+            hasWorkingMode && (
+              <button
+                type="button"
+                onClick={handleRun}
+                className="px-2 py-1 text-xs rounded border border-green-500/50 bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
+                title="Apply script (Ctrl/Cmd+Enter)"
+              >
+                {runSuccess ? "Applied!" : "Run"}
+              </button>
+            )
+          ) : (
+            <span className="text-xs text-dark-muted italic" title="Switch to Split or Code to edit and run the script">
+              Switch to Split or Code to edit and run
+            </span>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-dark-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={compactDeclarations}
+              onChange={(e) => setCompactDeclarations(e.target.checked)}
+              className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+            />
+            <span>Compact</span>
+          </label>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent transition-colors"
+          >
+            {copied ? "Copied!" : "Copy"}
+          </button>
+        </div>
       </div>
       <div className="flex-1 flex overflow-hidden min-h-0">
         <div
@@ -149,18 +331,34 @@ export default function ProfilesScriptPane() {
             scriptPanelLayout === "split" ? "border-r border-dark-accent/50" : ""
           } ${showCode ? "flex-1" : "hidden"}`}
         >
-          <div className="flex items-center px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
             <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">
               Code
             </span>
           </div>
+          {parseError && (
+            <div className="px-3 py-2 bg-red-500/15 border-b border-red-500/30 shrink-0" role="alert">
+              <span className="text-xs text-red-400 block">{parseError}</span>
+            </div>
+          )}
           <div className="flex-1 overflow-hidden p-3">
-            <textarea
-              readOnly
-              value={script}
-              className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
-              spellCheck={false}
-            />
+            {hasWorkingMode ? (
+              <textarea
+                ref={textareaRef}
+                value={editorContent}
+                onChange={handleChange}
+                onKeyDown={handleKeyDown}
+                className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
+                spellCheck={false}
+                placeholder="@profiles&#10;&#10;[CharacterName] {&#10;  h1 &quot;Section&quot;&#10;    note &quot;...&quot;&#10;}"
+              />
+            ) : (
+              <div className="w-full h-full px-3 py-2 bg-dark-bg/50 border border-dark-accent/50 rounded-lg flex items-center justify-center text-center">
+                <p className="text-sm text-dark-muted">
+                  Select a character from the Entities panel or create a new layout to use the script editor.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -171,36 +369,28 @@ export default function ProfilesScriptPane() {
         <div
           className={`flex flex-col min-w-0 ${showView ? "flex-1" : "hidden"}`}
         >
-          <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
+          <div className="flex justify-between items-center gap-2 px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
             <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">
               View
             </span>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs text-dark-muted cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={compactDeclarations}
-                  onChange={(e) => setCompactDeclarations(e.target.checked)}
-                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
-                />
-                <span>Compact</span>
-              </label>
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent transition-colors"
-              >
-                {copied ? "Copied!" : "Copy"}
-              </button>
-            </div>
           </div>
           <div className="flex-1 overflow-hidden p-3">
-            <textarea
-              value={script}
-              readOnly
-              className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
-              spellCheck={false}
-            />
+            {hasViewContent ? (
+              <textarea
+                value={generatedScript}
+                readOnly
+                className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
+                spellCheck={false}
+              />
+            ) : (
+              <div className="w-full h-full px-3 py-2 bg-dark-bg/30 border border-dark-accent/30 rounded-lg flex items-center justify-center">
+                <p className="text-xs text-dark-muted">
+                  {chartLayoutMode === "createLayout"
+                    ? "Add sections to the layout to see the generated script"
+                    : "Select a character to view its script"}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

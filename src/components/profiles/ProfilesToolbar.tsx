@@ -9,13 +9,17 @@ export default function ProfilesToolbar() {
   const {
     activeProjectId,
     selectedCharacterId,
+    comparisonCharacterId,
     setActiveProject,
     chartLayoutMode,
     setChartLayoutMode,
     addCharacter,
+    chartSectionLayoutMode,
+    setChartSectionLayoutMode,
   } = useCharacterProfilesStore();
 
   const canEditStructure = chartLayoutMode === "edit";
+  const isComparisonMode = Boolean(comparisonCharacterId);
 
   const [templateModalMode, setTemplateModalMode] = useState<TemplateModalMode>(null);
   const templateButtonRef = useRef<HTMLDivElement>(null);
@@ -103,6 +107,39 @@ export default function ProfilesToolbar() {
           title="Manage templates"
         >
           Templates
+        </button>
+      </div>
+
+      <div className="ml-auto flex rounded-lg overflow-hidden border border-dark-accent/50">
+        <button
+          type="button"
+          onClick={() => setChartSectionLayoutMode("list")}
+          disabled={!activeProjectId}
+          title="List layout – H2 sections stacked vertically"
+          className={`px-2 py-1.5 text-sm transition-colors ${
+            chartSectionLayoutMode === "list"
+              ? "bg-dark-accent text-dark-text"
+              : "bg-dark-accent/50 text-dark-muted hover:text-dark-text"
+          } ${!activeProjectId ? "opacity-50 cursor-not-allowed" : ""}`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => !isComparisonMode && setChartSectionLayoutMode("grid")}
+          disabled={!activeProjectId || isComparisonMode}
+          title={isComparisonMode ? "Grid view unavailable when comparing two characters" : "Grid layout – H2 sections in columns"}
+          className={`px-2 py-1.5 text-sm border-l border-dark-accent/50 transition-colors ${
+            chartSectionLayoutMode === "grid"
+              ? "bg-dark-accent text-dark-text"
+              : "bg-dark-accent/50 text-dark-muted hover:text-dark-text"
+          } ${!activeProjectId || isComparisonMode ? "opacity-50 cursor-not-allowed" : ""}`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+          </svg>
         </button>
       </div>
 

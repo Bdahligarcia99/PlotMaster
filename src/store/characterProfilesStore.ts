@@ -6,6 +6,9 @@ const PROFILES_STORAGE_KEY = (projectId: string) =>
 const TEMPLATES_STORAGE_KEY = (projectId: string) =>
   `plotmaster:profiles:templates:${projectId}`;
 
+const CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
+  `plotmaster:profiles:chartSectionLayout:${projectId}`;
+
 export type SectionHeadingLevel = "h1" | "h2" | "h3" | "h4";
 
 /** Note block - section-scoped note */
@@ -15,13 +18,28 @@ export interface NoteBlock {
   content: string;
 }
 
-export type AttributeType = "text" | "number" | "select";
+export type AttributeType = "text" | "number" | "numberScroll" | "select" | "date" | "custom";
+
+/** Custom data type defined at template level */
+export interface CustomDataType {
+  id: string;
+  name: string;
+  options: string[];
+}
 
 /** Metadata per attribute key - optional; missing = treat as text */
 export interface AttributeMetaItem {
   type?: AttributeType;
+  /** When type is "custom", references CustomDataType.id */
+  customTypeId?: string;
   options?: string[];
   allowCustom?: boolean;
+  /** For number / numberScroll: optional min value */
+  min?: number;
+  /** For number / numberScroll: optional max value */
+  max?: number;
+  /** For number / numberScroll: optional step */
+  step?: number;
 }
 
 /** Attribute block - key/value pairs with order and optional metadata */
@@ -57,6 +75,10 @@ export interface CharacterEntity {
   id: string;
   name: string;
   sections: ProfileSection[];
+  /** When set, layout is driven by this template; changes propagate on template save */
+  linkedTemplateId?: string | null;
+  /** Snapshot of template customDataTypes when layout was applied; used to resolve customTypeId */
+  customDataTypes?: CustomDataType[];
 }
 
 /** Chart layout template - structure only, no character-specific values */
@@ -64,21 +86,45 @@ export interface ChartLayoutTemplate {
   id: string;
   name: string;
   createdAt?: number;
+  customDataTypes?: CustomDataType[];
+  /** Stored @builtin lines from the script (e.g. @builtin number: [0, 120, 1]) */
+  builtinDataTypes?: string[];
   sections: ProfileSection[];
 }
 
 export type ChartLayoutMode = "fill" | "edit" | "createLayout";
 
+export type ScriptPanelLayout = "split" | "codeOnly" | "viewOnly";
+
+export type ChartSectionLayoutMode = "list" | "grid";
+
 interface CharacterProfilesStore {
   activeProjectId: string | null;
   characters: CharacterEntity[];
   selectedCharacterId: string | null;
+  comparisonCharacterId: string | null;
   chartLayoutMode: ChartLayoutMode;
   editLayoutDirty: boolean;
+  editLayoutDraftSections: ProfileSection[];
+  editingTemplateId: string | null;
+  createLayoutDirty: boolean;
+  createLayoutDraftSections: ProfileSection[];
+  createLayoutDraftDataTypes: CustomDataType[];
+  createLayoutDraftBuiltinDataTypes: string[];
+  scriptPanelLayout: ScriptPanelLayout;
+  chartSectionLayoutMode: ChartSectionLayoutMode;
+  setChartSectionLayoutMode: (mode: ChartSectionLayoutMode) => void;
   setActiveProject: (projectId: string | null) => void;
-  setSelectedCharacter: (characterId: string | null) => void;
+  setSelectedCharacter: (characterId: string | null, shiftKey?: boolean) => void;
+  exitComparison: () => void;
   setChartLayoutMode: (mode: ChartLayoutMode) => void;
   setEditLayoutDirty: (dirty: boolean) => void;
+  setEditLayoutDraftSections: (sections: ProfileSection[]) => void;
+  applyEditLayoutDraftToCharacter: (projectId: string, characterId: string) => boolean;
+  setCreateLayoutDraftSections: (sections: ProfileSection[]) => void;
+  setCreateLayoutDraftDataTypes: (types: CustomDataType[]) => void;
+  setCreateLayoutDraftBuiltinDataTypes: (lines: string[]) => void;
+  setScriptPanelLayout: (layout: ScriptPanelLayout) => void;
   loadCharacters: (projectId: string) => void;
   addCharacter: (projectId: string, name?: string) => string;
   removeCharacter: (projectId: string, characterId: string) => void;
@@ -111,10 +157,16 @@ interface CharacterProfilesStore {
   // Chart layout templates
   listTemplates: (projectId: string) => ChartLayoutTemplate[];
   saveTemplateFromCharacter: (projectId: string, characterId: string, name: string) => string | null;
-  applyTemplateToCharacter: (projectId: string, characterId: string, templateId: string, mode: "replace" | "merge") => void;
+  applyTemplateToCharacter: (projectId: string, characterId: string, templateId: string, mode: "replace" | "link") => void;
+  unlinkCharacterFromTemplate: (projectId: string, characterId: string) => void;
+  getTemplateById: (projectId: string, templateId: string) => ChartLayoutTemplate | null;
+  syncLinkedCharacterWithTemplate: (projectId: string, characterId: string) => boolean;
+  loadTemplateForEditing: (projectId: string, templateId: string) => void;
+  updateTemplate: (projectId: string, templateId: string) => boolean;
   renameTemplate: (projectId: string, templateId: string, name: string) => void;
   deleteTemplate: (projectId: string, templateId: string) => void;
-  createTemplateFromSections: (projectId: string, name: string, sections: ProfileSection[]) => string | null;
+  createTemplateFromSections: (projectId: string, name: string, sections: ProfileSection[], customDataTypes?: CustomDataType[], builtinDataTypes?: string[]) => string | null;
+  applyProfilesFromScript: (projectId: string, characters: CharacterEntity[]) => void;
 }
 
 function generateId() {
@@ -147,13 +199,15 @@ function migrateCharacter(c: {
 }): CharacterEntity {
   // Already migrated
   if (c.sections && Array.isArray(c.sections)) {
+    const ce = c as CharacterEntity & { linkedTemplateId?: string | null };
     return {
       id: c.id,
       name: c.name,
-      sections: (c as CharacterEntity).sections.map((s) => ({
+      sections: ce.sections.map((s) => ({
         ...s,
         contentBlocks: s.contentBlocks ?? [],
       })),
+      linkedTemplateId: ce.linkedTemplateId ?? null,
     };
   }
 
@@ -229,7 +283,7 @@ function migrateCharacter(c: {
     });
   }
 
-  return { id: c.id, name: c.name, sections };
+  return { id: c.id, name: c.name, sections, linkedTemplateId: null };
 }
 
 function loadFromStorage(projectId: string): CharacterEntity[] {
@@ -250,6 +304,24 @@ function saveToStorage(projectId: string, characters: CharacterEntity[]) {
     );
   } catch (e) {
     console.warn("[CharacterProfilesStore] Save failed:", e);
+  }
+}
+
+function loadChartSectionLayoutMode(projectId: string): ChartSectionLayoutMode {
+  try {
+    const raw = localStorage.getItem(CHART_SECTION_LAYOUT_KEY(projectId));
+    if (raw === "grid") return "grid";
+  } catch {
+    /* ignore */
+  }
+  return "list";
+}
+
+function saveChartSectionLayoutMode(projectId: string, mode: ChartSectionLayoutMode) {
+  try {
+    localStorage.setItem(CHART_SECTION_LAYOUT_KEY(projectId), mode);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -285,7 +357,7 @@ function sectionsToTemplateFormat(sections: ProfileSection[]): ProfileSection[] 
     oldToNewSectionId.set(s.id, newId);
     const blocks: ContentBlock[] = (s.contentBlocks ?? []).map((b) => {
       if (b.type === "note") {
-        return { type: "note" as const, id: generateId(), content: "" };
+        return { type: "note" as const, id: generateId(), content: (b as NoteBlock).content ?? "" };
       }
       if (b.type === "attributes") {
         const keys = b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {});
@@ -299,8 +371,12 @@ function sectionsToTemplateFormat(sections: ProfileSection[]): ProfileSection[] 
             const opts = m.options ?? [];
             attributeMeta[k] = {
               type: m.type ?? "text",
+              customTypeId: m.customTypeId,
               options: [...new Set(opts)],
               allowCustom: m.allowCustom ?? false,
+              min: m.min,
+              max: m.max,
+              step: m.step,
             };
           }
         }
@@ -361,76 +437,116 @@ function applyTemplateSections(
   const result: ProfileSection[] = [...existingOrdered];
   let maxOrder = Math.max(-1, ...existingOrdered.map((s) => s.order)) + 1;
 
+  const imageLabelExists = (blocks: ContentBlock[], label: string): boolean => {
+    const normalized = (label ?? "").trim().toLowerCase();
+    if (!normalized) return false;
+    return (blocks ?? []).some((b) => b.type === "image" && ((b as ImageBlock).label ?? "").trim().toLowerCase() === normalized);
+  };
+
   for (const ts of templateOrdered) {
     const labelKey = ts.label.toLowerCase();
     const existing = existingByLabel.get(labelKey);
     if (existing) {
       templateIdToCharId.set(ts.id, existing.id);
       const attrKeys = existingAttrKeys.get(labelKey) ?? new Set();
+      const charBlocks = existing.contentBlocks ?? [];
+
+      // 1. Attributes: add new keys with empty value, sync meta for existing keys
       for (const tb of ts.contentBlocks ?? []) {
-        if (tb.type === "attributes") {
-          const keysToAdd = (tb.attributeOrder ?? Object.keys(tb.keyValuePairs ?? {})).filter(
-            (k) => !attrKeys.has(k)
-          );
-          if (keysToAdd.length > 0) {
-            const block = (existing.contentBlocks ?? []).find(
-              (b): b is AttributeBlock => b.type === "attributes"
-            );
-            const tbMeta = tb.attributeMeta ?? {};
-            if (block) {
-              const pairs = { ...block.keyValuePairs };
-              const order = [...(block.attributeOrder ?? Object.keys(pairs))];
-              const attributeMeta = { ...(block.attributeMeta ?? {}) };
-              for (const k of keysToAdd) {
-                pairs[k] = "";
-                order.push(k);
-                attrKeys.add(k);
-                if (tbMeta[k]) {
-                  const m = tbMeta[k];
-                  attributeMeta[k] = {
-                    type: m.type ?? "text",
-                    options: m.options ? [...new Set(m.options)] : undefined,
-                    allowCustom: m.allowCustom,
-                  };
-                }
-              }
-              existing.contentBlocks = (existing.contentBlocks ?? []).map((b) =>
-                b.type === "attributes" && b.id === block.id
-                  ? { ...b, keyValuePairs: pairs, attributeOrder: order, attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined }
-                  : b
-              );
-            } else {
-              const attributeMeta: Record<string, AttributeMetaItem> = {};
-              for (const k of keysToAdd) {
-                if (tbMeta[k]) {
-                  const m = tbMeta[k];
-                  attributeMeta[k] = { type: m.type ?? "text", options: m.options ? [...new Set(m.options)] : undefined, allowCustom: m.allowCustom };
-                }
-              }
-              existing.contentBlocks = [
-                ...(existing.contentBlocks ?? []),
-                {
-                  type: "attributes" as const,
-                  id: generateId(),
-                  keyValuePairs: Object.fromEntries(keysToAdd.map((k) => [k, ""])),
-                  attributeOrder: keysToAdd,
-                  attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined,
-                },
-              ];
-              keysToAdd.forEach((k) => attrKeys.add(k));
+        if (tb.type !== "attributes") continue;
+        const templateKeys = tb.attributeOrder ?? Object.keys(tb.keyValuePairs ?? {});
+        const keysToAdd = templateKeys.filter((k) => !attrKeys.has(k));
+        const block = charBlocks.find((b): b is AttributeBlock => b.type === "attributes");
+        const tbMeta = (tb as AttributeBlock).attributeMeta ?? {};
+        if (block) {
+          const pairs = { ...block.keyValuePairs };
+          const order = [...(block.attributeOrder ?? Object.keys(pairs))];
+          const attributeMeta = { ...(block.attributeMeta ?? {}) };
+          for (const k of keysToAdd) {
+            pairs[k] = "";
+            order.push(k);
+            attrKeys.add(k);
+          }
+          for (const k of templateKeys) {
+            if (tbMeta[k]) {
+              const m = tbMeta[k];
+              attributeMeta[k] = {
+                type: m.type ?? "text",
+                customTypeId: m.customTypeId,
+                options: m.options ? [...new Set(m.options)] : undefined,
+                allowCustom: m.allowCustom,
+                min: m.min,
+                max: m.max,
+                step: m.step,
+              };
             }
           }
-        } else if (tb.type === "note") {
+          existing.contentBlocks = (existing.contentBlocks ?? []).map((b) =>
+            b.type === "attributes" && b.id === block.id
+              ? { ...b, keyValuePairs: pairs, attributeOrder: order, attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined }
+              : b
+          );
+        } else if (keysToAdd.length > 0) {
+          const attributeMeta: Record<string, AttributeMetaItem> = {};
+          for (const k of keysToAdd) {
+            if (tbMeta[k]) {
+              const m = tbMeta[k];
+              attributeMeta[k] = { type: m.type ?? "text", customTypeId: m.customTypeId, options: m.options ? [...new Set(m.options)] : undefined, allowCustom: m.allowCustom, min: m.min, max: m.max, step: m.step };
+            }
+          }
           existing.contentBlocks = [
             ...(existing.contentBlocks ?? []),
-            { type: "note" as const, id: generateId(), content: "" },
+            {
+              type: "attributes" as const,
+              id: generateId(),
+              keyValuePairs: Object.fromEntries(keysToAdd.map((k) => [k, ""])),
+              attributeOrder: keysToAdd,
+              attributeMeta: Object.keys(attributeMeta).length > 0 ? attributeMeta : undefined,
+            },
           ];
-        } else if (tb.type === "image") {
-          existing.contentBlocks = [
-            ...(existing.contentBlocks ?? []),
-            { type: "image" as const, id: generateId(), label: tb.label },
-          ];
+          keysToAdd.forEach((k) => attrKeys.add(k));
         }
+      }
+
+      // 2. Notes: update empty notes from template; add new notes with template content
+      const charNotes = charBlocks.filter((b): b is NoteBlock => b.type === "note");
+      const templateNotes = (ts.contentBlocks ?? []).filter((b): b is NoteBlock => b.type === "note");
+      const updatedNotes: NoteBlock[] = [];
+      for (let i = 0; i < Math.max(charNotes.length, templateNotes.length); i++) {
+        const tNote = templateNotes[i];
+        const cNote = charNotes[i];
+        const isEmpty = (s: string | undefined) => (s ?? "").trim() === "";
+        if (tNote) {
+          if (cNote) {
+            updatedNotes.push(isEmpty(cNote.content) ? { ...cNote, content: tNote.content ?? "" } : cNote);
+          } else {
+            updatedNotes.push({ type: "note" as const, id: generateId(), content: tNote.content ?? "" });
+          }
+        } else if (cNote) {
+          updatedNotes.push(cNote);
+        }
+      }
+      let noteIdx = 0;
+      const newBlocks: ContentBlock[] = [];
+      for (const b of existing.contentBlocks ?? []) {
+        if (b.type === "note") {
+          if (noteIdx < updatedNotes.length) newBlocks.push(updatedNotes[noteIdx++]);
+        } else {
+          newBlocks.push(b);
+        }
+      }
+      while (noteIdx < updatedNotes.length) newBlocks.push(updatedNotes[noteIdx++]);
+      existing.contentBlocks = newBlocks;
+
+      // 3. Images: add only if no block with same label exists
+      for (const tb of ts.contentBlocks ?? []) {
+        if (tb.type !== "image") continue;
+        const img = tb as ImageBlock;
+        if (imageLabelExists(existing.contentBlocks ?? [], img.label ?? "")) continue;
+        existing.contentBlocks = [
+          ...(existing.contentBlocks ?? []),
+          { type: "image" as const, id: generateId(), label: img.label },
+        ];
       }
     } else {
       const newParentId = ts.parentId ? (templateIdToCharId.get(ts.parentId) ?? null) : null;
@@ -451,7 +567,7 @@ function templateSectionToCharacter(
 ): ProfileSection {
   const newId = generateId();
   const blocks: ContentBlock[] = (s.contentBlocks ?? []).map((b) => {
-    if (b.type === "note") return { type: "note" as const, id: generateId(), content: "" };
+    if (b.type === "note") return { type: "note" as const, id: generateId(), content: (b as NoteBlock).content ?? "" };
     if (b.type === "attributes") {
       const keys = b.attributeOrder ?? Object.keys(b.keyValuePairs ?? {});
       const meta = b.attributeMeta ?? {};
@@ -461,8 +577,12 @@ function templateSectionToCharacter(
           const m = meta[k];
           attributeMeta[k] = {
             type: m.type ?? "text",
+            customTypeId: m.customTypeId,
             options: m.options ? [...new Set(m.options)] : undefined,
             allowCustom: m.allowCustom,
+            min: m.min,
+            max: m.max,
+            step: m.step,
           };
         }
       }
@@ -528,28 +648,385 @@ export function getOrderedSections(sections: ProfileSection[]): ProfileSection[]
   return result;
 }
 
+/** Escape a string for use in double-quoted DSL (backslash for " and \n) */
+function escapeQuotedString(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+}
+
+export interface GenerateProfilesScriptOptions {
+  compact?: boolean;
+  characterName?: string;
+  /** When input is empty: "characters" = show character message, "template" = show template message */
+  source?: "characters" | "template";
+  /** Custom data types for template layout; output first in script when present */
+  customDataTypes?: CustomDataType[];
+  /** Stored @builtin lines (e.g. @builtin number: [0, 120, 1]); emit in # Data types when present */
+  builtinDataTypes?: string[];
+}
+
+/**
+ * Generate profile script in the robust DSL format.
+ * v1: one-way code generation (UI → script). No parsing.
+ *
+ * DSL keywords: h1/h2/h3/h4, note, attributes, image.
+ * Extensible: future phases can add @options, arrays (e.g. key: [a, b, c]).
+ */
+export function generateProfilesScript(
+  input: CharacterEntity[] | ProfileSection[],
+  options: GenerateProfilesScriptOptions = {}
+): string {
+  const compact = options.compact ?? false;
+  const customDataTypes = options.customDataTypes ?? [];
+  const storedBuiltinLines = options.builtinDataTypes ?? [];
+
+  function getSectionDepth(sections: ProfileSection[], sectionId: string): number {
+    const sec = sections.find((s) => s.id === sectionId);
+    if (!sec || sec.parentId == null) return 0;
+    return 1 + getSectionDepth(sections, sec.parentId);
+  }
+
+  function renderSections(sections: ProfileSection[], depthBase: number) {
+    const lines: string[] = [];
+    const ordered = getOrderedSections(sections);
+
+    for (const sec of ordered) {
+      const depth = getSectionDepth(sections, sec.id);
+      const indent = "  ".repeat(depthBase + depth);
+      const blockIndent = "  ".repeat(depthBase + depth + 1);
+      const level = (sec.headingLevel ?? "h1") as SectionHeadingLevel;
+      const label = sec.label?.trim() || "Section";
+
+      if (compact) {
+        const parts: string[] = [];
+        for (const block of sec.contentBlocks ?? []) {
+          if (block.type === "note" && block.content.trim()) {
+            parts.push(block.content.trim().replace(/\n/g, " "));
+          }
+          if (block.type === "attributes" && Object.keys(block.keyValuePairs ?? {}).length > 0) {
+            const attrStr = (block.attributeOrder ?? Object.keys(block.keyValuePairs ?? {}))
+              .filter((k) => k in (block.keyValuePairs ?? {}))
+              .map((k) => `${k}: ${(block.keyValuePairs ?? {})[k]}`)
+              .join(", ");
+            parts.push(attrStr);
+          }
+          if (block.type === "image") {
+            parts.push(block.label ? `[image: ${block.label}]` : "[image]");
+          }
+        }
+        lines.push(`${indent}${level} "${label}" ${parts.length > 0 ? "| " + parts.join(" | ") : ""}`);
+      } else {
+        lines.push(`${indent}${level} "${label}"`);
+        for (const block of sec.contentBlocks ?? []) {
+          if (block.type === "note") {
+            const content = block.content ?? "";
+            const escaped = escapeQuotedString(content);
+            lines.push(`${blockIndent}note "${escaped}"`);
+          }
+          if (block.type === "attributes") {
+            const pairs = block.keyValuePairs ?? {};
+            const order = block.attributeOrder ?? Object.keys(pairs);
+            const meta = block.attributeMeta ?? {};
+            const entries = order.filter((k) => k in pairs);
+            lines.push(`${blockIndent}attributes`);
+            if (entries.length === 0) {
+              lines.push(`${blockIndent}  —`);
+            } else {
+              for (const [key, value] of entries.map((k) => [k, pairs[k]])) {
+                const m = meta[key];
+                const theType = m?.type ?? "text";
+                let typeAnno = "";
+                if (theType === "custom" && m?.customTypeId) {
+                  const tagName = customDataTypes.find((t) => t.id === m.customTypeId)?.name ?? "text";
+                  const allowStr = m?.allowCustom != null ? ` allowCustom=${m.allowCustom}` : "";
+                  typeAnno = ` | @${tagName}${allowStr}`;
+                } else if (theType !== "text") {
+                  const builtinPrefix = `@builtin:${theType}`;
+                  let configStr = "";
+                  if (theType === "number" || theType === "numberScroll") {
+                    const min = m?.min,
+                      max = m?.max,
+                      step = m?.step;
+                    const hasNum = (n: number | undefined) =>
+                      n != null && !Number.isNaN(n);
+                    if (hasNum(min) || hasNum(max) || hasNum(step)) {
+                      configStr = ` [${min ?? ""}, ${max ?? ""}, ${step ?? ""}]`;
+                    }
+                  } else if (theType === "select" && m?.options?.length) {
+                    configStr = ` [${m.options.join(", ")}]`;
+                  }
+                  const allowStr =
+                    (theType === "select" && m?.allowCustom != null)
+                      ? ` allowCustom=${m.allowCustom}`
+                      : "";
+                  typeAnno = ` | ${builtinPrefix}${configStr}${allowStr}`;
+                }
+                lines.push(`${blockIndent}  ${key}: ${value}${typeAnno}`);
+              }
+            }
+          }
+          if (block.type === "image") {
+            const imgLabel = block.label?.trim() || "";
+            lines.push(`${blockIndent}image "${escapeQuotedString(imgLabel)}"`);
+          }
+        }
+      }
+    }
+    return lines;
+  }
+
+  /** Collect built-in type definitions from sections (used when generating template script) */
+  function collectBuiltinDataTypes(sections: ProfileSection[]): string[] {
+    const builtinLines: string[] = [];
+    const numConfigs = new Set<string>();
+    const selectConfigs = new Map<string, string>();
+
+    function hasNum(n: number | undefined): boolean {
+      return n != null && !Number.isNaN(n);
+    }
+
+    for (const sec of sections) {
+      for (const block of sec.contentBlocks ?? []) {
+        if (block.type !== "attributes") continue;
+        const meta = block.attributeMeta ?? {};
+        for (const m of Object.values(meta)) {
+          if (!m) continue;
+          const t = m.type ?? "text";
+          if (t === "number" || t === "numberScroll") {
+            if (hasNum(m.min) || hasNum(m.max) || hasNum(m.step)) {
+              const key = `${t}:${m.min ?? ""},${m.max ?? ""},${m.step ?? ""}`;
+              if (!numConfigs.has(key)) {
+                numConfigs.add(key);
+                builtinLines.push(`@builtin ${t}: [${m.min ?? ""}, ${m.max ?? ""}, ${m.step ?? ""}]`);
+              }
+            }
+          } else if (t === "select" && m.options?.length) {
+            const optsKey = m.options.join(",");
+            if (!selectConfigs.has(optsKey)) {
+              selectConfigs.set(optsKey, m.options.join(", "));
+              builtinLines.push(`@builtin select: [${m.options.join(", ")}]`);
+            }
+          }
+        }
+      }
+    }
+    return builtinLines;
+  }
+
+  const lines: string[] = ["@profiles", ""];
+
+  const sections =
+    Array.isArray(input) && input.length > 0
+      ? "sections" in input[0]
+        ? (input as CharacterEntity[]).flatMap((c) => c.sections ?? [])
+        : (input as ProfileSection[])
+      : [];
+  const collectedBuiltins = collectBuiltinDataTypes(sections);
+  const mergedBuiltinLines = storedBuiltinLines.length > 0
+    ? [...storedBuiltinLines, ...collectedBuiltins.filter((l) => !storedBuiltinLines.includes(l))]
+    : collectedBuiltins;
+  const hasDataTypes = customDataTypes.length > 0 || mergedBuiltinLines.length > 0;
+
+  if (hasDataTypes) {
+    lines.push("# Data types");
+    for (const line of mergedBuiltinLines) {
+      lines.push(line);
+    }
+    for (const t of customDataTypes) {
+      const opts = t.options.length > 0 ? t.options.join(", ") : "";
+      lines.push(`${t.name}: [${opts}]`);
+    }
+    lines.push("");
+  }
+
+  if (Array.isArray(input) && input.length > 0) {
+    const first = input[0];
+    if ("name" in first && "sections" in first) {
+      const chars = input as CharacterEntity[];
+      for (const char of chars) {
+        const name = char.name.trim() || "Unnamed";
+        lines.push(`[${name}] {`);
+        const sections = char.sections ?? [];
+        lines.push(...renderSections(sections, 1));
+        lines.push("}");
+        lines.push("");
+      }
+    } else {
+      const secs = input as ProfileSection[];
+      const name = options.characterName ?? "New Layout";
+      lines.push(`[${name}] {`);
+      lines.push(...renderSections(secs, 1));
+      lines.push("}");
+    }
+  } else {
+    const src = options.source ?? "characters";
+    lines.push(
+      src === "template"
+        ? "(No sections yet. Add sections to define the layout.)"
+        : "(No characters yet. Add characters in the Entities panel.)"
+    );
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
 export const useCharacterProfilesStore = create<CharacterProfilesStore>(
   (set, get) => ({
     activeProjectId: null,
     characters: [],
     selectedCharacterId: null,
+    comparisonCharacterId: null,
     chartLayoutMode: "fill" as ChartLayoutMode,
     editLayoutDirty: false,
+    editLayoutDraftSections: [],
+    editingTemplateId: null,
+    createLayoutDirty: false,
+    createLayoutDraftSections: [],
+    createLayoutDraftDataTypes: [],
+    createLayoutDraftBuiltinDataTypes: [],
+    scriptPanelLayout: "split" as ScriptPanelLayout,
+    chartSectionLayoutMode: "list" as ChartSectionLayoutMode,
 
-    setSelectedCharacter: (characterId) => {
-      set({ selectedCharacterId: characterId, chartLayoutMode: "fill" as ChartLayoutMode, editLayoutDirty: false });
+    setSelectedCharacter: (characterId, shiftKey) => {
+      const s = get();
+      const projectId = s.activeProjectId;
+      const runSync = (cid: string | null) => {
+        if (projectId && cid) get().syncLinkedCharacterWithTemplate(projectId, cid);
+      };
+      if (shiftKey) {
+        if (characterId == null) return;
+        if (characterId === s.selectedCharacterId || characterId === s.comparisonCharacterId) {
+          if (characterId === s.comparisonCharacterId) {
+            set({ comparisonCharacterId: null });
+          } else if (s.comparisonCharacterId) {
+            set({ selectedCharacterId: s.comparisonCharacterId, comparisonCharacterId: null });
+          } else {
+            set({ selectedCharacterId: null });
+          }
+          return;
+        }
+        if (s.comparisonCharacterId) {
+          set({
+            comparisonCharacterId: characterId,
+            chartLayoutMode: "fill" as ChartLayoutMode,
+            editLayoutDirty: false,
+            editLayoutDraftSections: [],
+          });
+          runSync(characterId);
+        } else if (s.selectedCharacterId && s.selectedCharacterId !== characterId) {
+          set({
+            comparisonCharacterId: characterId,
+            chartLayoutMode: "fill" as ChartLayoutMode,
+            editLayoutDirty: false,
+            editLayoutDraftSections: [],
+          });
+          runSync(characterId);
+        } else {
+          set({ selectedCharacterId: characterId, comparisonCharacterId: null });
+          runSync(characterId);
+        }
+        return;
+      }
+      set({
+        selectedCharacterId: characterId,
+        comparisonCharacterId: null,
+        chartLayoutMode: "fill" as ChartLayoutMode,
+        editLayoutDirty: false,
+      });
+      runSync(characterId ?? null);
     },
+    exitComparison: () => set({ comparisonCharacterId: null }),
 
     setChartLayoutMode: (mode) => {
-      set({ chartLayoutMode: mode, editLayoutDirty: mode !== "edit" ? false : get().editLayoutDirty });
+      const prev = get().chartLayoutMode;
+      const s = get();
+      const updates: Record<string, unknown> = {
+        chartLayoutMode: mode,
+        editLayoutDirty: mode !== "edit" ? false : s.editLayoutDirty,
+      };
+      if (mode === "createLayout") {
+        const alreadyEditingTemplate = prev === "createLayout" && s.editingTemplateId != null;
+        if (!alreadyEditingTemplate) {
+          updates.editingTemplateId = null;
+          updates.createLayoutDraftSections = [] as ProfileSection[];
+          updates.createLayoutDraftDataTypes = [] as CustomDataType[];
+          updates.createLayoutDraftBuiltinDataTypes = [] as string[];
+          updates.createLayoutDirty = false;
+        }
+      } else {
+        updates.editingTemplateId = null;
+        updates.createLayoutDraftSections = s.createLayoutDraftSections;
+        updates.createLayoutDirty = false;
+      }
+      if (mode === "edit") {
+        const charId = get().selectedCharacterId;
+        const chars = get().characters;
+        const char = chars.find((c) => c.id === charId);
+        const raw = char?.sections ?? [];
+        updates.editLayoutDraftSections = raw.length > 0 ? JSON.parse(JSON.stringify(raw)) : [];
+      } else if (prev === "edit") {
+        updates.editLayoutDraftSections = [];
+      }
+      set(updates);
     },
 
     setEditLayoutDirty: (dirty) => {
       set({ editLayoutDirty: dirty });
     },
 
+    setEditLayoutDraftSections: (sections) => {
+      set({ editLayoutDraftSections: sections, editLayoutDirty: true });
+    },
+
+    applyEditLayoutDraftToCharacter: (projectId, characterId) => {
+      const draft = get().editLayoutDraftSections;
+      const existing = loadFromStorage(projectId);
+      const chars = existing.map((c) =>
+        c.id === characterId ? { ...c, sections: draft } : c
+      );
+      saveToStorage(projectId, chars);
+      if (get().activeProjectId === projectId) {
+        set({
+          characters: chars,
+          chartLayoutMode: "fill" as ChartLayoutMode,
+          editLayoutDirty: false,
+          editLayoutDraftSections: [],
+        });
+      } else {
+        set({ editLayoutDirty: false, editLayoutDraftSections: [] });
+      }
+      return true;
+    },
+
+    setCreateLayoutDraftSections: (sections) => {
+      set({ createLayoutDraftSections: sections, createLayoutDirty: true });
+    },
+
+    setCreateLayoutDraftDataTypes: (types) => {
+      set({ createLayoutDraftDataTypes: types, createLayoutDirty: true });
+    },
+
+    setCreateLayoutDraftBuiltinDataTypes: (lines) => {
+      set({ createLayoutDraftBuiltinDataTypes: lines, createLayoutDirty: true });
+    },
+
+    setScriptPanelLayout: (layout) => {
+      set({ scriptPanelLayout: layout });
+    },
+
+    setChartSectionLayoutMode: (mode) => {
+      const projectId = get().activeProjectId;
+      if (projectId) saveChartSectionLayoutMode(projectId, mode);
+      set({ chartSectionLayoutMode: mode });
+    },
+
     setActiveProject: (projectId) => {
-      set({ activeProjectId: projectId, selectedCharacterId: null });
+      const layoutMode = projectId ? loadChartSectionLayoutMode(projectId) : "list";
+      set({
+        activeProjectId: projectId,
+        selectedCharacterId: null,
+        comparisonCharacterId: null,
+        chartSectionLayoutMode: layoutMode,
+      });
       if (projectId) {
         get().loadCharacters(projectId);
       } else {
@@ -559,16 +1036,33 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
 
     loadCharacters: (projectId) => {
       const chars = loadFromStorage(projectId);
-      set({ characters: chars, activeProjectId: projectId });
+      const layoutMode = loadChartSectionLayoutMode(projectId);
+      set({ characters: chars, activeProjectId: projectId, chartSectionLayoutMode: layoutMode });
     },
 
-    addCharacter: (projectId, name = "New Character") => {
-      const id = generateId();
-      const entity: CharacterEntity = { id, name, sections: [] };
+    addCharacter: (projectId, name) => {
       const existing = loadFromStorage(projectId);
+      const defaultName = (() => {
+        const re = /^New Character\s+(\d+)$/i;
+        let maxN = 0;
+        for (const c of existing) {
+          const m = c.name.trim().match(re);
+          if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
+        }
+        return `New Character ${maxN + 1}`;
+      })();
+      const finalName = (name?.trim() && name !== "New Character") ? name.trim() : defaultName;
+      const id = generateId();
+      const entity: CharacterEntity = { id, name: finalName, sections: [], linkedTemplateId: null };
       const chars = [...existing, entity];
       saveToStorage(projectId, chars);
-      if (get().activeProjectId === projectId) set({ characters: chars });
+      if (get().activeProjectId === projectId) {
+        set({
+          characters: chars,
+          selectedCharacterId: id,
+          chartLayoutMode: "fill" as ChartLayoutMode,
+        });
+      }
       return id;
     },
 
@@ -578,9 +1072,28 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
       saveToStorage(projectId, chars);
       const s = get();
       if (s.activeProjectId === projectId) {
+        const removingPrimary = s.selectedCharacterId === characterId;
+        const removingComparison = s.comparisonCharacterId === characterId;
+        let nextSelected = s.selectedCharacterId;
+        let nextComparison: string | null = s.comparisonCharacterId;
+        if (removingPrimary && removingComparison) {
+          nextSelected = null;
+          nextComparison = null;
+        } else if (removingPrimary) {
+          nextSelected = s.comparisonCharacterId;
+          nextComparison = null;
+        } else if (removingComparison) {
+          nextComparison = null;
+        }
+        if (nextSelected && !chars.some((c) => c.id === nextSelected)) nextSelected = null;
+        if (nextComparison && !chars.some((c) => c.id === nextComparison)) nextComparison = null;
         set({
           characters: chars,
-          selectedCharacterId: s.selectedCharacterId === characterId ? null : s.selectedCharacterId,
+          selectedCharacterId: nextSelected,
+          comparisonCharacterId: nextComparison,
+          ...(removingPrimary && s.chartLayoutMode === "edit"
+            ? { chartLayoutMode: "fill" as ChartLayoutMode, editLayoutDirty: false, editLayoutDraftSections: [] }
+            : {}),
         });
       }
     },
@@ -901,7 +1414,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
         const sections = (c.sections ?? []).map((s) => {
           if (s.id !== sectionId) return s;
           const blocks = (s.contentBlocks ?? []).map((b) => {
-            if (b.type !== "attributes" || b.id !== blockId || !(b.keyValuePairs ?? {})[key]) return b;
+            if (b.type !== "attributes" || b.id !== blockId || !(key in (b.keyValuePairs ?? {}))) return b;
             const pairs = { ...b.keyValuePairs, [key]: value };
             return { ...b, keyValuePairs: pairs };
           });
@@ -945,7 +1458,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
         const sections = (c.sections ?? []).map((s) => {
           if (s.id !== sectionId) return s;
           const blocks = (s.contentBlocks ?? []).map((b) => {
-            if (b.type !== "attributes" || b.id !== blockId || !(b.keyValuePairs ?? {})[oldKey]) return b;
+            if (b.type !== "attributes" || b.id !== blockId || !(oldKey in (b.keyValuePairs ?? {}))) return b;
             const pairs = { ...b.keyValuePairs };
             const val = pairs[oldKey];
             delete pairs[oldKey];
@@ -973,7 +1486,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
         const sections = (c.sections ?? []).map((s) => {
           if (s.id !== sectionId) return s;
           const blocks = (s.contentBlocks ?? []).map((b) => {
-            if (b.type !== "attributes" || b.id !== blockId || !(b.keyValuePairs ?? {})[key]) return b;
+            if (b.type !== "attributes" || b.id !== blockId || !(key in (b.keyValuePairs ?? {}))) return b;
             const current = (b.attributeMeta ?? {})[key] ?? {};
             const nextMeta = { ...current, ...meta };
             if (nextMeta.options) nextMeta.options = [...new Set(nextMeta.options)];
@@ -1018,6 +1531,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
       const char = chars.find((c) => c.id === characterId);
       if (!char || (char.sections ?? []).length === 0) return null;
       const templateSections = sectionsToTemplateFormat(char.sections ?? []);
+      const customDataTypes = char.customDataTypes ?? [];
       const templates = loadTemplatesFromStorage(projectId);
       const dupCount = templates.filter((t) => t.name === name.trim()).length;
       const finalName = dupCount > 0 ? `${name.trim()} (${dupCount + 1})` : name.trim() || "Untitled";
@@ -1025,6 +1539,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
         id: generateId(),
         name: finalName,
         createdAt: Date.now(),
+        customDataTypes,
         sections: templateSections,
       };
       const next = [...templates, template];
@@ -1040,12 +1555,109 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
       const char = chars.find((c) => c.id === characterId);
       if (!char) return;
       const existing = char.sections ?? [];
-      const nextSections = applyTemplateSections(template.sections, existing, mode);
+      const nextSections = applyTemplateSections(template.sections, existing, "replace");
+      const linked = mode === "link" ? templateId : null;
+      const customDataTypes = template.customDataTypes ?? [];
       const updated = chars.map((c) =>
-        c.id === characterId ? { ...c, sections: nextSections } : c
+        c.id === characterId ? { ...c, sections: nextSections, linkedTemplateId: linked, customDataTypes } : c
       );
       saveToStorage(projectId, updated);
       if (get().activeProjectId === projectId) set({ characters: updated });
+    },
+    unlinkCharacterFromTemplate: (projectId, characterId) => {
+      const chars = loadFromStorage(projectId);
+      const updated = chars.map((c) =>
+        c.id === characterId ? { ...c, linkedTemplateId: null } : c
+      );
+      saveToStorage(projectId, updated);
+      if (get().activeProjectId === projectId) set({ characters: updated });
+    },
+    getTemplateById: (projectId, templateId) => {
+      const templates = loadTemplatesFromStorage(projectId);
+      return templates.find((t) => t.id === templateId) ?? null;
+    },
+
+    syncLinkedCharacterWithTemplate: (projectId, characterId) => {
+      const chars = loadFromStorage(projectId);
+      const char = chars.find((c) => c.id === characterId);
+      const linkedId = char?.linkedTemplateId ?? null;
+      if (!char || !linkedId) return false;
+      const template = get().getTemplateById(projectId, linkedId);
+      if (!template) return false;
+      const nextSections = applyTemplateSections(template.sections, char.sections ?? [], "merge");
+      const nextCustomDataTypes = template.customDataTypes ?? char.customDataTypes ?? [];
+      const sectionsChanged = JSON.stringify(nextSections) !== JSON.stringify(char.sections ?? []);
+      const typesChanged = JSON.stringify(nextCustomDataTypes) !== JSON.stringify(char.customDataTypes ?? []);
+      if (!sectionsChanged && !typesChanged) return false;
+      const updated = { ...char, sections: nextSections, customDataTypes: nextCustomDataTypes };
+      const nextChars = chars.map((c) => (c.id === characterId ? updated : c));
+      saveToStorage(projectId, nextChars);
+      if (get().activeProjectId === projectId) set({ characters: nextChars });
+      return true;
+    },
+
+    loadTemplateForEditing: (projectId, templateId) => {
+      const templates = loadTemplatesFromStorage(projectId);
+      const template = templates.find((t) => t.id === templateId);
+      if (!template || !template.sections?.length) return;
+      const templateOrdered = getOrderedSections(template.sections);
+      const sections = templateSectionsToCharacter(templateOrdered);
+      const customDataTypes = template.customDataTypes ?? [];
+      const builtinDataTypes = template.builtinDataTypes ?? [];
+      set({
+        chartLayoutMode: "createLayout" as ChartLayoutMode,
+        createLayoutDraftSections: sections,
+        createLayoutDraftDataTypes: customDataTypes,
+        createLayoutDraftBuiltinDataTypes: builtinDataTypes,
+        editingTemplateId: templateId,
+        createLayoutDirty: false,
+      });
+    },
+
+    updateTemplate: (projectId, templateId) => {
+      const pid = projectId || get().activeProjectId;
+      if (!pid) {
+        console.warn("[CharacterProfilesStore] updateTemplate: no projectId or activeProjectId");
+        return false;
+      }
+      const sections = get().createLayoutDraftSections;
+      const customDataTypes = get().createLayoutDraftDataTypes ?? [];
+      const builtinDataTypes = get().createLayoutDraftBuiltinDataTypes ?? [];
+      const templates = loadTemplatesFromStorage(pid);
+      const template = templates.find((t) => t.id === templateId);
+      if (!template) {
+        console.warn("[CharacterProfilesStore] updateTemplate: template not found", { projectId: pid, templateId });
+        return false;
+      }
+      if (!sections || sections.length === 0) {
+        console.warn("[CharacterProfilesStore] updateTemplate: createLayoutDraftSections is empty");
+      }
+      try {
+        const templateSections = sectionsToTemplateFormat(sections);
+        const updatedTemplate = { ...template, sections: templateSections, customDataTypes, builtinDataTypes };
+        const updatedTemplates = templates.map((t) =>
+          t.id === templateId ? updatedTemplate : t
+        );
+        saveTemplatesToStorage(pid, updatedTemplates);
+
+        const chars = loadFromStorage(pid);
+        const linkedChars = chars.filter((c) => (c.linkedTemplateId ?? null) === templateId);
+        if (linkedChars.length > 0) {
+          const nextChars = chars.map((c) => {
+            if ((c.linkedTemplateId ?? null) !== templateId) return c;
+            const nextSections = applyTemplateSections(updatedTemplate.sections, c.sections ?? [], "merge");
+            return { ...c, sections: nextSections, customDataTypes: updatedTemplate.customDataTypes ?? [] };
+          });
+          saveToStorage(pid, nextChars);
+          if (get().activeProjectId === pid) set({ characters: nextChars });
+        }
+
+        set({ createLayoutDirty: false });
+        return true;
+      } catch (e) {
+        console.warn("[CharacterProfilesStore] updateTemplate failed:", e);
+        return false;
+      }
     },
 
     renameTemplate: (projectId, templateId, name) => {
@@ -1057,11 +1669,17 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     },
 
     deleteTemplate: (projectId, templateId) => {
+      const chars = loadFromStorage(projectId);
+      const updated = chars.map((c) =>
+        (c.linkedTemplateId ?? null) === templateId ? { ...c, linkedTemplateId: null } : c
+      );
+      saveToStorage(projectId, updated);
       const templates = loadTemplatesFromStorage(projectId).filter((t) => t.id !== templateId);
       saveTemplatesToStorage(projectId, templates);
+      if (get().activeProjectId === projectId) set({ characters: updated });
     },
 
-    createTemplateFromSections: (projectId, name, sections) => {
+    createTemplateFromSections: (projectId, name, sections, customDataTypes = [], builtinDataTypes = []) => {
       if (!sections || sections.length === 0) return null;
       const templateSections = sectionsToTemplateFormat(sections);
       const templates = loadTemplatesFromStorage(projectId);
@@ -1071,11 +1689,27 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
         id: generateId(),
         name: finalName,
         createdAt: Date.now(),
+        customDataTypes,
+        builtinDataTypes: builtinDataTypes.length > 0 ? builtinDataTypes : undefined,
         sections: templateSections,
       };
       const next = [...templates, template];
       saveTemplatesToStorage(projectId, next);
       return template.id;
+    },
+
+    applyProfilesFromScript: (projectId, characters) => {
+      const migrated = characters.map(migrateCharacter);
+      saveToStorage(projectId, migrated);
+      const s = get();
+      // Always update UI when applying; sync activeProjectId if mismatched (e.g. route/store desync)
+      set({
+        characters: migrated,
+        selectedCharacterId: migrated[0]?.id ?? null,
+        chartLayoutMode: "fill" as ChartLayoutMode,
+        editLayoutDirty: false,
+        ...(s.activeProjectId !== projectId ? { activeProjectId: projectId } : {}),
+      });
     },
   })
 );

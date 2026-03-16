@@ -38,9 +38,17 @@ export default function WorkspaceShell() {
 
   const project = standaloneProjects.find((p) => p.id === id);
   const loadTree = useFamilyTreeStore((s) => s.loadTree);
+  const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
   const updateLastOpened = useAppStore((s) => s.updateLastOpened);
   const [hydrating, setHydrating] = useState(false);
   const lastUpdatedIdRef = useRef<string | null>(null);
+
+  // Close properties pane when the selected node is deselected (Family Tree only)
+  useEffect(() => {
+    if (project?.moduleType === "Family Tree" && !primarySelectedNodeId) {
+      setInspectorOpen(false);
+    }
+  }, [project?.moduleType, primarySelectedNodeId]);
 
   // When project not found, try hydrating from driver (e.g. characterProfiles from driver list)
   useEffect(() => {
@@ -167,7 +175,7 @@ export default function WorkspaceShell() {
                 className="flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out flex"
                 style={{ width: leftSidebarOpen ? 260 : 0 }}
               >
-                <FamilyTreeLeftSidebar />
+                <FamilyTreeLeftSidebar onSelectNode={() => setInspectorOpen(true)} />
               </div>
               {!leftSidebarOpen && (
                 <button
@@ -181,7 +189,7 @@ export default function WorkspaceShell() {
                 </button>
               )}
               <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                <FamilyTreeCanvas />
+                <FamilyTreeCanvas onNodeSelectForEdit={() => setInspectorOpen(true)} />
                 <div
                   className="flex-shrink-0 overflow-hidden transition-[height] duration-200 ease-in-out"
                   style={{ height: scriptPaneOpen ? 240 : 0 }}

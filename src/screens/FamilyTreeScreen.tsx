@@ -35,8 +35,14 @@ export default function FamilyTreeScreen() {
 
   const loadTree = useFamilyTreeStore((s) => s.loadTree);
   const marqueeToolActive = useFamilyTreeStore((s) => s.marqueeToolActive);
+  const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
   const isSpacePanning = useFamilyTreeStore((s) => s.isSpacePanning);
+
+  // Close properties pane when the selected node is deselected
+  useEffect(() => {
+    if (!primarySelectedNodeId) setInspectorOpen(false);
+  }, [primarySelectedNodeId]);
 
   useWindowTitle(projectName ? `${projectName} - PlotMaster` : "PlotMaster");
 
@@ -302,6 +308,7 @@ export default function FamilyTreeScreen() {
               nodesDraggable={!isResizingEntities && (!marqueeToolActive || isSpacePanning)}
               marqueeToolActive={marqueeToolActive}
               isSpacePanning={isSpacePanning}
+              onNodeSelectForEdit={() => setInspectorOpen(true)}
             />
             {scriptPaneOpen && (
               <div

@@ -23,13 +23,14 @@ export default function ProfileTemplatesModal({
   const listTemplates = useCharacterProfilesStore((s) => s.listTemplates);
   const saveTemplateFromCharacter = useCharacterProfilesStore((s) => s.saveTemplateFromCharacter);
   const applyTemplateToCharacter = useCharacterProfilesStore((s) => s.applyTemplateToCharacter);
+  const loadTemplateForEditing = useCharacterProfilesStore((s) => s.loadTemplateForEditing);
   const renameTemplate = useCharacterProfilesStore((s) => s.renameTemplate);
   const deleteTemplate = useCharacterProfilesStore((s) => s.deleteTemplate);
 
   const [saveName, setSaveName] = useState("");
   const [loadTemplateId, setLoadTemplateId] = useState<string | null>(null);
   const [loadCharacterId, setLoadCharacterId] = useState<string | null>(null);
-  const [loadMode, setLoadMode] = useState<"replace" | "merge">("replace");
+  const [loadMode, setLoadMode] = useState<"replace" | "link">("replace");
   const [manageTemplateId, setManageTemplateId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -105,6 +106,11 @@ export default function ProfileTemplatesModal({
         return;
       }
     }
+    if (loadMode === "link" && (targetChar?.linkedTemplateId ?? null)) {
+      if (!window.confirm(`"${targetChar?.name}" is already linked to a template. Link to the new template instead?`)) {
+        return;
+      }
+    }
     applyTemplateToCharacter(projectId, loadCharacterId, loadTemplateId, loadMode);
     onClose();
   };
@@ -125,6 +131,12 @@ export default function ProfileTemplatesModal({
       deleteTemplate(projectId, templateId);
       setManageTemplateId(null);
     }
+  };
+
+  const handleEdit = (templateId: string) => {
+    if (!projectId) return;
+    loadTemplateForEditing(projectId, templateId);
+    onClose();
   };
 
   if (!mode) return null;
@@ -163,7 +175,7 @@ export default function ProfileTemplatesModal({
         {mode === "save" && (
           <>
             <p className="text-xs text-dark-muted">
-              Save the selected character&apos;s layout (sections, attribute keys, note and image blocks) as a reusable template. Values are not stored.
+              Save the selected character&apos;s layout (sections, attribute keys, label and image blocks) as a reusable template. Values are not stored.
             </p>
             {!hasSections && (
               <p className="text-xs text-amber-500">
@@ -205,7 +217,7 @@ export default function ProfileTemplatesModal({
         {mode === "load" && (
           <>
             <p className="text-xs text-dark-muted">
-              Apply a template to a character. Replace overwrites their layout; Merge adds missing sections and attribute keys.
+              Apply a template to a character. Replace applies once; Link applies and keeps the character synced when the template changes.
             </p>
             <div>
               <label className="block text-xs text-dark-muted mb-1">Template</label>
@@ -255,11 +267,11 @@ export default function ProfileTemplatesModal({
                   <input
                     type="radio"
                     name="loadMode"
-                    checked={loadMode === "merge"}
-                    onChange={() => setLoadMode("merge")}
+                    checked={loadMode === "link"}
+                    onChange={() => setLoadMode("link")}
                     className="rounded-full border-dark-accent bg-dark-bg text-blue-500"
                   />
-                  <span className="text-sm text-dark-text">Merge</span>
+                  <span className="text-sm text-dark-text">Link</span>
                 </label>
               </div>
             </div>
@@ -322,26 +334,31 @@ export default function ProfileTemplatesModal({
                       </div>
                     ) : (
                       <>
-                        <span className="text-sm text-dark-text truncate flex-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setManageTemplateId(t.id);
+                            setRenameValue(t.name);
+                          }}
+                          className="text-sm text-dark-text truncate flex-1 text-left hover:text-blue-400 transition-colors"
+                          title="Click to rename"
+                        >
                           {t.name}
                           {t.createdAt && (
                             <span className="text-xs text-dark-muted ml-1">
                               ({new Date(t.createdAt).toLocaleDateString()})
                             </span>
                           )}
-                        </span>
+                        </button>
                         <div className="flex gap-1 shrink-0">
                           <button
                             type="button"
-                            onClick={() => {
-                              setManageTemplateId(t.id);
-                              setRenameValue(t.name);
-                            }}
-                            className="p-1.5 text-dark-muted hover:text-blue-400 rounded"
-                            title="Rename"
+                            onClick={() => handleEdit(t.id)}
+                            className="p-1.5 text-dark-muted hover:text-green-400 rounded"
+                            title="Edit layout"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                             </svg>
                           </button>
                           <button

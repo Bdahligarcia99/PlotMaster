@@ -9,7 +9,7 @@ export default defineConfig({
   clearScreen: false,
   server: {
     // make sure this port matches the devUrl port in tauri.conf.json file
-    port: 5173,
+    port: 5174,
     // Tauri expects a fixed port, fail if that port is not available
     strictPort: true,
     // if the host Tauri is expecting is set, use it

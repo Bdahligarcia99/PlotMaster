@@ -2,28 +2,13 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Button from "../ui/Button";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
-import {
-  snapPosition,
-  isChildEdge,
-  hasParents,
-  formatGenerationAnchorLabel,
-  GEN_BASELINE_OFFSET,
-  PARTNER_DX,
-  UNION_DY,
-  CHILD_DY,
-  CHILD_MAX_GAP,
-  CHILD_MIN_GAP,
-  DEFAULT_PERSON_W,
-  DEFAULT_UNION_W,
-  type UnionNodeData,
-  type GenerationAnchor,
-} from "../../store/familyTreeStore";
+import FamilyTreeExportDialog from "./FamilyTreeExportDialog";
+import FamilyTreeReviewSuggestionsModal from "./FamilyTreeReviewSuggestionsModal";
+import { formatGenerationAnchorLabel, getPersonDisplayName, getPersonNameParts, type GenerationAnchor } from "../../store/familyTreeStore";
 
 export default function FamilyTreeToolbar() {
   const {
     nodes,
-    edges,
-    nodeSizesById,
     selectedNodeIds,
     snapToGrid,
     setSnapToGrid,
@@ -45,10 +30,15 @@ export default function FamilyTreeToolbar() {
     setAutosaveEnabled,
     activeProjectId,
     clearTree,
-    setNodes,
     addPerson,
     createUnion,
+    createBackwardUnion,
     addChild,
+    addParent,
+    linkPersonToUnion,
+    setSelectedNodeIds,
+    defaultUnionType,
+    setDefaultUnionType,
     persistUnionSelectionOnChildCreate,
     setPersistUnionSelectionOnChildCreate,
     addGenerationAnchor,
@@ -61,6 +51,14 @@ export default function FamilyTreeToolbar() {
     setGenLabelMode,
     marqueeToolActive,
     setMarqueeToolActive,
+    runLayout,
+    nameRoleSuggestions,
+    runNameRoleAnalysis,
+    updatePersonNameParts,
+    updateUnionPartnerRole,
+    flushSaveAndSave,
+    reviewNamesModalOpen,
+    setReviewNamesModalOpen,
   } = useFamilyTreeStore();
 
   const [message, setMessage] = useState<string | null>(null);
@@ -80,6 +78,9 @@ export default function FamilyTreeToolbar() {
   const [coordMenuOpen, setCoordMenuOpen] = useState(false);
   const coordContainerRef = useRef<HTMLDivElement>(null);
   const coordDropdownRef = useRef<HTMLDivElement>(null);
+  const [unionMenuOpen, setUnionMenuOpen] = useState(false);
+  const unionContainerRef = useRef<HTMLDivElement>(null);
+  const unionDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (message) {
@@ -94,6 +95,13 @@ export default function FamilyTreeToolbar() {
       return () => clearTimeout(t);
     }
   }, [autosaveLabelOverride]);
+
+  // Refresh suggestions when nodes/edges change so the indicator stays in sync
+  const edges = useFamilyTreeStore((s) => s.edges);
+  useEffect(() => {
+    const t = setTimeout(() => runNameRoleAnalysis(), 300);
+    return () => clearTimeout(t);
+  }, [nodes, edges, runNameRoleAnalysis]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -197,6 +205,24 @@ export default function FamilyTreeToolbar() {
     };
   }, [childMenuOpen]);
 
+  useEffect(() => {
+    if (!unionMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inContainer = unionContainerRef.current?.contains(target);
+      const inDropdown = unionDropdownRef.current?.contains(target);
+      if (!inContainer && !inDropdown) setUnionMenuOpen(false);
+    };
+    const t = setTimeout(
+      () => document.addEventListener("click", handleClickOutside, { once: true }),
+      0
+    );
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [unionMenuOpen]);
+
   const handleAutosaveChange = (enabled: boolean) => {
     setAutosaveEnabled(enabled);
     setAutosaveLabelOverride(enabled ? "All changes saved" : "Autosave off");
@@ -206,14 +232,46 @@ export default function FamilyTreeToolbar() {
   const selectedPersons = selectedNodes.filter((n) => (n.data as { kind?: string }).kind === "person");
   const selectedUnions = selectedNodes.filter((n) => (n.data as { kind?: string }).kind === "union");
 
-  const canCreateUnion = selectedNodeIds.length === 2 && selectedPersons.length === 2;
+  const canCreateForwardUnion = selectedNodeIds.length === 2 && selectedPersons.length === 2;
+  const canCreateBackwardUnion =
+    selectedNodeIds.length >= 1 &&
+    selectedPersons.length >= 1 &&
+    selectedPersons.length <= 2 &&
+    selectedNodeIds.length === selectedPersons.length;
+  const canCreateUnion =
+    defaultUnionType === "forward" ? canCreateForwardUnion : canCreateBackwardUnion;
+
+  const canLinkPerson =
+    selectedNodeIds.length === 2 &&
+    selectedUnions.length === 1 &&
+    selectedPersons.length === 1;
+  const linkUnion = canLinkPerson ? selectedUnions[0] : null;
+  const linkPerson = canLinkPerson ? selectedPersons[0] : null;
+  const canUnionAction = canCreateUnion || canLinkPerson;
+
   const canAddChild = selectedNodeIds.length === 1 && selectedUnions.length === 1;
   const selectedUnion = selectedUnions[0];
+  const selectedUnionData = selectedUnion?.data as { kind?: string; unionType?: string; partnerIds?: [string | null, string | null] } | undefined;
+  const canAddParent =
+    selectedUnion &&
+    selectedUnionData?.unionType === "backward" &&
+    (selectedUnionData.partnerIds?.filter((id): id is string => id != null).length ?? 0) < 2;
 
   function getCreateUnionTooltip(): string {
-    if (canCreateUnion) return "Create union between 2 selected people";
-    if (selectedNodeIds.length === 0 || selectedNodeIds.length === 1) return "Select two people.";
-    return "Select exactly two people.";
+    if (canLinkPerson && linkPerson) {
+      const name = getPersonDisplayName(linkPerson.data as import("../../store/familyTreeStore").PersonNodeData, linkPerson.id, nodes) || "person";
+      return defaultUnionType === "forward"
+        ? `Link ${name} as parent (choose mode in dropdown)`
+        : `Link ${name} as child (choose mode in dropdown)`;
+    }
+    if (defaultUnionType === "forward") {
+      if (canCreateForwardUnion) return "Create forward union (parents → children)";
+      if (selectedNodeIds.length < 2) return "Select two people as parents.";
+      return "Select exactly two people.";
+    }
+    if (canCreateBackwardUnion) return "Create backward union (children → parents)";
+    if (selectedNodeIds.length === 0) return "Select 1 or 2 people as children.";
+    return "Select 1 or 2 people.";
   }
 
   function getAddChildTooltip(): string {
@@ -224,12 +282,34 @@ export default function FamilyTreeToolbar() {
   }
 
   const handleCreateUnion = () => {
-    if (canCreateUnion) {
-      const personIds = selectedPersons.map((n) => n.id) as [string, string];
-      createUnion(personIds);
-      setMessage(null);
+    if (canLinkPerson && linkUnion && linkPerson) {
+      const err = linkPersonToUnion(linkUnion.id, linkPerson.id, defaultUnionType);
+      if (err) {
+        setMessage(err);
+      } else {
+        setMessage("Linked.");
+        setSelectedNodeIds([linkUnion.id]);
+      }
+      return;
+    }
+    if (defaultUnionType === "forward") {
+      if (canCreateForwardUnion) {
+        const personIds = selectedPersons.map((n) => n.id) as [string, string];
+        createUnion(personIds);
+        setMessage(null);
+      } else {
+        setMessage("Select exactly 2 people for forward union.");
+      }
     } else {
-      setMessage("Select exactly 2 people.");
+      if (canCreateBackwardUnion) {
+        const childIds = selectedPersons.map((n) => n.id);
+        createBackwardUnion(
+          childIds.length === 1 ? [childIds[0]!] : [childIds[0]!, childIds[1]!]
+        );
+        setMessage(null);
+      } else {
+        setMessage("Select 1 or 2 people for backward union.");
+      }
     }
   };
 
@@ -243,254 +323,33 @@ export default function FamilyTreeToolbar() {
   };
 
   const handleSort = () => {
+    const ok = runLayout();
+    if (!ok) setMessage("No valid unions to sort.");
+    else setMessage(null);
+  };
+
+  const handleApplySuggestions = (
+    toApply: { s: import("../../store/familyTreeStore").NameRoleSuggestion; idx: number }[],
+    resolvedValues: Map<number, string>
+  ) => {
     const personNodes = nodes.filter((n) => (n.data as { kind?: string }).kind === "person");
-    const unionNodes = nodes.filter((n) => (n.data as { kind?: string }).kind === "union");
-
-    const snap = (x: number, y: number) =>
-      snapToGrid ? snapPosition(x, y, true) : { x, y };
-
-    const updateMap: Record<string, { x: number; y: number }> = {};
-
-    // RULE 1: No-union pair alignment (exactly 2 persons, 0 unions)
-    if (personNodes.length === 2 && unionNodes.length === 0) {
-      const anchor = personNodes[0].position.x <= personNodes[1].position.x ? personNodes[0] : personNodes[1];
-      const other = anchor.id === personNodes[0].id ? personNodes[1] : personNodes[0];
-      updateMap[other.id] = snap(anchor.position.x + PARTNER_DX, anchor.position.y);
-      for (const n of personNodes) {
-        const data = n.data as { genAnchorId?: string | null };
-        if (data.genAnchorId) {
-          const genAnchor = generationAnchors.find((a) => a.id === data.genAnchorId);
-          if (genAnchor) {
-            const pos = updateMap[n.id] ?? n.position;
-            updateMap[n.id] = { x: pos.x, y: snap(pos.x, genAnchor.yTop + GEN_BASELINE_OFFSET).y };
-          }
-        }
-      }
-      setMessage(null);
-      setNodes((prev) =>
-        prev.map((n) => (n.id in updateMap ? { ...n, position: updateMap[n.id] } : n))
-      );
-      return;
-    }
-
-    const getEffectivePos = (nodeId: string) =>
-      nodeId in updateMap ? updateMap[nodeId]! : nodes.find((n) => n.id === nodeId)?.position;
-
-    const backfillMap: Record<string, { leftPartnerId: string; rightPartnerId: string }> = {};
-
-    // RULE 2: Per-union family-unit alignment (canvas-wide, for every union)
-    const sortedUnions = [...unionNodes].sort((a, b) => a.id.localeCompare(b.id));
-
-    for (const union of sortedUnions) {
-      const unionData = union.data as UnionNodeData;
-      const partnerIds = unionData.partnerIds;
-      if (!partnerIds || partnerIds.length !== 2) continue;
-
-      let leftPartnerNode: (typeof nodes)[0] | null = null;
-      let rightPartnerNode: (typeof nodes)[0] | null = null;
-
-      if (unionData.leftPartnerId && unionData.rightPartnerId) {
-        const left = nodes.find(
-          (n) => n.id === unionData.leftPartnerId && (n.data as { kind?: string }).kind === "person"
-        );
-        const right = nodes.find(
-          (n) => n.id === unionData.rightPartnerId && (n.data as { kind?: string }).kind === "person"
-        );
-        if (left && right) {
-          leftPartnerNode = left;
-          rightPartnerNode = right;
-        }
-      }
-
-      if (!leftPartnerNode || !rightPartnerNode) {
-        const parents = partnerIds
-          .map((id) => nodes.find((n) => n.id === id && (n.data as { kind?: string }).kind === "person"))
-          .filter((n): n is NonNullable<typeof n> => n != null);
-        if (parents.length !== 2) continue;
-
-        const pos0 = getEffectivePos(parents[0].id);
-        const pos1 = getEffectivePos(parents[1].id);
-        if (!pos0 || !pos1) continue;
-
-        const [leftId, rightId] =
-          pos0.x <= pos1.x ? [parents[0].id, parents[1].id] : [parents[1].id, parents[0].id];
-        backfillMap[union.id] = { leftPartnerId: leftId, rightPartnerId: rightId };
-        leftPartnerNode = parents.find((p) => p.id === leftId)!;
-        rightPartnerNode = parents.find((p) => p.id === rightId)!;
-      }
-
-      const leftPos = getEffectivePos(leftPartnerNode.id);
-      const rightPos = getEffectivePos(rightPartnerNode.id);
-      if (!leftPos || !rightPos) continue;
-
-      const lockedL = hasParents(edges, leftPartnerNode.id);
-      const lockedR = hasParents(edges, rightPartnerNode.id);
-
-      let leftPosFinal: { x: number; y: number };
-      let rightPosFinal: { x: number; y: number };
-      if (lockedL && lockedR) {
-        leftPosFinal = leftPos;
-        rightPosFinal = rightPos;
-      } else if (lockedL && !lockedR) {
-        leftPosFinal = leftPos;
-        rightPosFinal = snap(leftPos.x + PARTNER_DX, leftPos.y);
-      } else if (lockedR && !lockedL) {
-        leftPosFinal = snap(rightPos.x - PARTNER_DX, rightPos.y);
-        rightPosFinal = rightPos;
-      } else {
-        leftPosFinal = snap(leftPos.x, leftPos.y);
-        rightPosFinal = snap(leftPos.x + PARTNER_DX, leftPos.y);
-      }
-
-      const baseY = leftPosFinal.y;
-      const baseX = leftPosFinal.x;
-
-      if (!lockedL) updateMap[leftPartnerNode.id] = leftPosFinal;
-      if (!lockedR) updateMap[rightPartnerNode.id] = rightPosFinal;
-
-      const wL = nodeSizesById[leftPartnerNode.id]?.width ?? DEFAULT_PERSON_W;
-      const wR = nodeSizesById[rightPartnerNode.id]?.width ?? DEFAULT_PERSON_W;
-      const wU = nodeSizesById[union.id]?.width ?? DEFAULT_UNION_W;
-
-      const pLx = leftPosFinal.x;
-      const pRx = rightPosFinal.x;
-      const cL = pLx + wL / 2;
-      const cR = pRx + wR / 2;
-      const unionCenterX = (cL + cR) / 2;
-      const unionX = unionCenterX - wU / 2;
-      const unionY = baseY + UNION_DY;
-      const unionPos = snap(unionX, unionY);
-      updateMap[union.id] = unionPos;
-
-      const childEdgeTargets = edges
-        .filter((e) => e.source === union.id && isChildEdge(e))
-        .map((e) => e.target)
-        .sort((a, b) => a.localeCompare(b));
-
-      const childNodes = childEdgeTargets
-        .map((id) => nodes.find((n) => n.id === id && (n.data as { kind?: string }).kind === "person"))
-        .filter((n): n is NonNullable<typeof n> => n != null);
-
-      const baselineY = baseY + CHILD_DY;
-      const n = childNodes.length;
-
-      if (n >= 1) {
-        const childWidths = childNodes.map(
-          (c) => nodeSizesById[c.id]?.width ?? DEFAULT_PERSON_W
-        );
-        const pLx = leftPosFinal.x;
-        const pRx = rightPosFinal.x;
-
-        if (n === 1) {
-          const childW = childWidths[0];
-          const unionCenterX = unionPos.x + wU / 2;
-          let childX: number;
-          if (singleChildAlignment === "left") {
-            childX = pLx;
-          } else if (singleChildAlignment === "center") {
-            childX = unionCenterX - childW / 2;
-          } else {
-            childX = pRx;
-          }
-          updateMap[childNodes[0].id] = snap(childX, baselineY);
-        } else if (n === 2) {
-          updateMap[childNodes[0].id] = snap(pLx, baselineY);
-          updateMap[childNodes[1].id] = snap(pRx, baselineY);
-        } else {
-          const totalChildWidth = childWidths.reduce((a, b) => a + b, 0);
-          const gap = Math.max(
-            CHILD_MIN_GAP,
-            Math.min(CHILD_MAX_GAP, CHILD_MAX_GAP / (n - 1))
-          );
-          const totalWidth = totalChildWidth + (n - 1) * gap;
-          const unionCenterX = unionPos.x + wU / 2;
-          // 3+ alignment: use union role IDs (leftPartnerId/rightPartnerId) only, never x-order
-          const leftRoleId = unionData.leftPartnerId;
-          const rightRoleId = unionData.rightPartnerId;
-          const leftParentByRole = leftRoleId ? nodes.find((no) => no.id === leftRoleId) : null;
-          const rightParentByRole = rightRoleId ? nodes.find((no) => no.id === rightRoleId) : null;
-          const leftParentPos = leftParentByRole ? getEffectivePos(leftParentByRole.id) : null;
-          const rightParentPos = rightParentByRole ? getEffectivePos(rightParentByRole.id) : null;
-
-          let rowStartX: number;
-          const parentsMidX =
-            leftParentPos && rightParentPos
-              ? (leftParentPos.x + rightParentPos.x) / 2
-              : unionCenterX;
-          if (childrenRowAlignment3Plus === "left" && rightParentPos) {
-            // Left: row ends at right parent's left edge (row is left of right parent)
-            rowStartX = rightParentPos.x - totalWidth;
-          } else if (childrenRowAlignment3Plus === "right" && leftParentPos && rightParentPos) {
-            // Right: row starts at midpoint between parents, extends rightward
-            rowStartX = parentsMidX;
-          } else {
-            rowStartX = unionCenterX - totalWidth / 2;
-          }
-
-          let currentX = rowStartX;
-          for (let i = 0; i < childNodes.length; i++) {
-            updateMap[childNodes[i].id] = snap(currentX, baselineY);
-            currentX += childWidths[i] + gap;
-          }
-
-          if (import.meta.env.DEV && leftParentPos && rightParentPos) {
-            const lastChildRight = rowStartX + totalWidth;
-            if (childrenRowAlignment3Plus === "left") {
-              console.assert(Math.abs(lastChildRight - rightParentPos.x) < 2, "[Sort] Left mode: row right edge should be near rightParent.x");
-            } else if (childrenRowAlignment3Plus === "right") {
-              console.assert(Math.abs(rowStartX - parentsMidX) < 2, "[Sort] Right mode: row left edge should be near parents midpoint");
-            }
-          }
-        }
-      }
-
-      if (import.meta.env.DEV) {
-        console.log("[Sort]", {
-          unionId: union.id,
-          leftPartnerId: leftPartnerNode.id,
-          rightPartnerId: rightPartnerNode.id,
-          baseX,
-          baseY,
-          unionPos,
+    for (const { s, idx } of toApply) {
+      const resolved = resolvedValues.get(idx) ?? s.proposedValue;
+      if (s.field === "firstName") {
+        const node = personNodes.find((n) => n.id === s.nodeId);
+        const parts = node ? getPersonNameParts(node.data as import("../../store/familyTreeStore").PersonNodeData) : { first: "", middle: "", last: "" };
+        updatePersonNameParts(s.nodeId, {
+          firstName: resolved,
+          middleName: parts.middle,
+          lastName: parts.last,
         });
+      } else if (s.field === "role" && s.unionId && s.slot && (resolved === "father" || resolved === "mother")) {
+        updateUnionPartnerRole(s.unionId, s.slot, resolved as import("../../store/familyTreeStore").ParentRole);
       }
     }
-
-    if (Object.keys(updateMap).length === 0 && unionNodes.length > 0) {
-      setMessage("No valid unions to sort.");
-      return;
-    }
-
-    // Gen-assigned persons: snap Y to band baseline
-    for (const n of personNodes) {
-      const data = n.data as { genAnchorId?: string | null };
-      if (data.genAnchorId) {
-        const genAnchor = generationAnchors.find((a) => a.id === data.genAnchorId);
-        if (genAnchor) {
-          const pos = getEffectivePos(n.id) ?? n.position;
-          updateMap[n.id] = { x: pos.x, y: snap(pos.x, genAnchor.yTop + GEN_BASELINE_OFFSET).y };
-        }
-      }
-    }
-
-    setMessage(null);
-    setNodes((prev) =>
-      prev.map((n) => {
-        const posUpdate = n.id in updateMap ? updateMap[n.id] : undefined;
-        const dataUpdate =
-          n.type === "union" && n.id in backfillMap ? backfillMap[n.id] : undefined;
-        if (posUpdate || dataUpdate) {
-          return {
-            ...n,
-            ...(posUpdate && { position: posUpdate }),
-            ...(dataUpdate && {
-              data: { ...(n.data as UnionNodeData), ...dataUpdate },
-            }),
-          };
-        }
-        return n;
-      })
-    );
+    runNameRoleAnalysis();
+    flushSaveAndSave();
+    setMessage(`Applied ${toApply.length} suggestion${toApply.length === 1 ? "" : "s"}.`);
   };
 
   return (
@@ -499,8 +358,9 @@ export default function FamilyTreeToolbar() {
         <Button
           variant="primary"
           size="sm"
-          onClick={() => addPerson()}
+          onClick={() => (canAddParent ? addParent(selectedUnion!.id) : addPerson())}
           className="rounded-none border-0 rounded-l-lg"
+          title={canAddParent ? "Add parent to backward union" : undefined}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -577,21 +437,82 @@ export default function FamilyTreeToolbar() {
             document.body
           )}
       </div>
-      <div className="relative group">
+      <div ref={unionContainerRef} className="relative flex rounded-lg border border-dark-accent/50 group/union">
         <Button
           variant="secondary"
           size="sm"
           onClick={handleCreateUnion}
-          disabled={!canCreateUnion}
-          title={canCreateUnion ? getCreateUnionTooltip() : undefined}
+          disabled={!canUnionAction}
+          title={canUnionAction ? getCreateUnionTooltip() : undefined}
+          className="rounded-none border-0 rounded-l-lg"
         >
-          Create Union
+          Union
         </Button>
-        {!canCreateUnion && (
-          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-2 py-1 bg-dark-accent border border-dark-bg/50 text-dark-text text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
+        <button
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setUnionMenuOpen((o) => !o);
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          disabled={!canUnionAction}
+          className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center disabled:opacity-50"
+          title="Union type options"
+          aria-expanded={unionMenuOpen}
+          aria-haspopup="true"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {!canUnionAction && (
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-2 py-1 bg-dark-accent border border-dark-bg/50 text-dark-text text-xs rounded opacity-0 group-hover/union:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
             {getCreateUnionTooltip()}
           </div>
         )}
+        {unionMenuOpen &&
+          createPortal(
+            <div
+              ref={unionDropdownRef}
+              className="fixed py-1 min-w-[180px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
+              style={{
+                top: unionContainerRef.current
+                  ? unionContainerRef.current.getBoundingClientRect().bottom + 4
+                  : 0,
+                left: unionContainerRef.current
+                  ? unionContainerRef.current.getBoundingClientRect().left
+                  : 0,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setDefaultUnionType("forward");
+                  setUnionMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+              >
+                <span className="w-4">{defaultUnionType === "forward" ? "✓" : ""}</span>
+                Forward union
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDefaultUnionType("backward");
+                  setUnionMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+              >
+                <span className="w-4">{defaultUnionType === "backward" ? "✓" : ""}</span>
+                Backward union
+              </button>
+            </div>,
+            document.body
+          )}
       </div>
       <div ref={childContainerRef} className="relative flex rounded-lg border border-dark-accent/50 group/child">
         <Button
@@ -845,6 +766,18 @@ export default function FamilyTreeToolbar() {
       <Button
         variant="secondary"
         size="sm"
+        onClick={() => setReviewNamesModalOpen(true)}
+        title={
+          nameRoleSuggestions.length > 0
+            ? `${nameRoleSuggestions.length} suggestion(s) – click to review`
+            : "Review names – analysis runs when you open"
+        }
+      >
+        Review names{nameRoleSuggestions.length > 0 ? ` (${nameRoleSuggestions.length})` : ""}
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={() => clearTree()}
         disabled={!activeProjectId}
         title={activeProjectId ? "Clear tree and storage" : "No project loaded"}
@@ -852,7 +785,7 @@ export default function FamilyTreeToolbar() {
         Clear
       </Button>
       <div className="flex-1" />
-      <span className="text-dark-muted text-xs">Tip: Shift+Click to select 2 people.</span>
+      <span className="text-dark-muted text-xs">Tip: Shift+Click: 2 people = union; union + person = link.</span>
       <label className="flex items-center gap-2 text-dark-muted text-sm cursor-pointer">
         <input
           type="checkbox"
@@ -970,6 +903,17 @@ export default function FamilyTreeToolbar() {
         />
         {autosaveLabelOverride ?? "Autosave"}
       </label>
+      <FamilyTreeExportDialog
+        onExportComplete={() => setMessage("Export coming soon")}
+      />
+      <FamilyTreeReviewSuggestionsModal
+        isOpen={reviewNamesModalOpen}
+        onClose={() => setReviewNamesModalOpen(false)}
+        suggestions={nameRoleSuggestions}
+        nodes={nodes}
+        onApply={handleApplySuggestions}
+        onOpen={runNameRoleAnalysis}
+      />
     </div>
   );
 }

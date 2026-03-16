@@ -6,9 +6,11 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  /** Optional class for the inner content box (e.g. max-w-3xl for wider modals). */
+  contentClassName?: string;
 }
 
-export default function Modal({ isOpen, onClose, title, children }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, contentClassName }: ModalProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -27,7 +29,7 @@ export default function Modal({ isOpen, onClose, title, children }: ModalProps) 
       onClick={onClose}
     >
       <div
-        className="bg-dark-surface rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl border border-dark-accent/50"
+        className={`bg-dark-surface rounded-xl p-6 w-full mx-4 shadow-2xl border border-dark-accent/50 ${contentClassName ?? "max-w-md"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-xl font-bold text-dark-text mb-4">{title}</h2>

@@ -2,9 +2,23 @@ import { useMemo, useState } from "react";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import { generateFamilyTreeScript } from "../../store/familyTreeStore";
 
+/** Escape string for use in RegExp. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** True if line references the given node by its unique ID. */
+function lineReferencesNode(line: string, nodeId: string): boolean {
+  // Match ID as whole token (avoid "_fz94" matching inside "_fz94vsg4l")
+  const idEscaped = escapeRegex(nodeId);
+  const idRe = new RegExp(`(?:^|[^a-zA-Z0-9_])${idEscaped}(?:$|[^a-zA-Z0-9_])`);
+  return idRe.test(line);
+}
+
 export default function FamilyTreeScriptPane() {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
+  const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
   const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
@@ -31,6 +45,14 @@ export default function FamilyTreeScriptPane() {
       }),
     [nodes, edges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById, generationAnchors, genLabelMode]
   );
+
+  const scriptLines = useMemo(() => script.split("\n"), [script]);
+
+  const selectedNodeId = useMemo(() => {
+    if (!primarySelectedNodeId) return null;
+    const node = nodes.find((n) => n.id === primarySelectedNodeId);
+    return node ? node.id : null;
+  }, [primarySelectedNodeId, nodes]);
 
   const handleCopy = async () => {
     try {
@@ -121,13 +143,26 @@ export default function FamilyTreeScriptPane() {
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-hidden p-3">
-            <textarea
-              value={script}
-              readOnly
-              className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
-              spellCheck={false}
-            />
+          <div className="flex-1 min-h-0 overflow-auto p-3">
+            <div
+              className="block w-full min-h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono"
+              aria-label="Script view"
+              role="document"
+            >
+              {scriptLines.map((line, i) => {
+                const highlight =
+                  selectedNodeId &&
+                  lineReferencesNode(line, selectedNodeId);
+                return (
+                  <div
+                    key={i}
+                    className={highlight ? "bg-blue-500/15 -mx-3 px-3 py-0.5" : ""}
+                  >
+                    {line || "\u00a0"}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

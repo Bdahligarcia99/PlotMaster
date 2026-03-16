@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -7,6 +7,8 @@ import {
   applyEdgeChanges,
   useStore,
   useReactFlow,
+  type Edge,
+  type Node,
   type OnNodesChange,
   type OnEdgesChange,
   type OnSelectionChangeFunc,
@@ -14,7 +16,7 @@ import {
   BackgroundVariant,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { useFamilyTreeStore } from "../../store/familyTreeStore";
+import { useFamilyTreeStore, type PersonNodeData, type UnionNodeData } from "../../store/familyTreeStore";
 import {
   FAMILY_TREE_GRID_SIZE,
   DEFAULT_PERSON_W,
@@ -29,6 +31,7 @@ import UnionNode from "./UnionNode";
 import GenerationAnchorsOverlay from "./GenerationAnchorsOverlay";
 import GenerationRuler from "./GenerationRuler";
 import NodeSpacingOverlay from "./NodeSpacingOverlay";
+import ExportGuidesOverlay from "./ExportGuidesOverlay";
 import Modal from "../ui/Modal";
 
 function ViewportBoundsSync() {
@@ -62,7 +65,92 @@ function ViewportBoundsSync() {
   return null;
 }
 
+function ExportViewportRegister() {
+  const { fitView } = useReactFlow();
+  const setFitViewForExport = useFamilyTreeStore((s) => s.setFitViewForExport);
+  useEffect(() => {
+    setFitViewForExport(() => fitView);
+    return () => setFitViewForExport(null);
+  }, [fitView, setFitViewForExport]);
+  return null;
+}
+
 const nodeTypes = { person: PersonNode, union: UnionNode };
+
+function isPartnerEdge(e: Edge): boolean {
+  return (e.data as { type?: string })?.type === "partner";
+}
+
+/** Assigns distinct source/target handles for partner edges so multi-union connections are visually separated. */
+function assignPartnerHandles(edges: Edge[], nodes: Node[]): Edge[] {
+  const unionById = new Map(
+    nodes.filter((n) => n.type === "union").map((n) => [n.id, n])
+  );
+  const personPartnerEdges = new Map<string, Edge[]>();
+  for (const e of edges) {
+    if (!isPartnerEdge(e)) continue;
+    const list = personPartnerEdges.get(e.source) ?? [];
+    list.push(e);
+    personPartnerEdges.set(e.source, list);
+  }
+  const personById = new Map(
+    nodes.filter((n) => n.type === "person").map((n) => [n.id, n])
+  );
+  const sourceHandleByEdge = new Map<string, string>();
+  for (const [personId, list] of personPartnerEdges) {
+    const personNode = personById.get(personId);
+    const data = personNode?.data as PersonNodeData | undefined;
+    const storedOrder = data?.partnerUnionOrder;
+    const unionIdsFromEdges = [...new Set(list.map((e) => e.target))];
+    let orderedIds: string[];
+    if (storedOrder?.length) {
+      orderedIds = [...storedOrder].filter((id) => unionIdsFromEdges.includes(id));
+      for (const id of unionIdsFromEdges) {
+        if (!orderedIds.includes(id)) orderedIds.push(id);
+      }
+      orderedIds.sort((a, b) => {
+        const iA = storedOrder.indexOf(a);
+        const iB = storedOrder.indexOf(b);
+        if (iA >= 0 && iB >= 0) return iA - iB;
+        if (iA >= 0) return -1;
+        if (iB >= 0) return 1;
+        return a.localeCompare(b);
+      });
+    } else {
+      orderedIds = [...unionIdsFromEdges].sort((a, b) => a.localeCompare(b));
+    }
+    const sorted = [...list].sort((a, b) => {
+      const ia = orderedIds.indexOf(a.target);
+      const ib = orderedIds.indexOf(b.target);
+      return ia - ib;
+    });
+    sorted.forEach((e, i) => {
+      sourceHandleByEdge.set(e.id, sorted.length === 1 ? "partner" : `partner-${i}`);
+    });
+  }
+  const targetHandleByEdge = new Map<string, string>();
+  for (const e of edges) {
+    if (!isPartnerEdge(e)) continue;
+    const unionNode = unionById.get(e.target);
+    if (!unionNode) continue;
+    const d = unionNode.data as UnionNodeData;
+    const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
+    const swapped = !!d.partnerHandleSwap;
+    const useLeft = e.source === leftId;
+    const handle = swapped ? (useLeft ? "rightPartner" : "leftPartner") : (useLeft ? "leftPartner" : "rightPartner");
+    targetHandleByEdge.set(e.id, handle);
+  }
+  return edges.map((e) => {
+    if (!isPartnerEdge(e)) return e;
+    const sh = sourceHandleByEdge.get(e.id);
+    const th = targetHandleByEdge.get(e.id);
+    return {
+      ...e,
+      ...(sh != null && { sourceHandle: sh }),
+      ...(th != null && { targetHandle: th }),
+    };
+  });
+}
 
 function rectsIntersect(
   ax: number,
@@ -281,6 +369,7 @@ export interface FamilyTreeCanvasProps {
   nodesDraggable?: boolean;
   marqueeToolActive?: boolean;
   isSpacePanning?: boolean;
+  onNodeSelectForEdit?: () => void;
 }
 
 export default function FamilyTreeCanvas({
@@ -288,7 +377,11 @@ export default function FamilyTreeCanvas({
   nodesDraggable = true,
   marqueeToolActive = false,
   isSpacePanning = false,
+  onNodeSelectForEdit,
 }: FamilyTreeCanvasProps = {}) {
+  const exportGuidesVisible = useFamilyTreeStore((s) => s.exportGuidesVisible);
+  const setExportViewportEl = useFamilyTreeStore((s) => s.setExportViewportEl);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const {
     nodes,
     edges,
@@ -375,6 +468,11 @@ export default function FamilyTreeCanvas({
     selected: selectedNodeIds.includes(n.id),
   }));
 
+  const displayEdges = useMemo(
+    () => assignPartnerHandles(edges, nodes),
+    [edges, nodes]
+  );
+
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
     [setNodes]
@@ -383,8 +481,10 @@ export default function FamilyTreeCanvas({
     (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
     [setEdges]
   );
+  const doubleClickIgnoreClearRef = useRef(false);
   const onSelectionChange: OnSelectionChangeFunc = useCallback(
     ({ nodes: selectedNodes }) => {
+      if (selectedNodes.length === 0 && doubleClickIgnoreClearRef.current) return;
       setSelectedNodeIds(selectedNodes.map((n) => n.id));
     },
     [setSelectedNodeIds]
@@ -407,6 +507,21 @@ export default function FamilyTreeCanvas({
     },
     [setSelectedNodeIds, setNodeGenArmed]
   );
+
+  const onNodeDoubleClick: NodeMouseHandler = useCallback(
+    (evt, node) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      doubleClickIgnoreClearRef.current = true;
+      setSelectedNodeIds([node.id]);
+      onNodeSelectForEdit?.();
+      // Reset flag after React Flow's onSelectionChange may have fired
+      setTimeout(() => {
+        doubleClickIgnoreClearRef.current = false;
+      }, 100);
+    },
+    [setSelectedNodeIds, onNodeSelectForEdit]
+  );
   const onPaneClick = useCallback(() => setSelectedNodeIds([]), [setSelectedNodeIds]);
 
   const showSpacePanCursor = marqueeToolActive && isSpacePanning;
@@ -414,8 +529,14 @@ export default function FamilyTreeCanvas({
   const pendingGenChangePrompt = useFamilyTreeStore((s) => s.pendingGenChangePrompt);
   const resolveGenChangePrompt = useFamilyTreeStore((s) => s.resolveGenChangePrompt);
 
+  useEffect(() => {
+    setExportViewportEl(viewportRef.current);
+    return () => setExportViewportEl(null);
+  }, [setExportViewportEl]);
+
   return (
     <div
+      ref={viewportRef}
       className={`flex-1 min-h-0 ${showSpacePanCursor ? "cursor-grab [&.panning]:cursor-grabbing" : ""}`}
       onPointerDown={(e) => {
         if (showSpacePanCursor && e.button === 0) {
@@ -431,11 +552,12 @@ export default function FamilyTreeCanvas({
     >
       <ReactFlow
         nodes={nodesWithSelection}
-        edges={edges}
+        edges={displayEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onSelectionChange={onSelectionChange}
         onNodeClick={onNodeClick}
+        onNodeDoubleClick={onNodeDoubleClick}
         onPaneClick={onPaneClick}
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
@@ -445,6 +567,7 @@ export default function FamilyTreeCanvas({
         fitView
         panOnDrag={panOnDrag}
         zoomOnScroll
+        zoomOnDoubleClick={false}
         zoomOnPinch
         elementsSelectable
         nodesDraggable={nodesDraggable}
@@ -466,9 +589,11 @@ export default function FamilyTreeCanvas({
           className="!bg-dark-surface !border-dark-accent !rounded-lg [&>button]:!bg-dark-accent [&>button]:!text-dark-text [&>button]:!border-dark-accent [&>button:hover]:!bg-dark-bg"
         />
         <ViewportBoundsSync />
+        <ExportViewportRegister />
         <GenerationAnchorsOverlay />
         <GenerationRuler />
         <NodeSpacingOverlay />
+        {exportGuidesVisible && <ExportGuidesOverlay />}
         {marqueeToolActive && <MarqueeOverlay isSpacePanning={isSpacePanning} />}
       </ReactFlow>
       <Modal

@@ -37,6 +37,7 @@ export interface FamilyTreeUIFlags {
   genLabelMode?: "letters" | "numbers" | "both";
   showGenerationAnchors?: boolean;
   showGenInheritIndicator?: boolean;
+  defaultUnionType?: "forward" | "backward";
 }
 
 /** Generation anchor for family tree. */
