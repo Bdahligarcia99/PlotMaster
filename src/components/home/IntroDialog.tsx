@@ -13,6 +13,7 @@ import {
   isTauri,
   openProjectInNewWindow,
 } from "../../tauri/openProjectInNewWindow";
+import { APP_RELEASE_CHANNEL, APP_VERSION } from "../../constants/appMeta";
 
 type DeleteTarget = { id: string; name: string; source: "driver" | "standalone" };
 type TabId = "create" | "recent";
@@ -199,10 +200,26 @@ export default function IntroDialog({
         {/* Header */}
         <div className="flex-shrink-0 flex items-start justify-between px-6 pt-6 pb-4">
           <div>
-            <h1 id="intro-dialog-title" className="text-2xl font-bold text-dark-text tracking-wider">
-              PLOT MASTER
-            </h1>
-            <p className="text-dark-muted text-sm mt-1">Start</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 id="intro-dialog-title" className="text-2xl font-bold text-dark-text tracking-wider">
+                PLOT MASTER
+              </h1>
+              <span
+                className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300/95 bg-amber-500/15 border border-amber-400/45 px-2 py-0.5 rounded-md"
+                title="PlotMaster is in early development."
+              >
+                {APP_RELEASE_CHANNEL}
+              </span>
+            </div>
+            <p className="text-dark-muted text-sm mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span>Project selection</span>
+              <span className="text-dark-accent/60" aria-hidden>
+                ·
+              </span>
+              <span className="tabular-nums text-dark-muted/90" title={`PlotMaster ${APP_VERSION}`}>
+                v{APP_VERSION}
+              </span>
+            </p>
           </div>
           {canClose && (
             <button
