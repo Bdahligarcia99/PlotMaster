@@ -56,6 +56,10 @@ export function generateTimelineScript(
   });
 
   for (const beat of sortedBeats) {
+    if (beat.kind === "empty") {
+      lines.push(`Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order} empty: true`);
+      continue;
+    }
     const parts = [
       `Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order}`,
       `title: "${escapeQuoted(beat.title)}"`,
@@ -73,7 +77,7 @@ export function generateTimelineScript(
     lines.push("");
     const sortedConnections = [...connections].sort((a, b) => a.id.localeCompare(b.id));
     for (const connection of sortedConnections) {
-      const parts = [`Crossing ${connection.id} a: ${connection.beatIdA} b: ${connection.beatIdB}`];
+      const parts = [`Crossing ${connection.id} beats: ${connection.beatIds.join(",")}`];
       if (connection.title.trim()) {
         parts.push(`title: "${escapeQuoted(connection.title)}"`);
       }
@@ -147,6 +151,19 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         continue;
       }
       const order = Number.parseInt(kv.order ?? "0", 10);
+      if (/empty:\s*true/.test(line)) {
+        beats.push({
+          id,
+          laneId,
+          order: Number.isFinite(order) ? order : 0,
+          kind: "empty",
+          title: "",
+          description: "",
+          date: "",
+        });
+        beatIds.add(id);
+        continue;
+      }
       const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(line);
       const title = titleMatch
         ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
@@ -155,6 +172,7 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         id,
         laneId,
         order: Number.isFinite(order) ? order : 0,
+        kind: "story",
         title,
         description: kv.description ?? "",
         date: kv.date ?? "",
@@ -170,16 +188,20 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         continue;
       }
       const id = idMatch[1];
-      const abMatch = /\ba:\s*(\S+)\s+b:\s*(\S+)/.exec(line);
-      if (!abMatch) {
-        errors.push(`Crossing ${id} missing a:/b: beat references`);
+      const beatsMatch = /beats:\s*(\S+)/.exec(line);
+      if (!beatsMatch) {
+        errors.push(`Crossing ${id} missing beats: beat references`);
+        continue;
+      }
+      const beatIdsList = beatsMatch[1].split(",").filter(Boolean);
+      if (beatIdsList.length < 2) {
+        errors.push(`Crossing ${id} requires at least 2 beat ids`);
         continue;
       }
       const kv = parseKeyValueRest(line);
       connections.push({
         id,
-        beatIdA: abMatch[1],
-        beatIdB: abMatch[2],
+        beatIds: beatIdsList,
         title: kv.title ?? "",
         description: kv.description ?? "",
         date: kv.date ?? "",
@@ -194,11 +216,10 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
   }
 
   for (const connection of connections) {
-    if (!beatIds.has(connection.beatIdA)) {
-      errors.push(`Crossing ${connection.id} references unknown beat ${connection.beatIdA}`);
-    }
-    if (!beatIds.has(connection.beatIdB)) {
-      errors.push(`Crossing ${connection.id} references unknown beat ${connection.beatIdB}`);
+    for (const beatId of connection.beatIds) {
+      if (!beatIds.has(beatId)) {
+        errors.push(`Crossing ${connection.id} references unknown beat ${beatId}`);
+      }
     }
   }
 

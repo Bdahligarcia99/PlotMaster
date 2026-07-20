@@ -159,7 +159,11 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                                 beatSelected ? "bg-blue-500/15 text-dark-text" : "text-dark-muted"
                               }`}
                             >
-                              {beat.title || "Beat"}
+                              {beat.kind === "empty" ? (
+                                <span className="italic">(empty)</span>
+                              ) : (
+                                beat.title || "Beat"
+                              )}
                             </button>
                           );
                         })
@@ -195,8 +199,12 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                 {connections.map((connection) => {
                   const item: TimelineSelectionItem = { type: "connection", id: connection.id };
                   const selected = isSelected(selection, item);
-                  const beatA = beatsById.get(connection.beatIdA);
-                  const beatB = beatsById.get(connection.beatIdB);
+                  const beatLabels = connection.beatIds.map((beatId) => {
+                    const beat = beatsById.get(beatId);
+                    if (!beat) return "Beat";
+                    if (beat.kind === "empty") return "(empty)";
+                    return beat.title || "Beat";
+                  });
                   return (
                     <button
                       key={connection.id}
@@ -207,7 +215,7 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                         selected ? "bg-amber-500/15 text-dark-text" : "text-dark-muted"
                       }`}
                     >
-                      {(beatA?.title || "Beat")} ↔ {(beatB?.title || "Beat")}
+                      {beatLabels.join(" ↔ ")}
                     </button>
                   );
                 })}

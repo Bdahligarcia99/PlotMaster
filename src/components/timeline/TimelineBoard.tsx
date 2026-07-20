@@ -79,8 +79,9 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const connectedBeatIds = useMemo(() => {
     const set = new Set<string>();
     for (const c of connections) {
-      set.add(c.beatIdA);
-      set.add(c.beatIdB);
+      for (const beatId of c.beatIds) {
+        set.add(beatId);
+      }
     }
     return set;
   }, [connections]);

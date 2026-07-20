@@ -161,49 +161,57 @@ export default function TimelineInspector() {
               Delete
             </button>
           </div>
-          <label className="block space-y-1">
-            <span className="text-xs text-dark-muted">Title</span>
-            <input
-              type="text"
-              value={beatTitle}
-              onChange={(e) => setBeatTitle(e.target.value)}
-              onBlur={() => {
-                if (beatTitle !== editingBeat.title) {
-                  updateBeat(editingBeat.id, { title: beatTitle });
-                }
-              }}
-              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
-            />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-xs text-dark-muted">Description</span>
-            <textarea
-              value={beatDescription}
-              onChange={(e) => setBeatDescription(e.target.value)}
-              onBlur={() => {
-                if (beatDescription !== editingBeat.description) {
-                  updateBeat(editingBeat.id, { description: beatDescription });
-                }
-              }}
-              rows={3}
-              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-none focus:outline-none focus:border-blue-500"
-            />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-xs text-dark-muted">Date</span>
-            <input
-              type="text"
-              value={beatDate}
-              onChange={(e) => setBeatDate(e.target.value)}
-              onBlur={() => {
-                if (beatDate !== editingBeat.date) {
-                  updateBeat(editingBeat.id, { date: beatDate });
-                }
-              }}
-              placeholder="Story date or label"
-              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
-            />
-          </label>
+          {editingBeat.kind === "empty" ? (
+            <p className="text-xs text-dark-muted italic">
+              Empty beat — spacer only, no properties.
+            </p>
+          ) : (
+            <>
+              <label className="block space-y-1">
+                <span className="text-xs text-dark-muted">Title</span>
+                <input
+                  type="text"
+                  value={beatTitle}
+                  onChange={(e) => setBeatTitle(e.target.value)}
+                  onBlur={() => {
+                    if (beatTitle !== editingBeat.title) {
+                      updateBeat(editingBeat.id, { title: beatTitle });
+                    }
+                  }}
+                  className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-dark-muted">Description</span>
+                <textarea
+                  value={beatDescription}
+                  onChange={(e) => setBeatDescription(e.target.value)}
+                  onBlur={() => {
+                    if (beatDescription !== editingBeat.description) {
+                      updateBeat(editingBeat.id, { description: beatDescription });
+                    }
+                  }}
+                  rows={3}
+                  className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-none focus:outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-dark-muted">Date</span>
+                <input
+                  type="text"
+                  value={beatDate}
+                  onChange={(e) => setBeatDate(e.target.value)}
+                  onBlur={() => {
+                    if (beatDate !== editingBeat.date) {
+                      updateBeat(editingBeat.id, { date: beatDate });
+                    }
+                  }}
+                  placeholder="Story date or label"
+                  className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
+                />
+              </label>
+            </>
+          )}
           <p className="text-[10px] text-dark-muted font-mono truncate" title={editingBeat.id}>
             id: {editingBeat.id}
           </p>
@@ -223,6 +231,16 @@ export default function TimelineInspector() {
               Delete
             </button>
           </div>
+          <p className="text-xs text-dark-muted">
+            {editingConnection.beatIds
+              .map((beatId) => {
+                const beat = beats.find((b) => b.id === beatId);
+                if (!beat) return "Beat";
+                if (beat.kind === "empty") return "(empty)";
+                return beat.title || "Beat";
+              })
+              .join(" ↔ ")}
+          </p>
           <label className="block space-y-1">
             <span className="text-xs text-dark-muted">Title</span>
             <input

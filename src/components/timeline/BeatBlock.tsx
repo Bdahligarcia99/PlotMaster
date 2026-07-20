@@ -33,6 +33,7 @@ export default function BeatBlock({
 
   const heightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
   const heightTransition = `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`;
+  const isEmpty = beat.kind === "empty";
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -57,27 +58,37 @@ export default function BeatBlock({
       onDoubleClick={onDoubleClick}
       data-beat-id={beat.id}
       className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left text-sm cursor-grab active:cursor-grabbing select-none transition-colors ${
-        selected
-          ? "border-blue-500 bg-blue-500/20 text-dark-text ring-1 ring-blue-500/60"
-          : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent/80 hover:bg-dark-accent/20"
+        isEmpty
+          ? selected
+            ? "border-dashed border-2 border-blue-500 bg-transparent text-dark-muted ring-1 ring-blue-500/60"
+            : "border-dashed border-2 border-dark-accent/70 bg-transparent text-dark-muted hover:border-dark-accent"
+          : selected
+            ? "border-blue-500 bg-blue-500/20 text-dark-text ring-1 ring-blue-500/60"
+            : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent/80 hover:bg-dark-accent/20"
       }`}
     >
-      <span className="block truncate font-medium">{beat.title || "Beat"}</span>
-      {beatsExpanded ? (
+      {isEmpty ? (
+        <span className="flex h-full items-center justify-center text-xs italic text-dark-muted">Empty</span>
+      ) : (
         <>
-          {beat.date.trim() && (
-            <span className="block text-[10px] text-dark-muted mt-1">{beat.date}</span>
-          )}
-          {beat.description.trim() && (
-            <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
-              {beat.description}
-            </span>
+          <span className="block truncate font-medium">{beat.title || "Beat"}</span>
+          {beatsExpanded ? (
+            <>
+              {beat.date.trim() && (
+                <span className="block text-[10px] text-dark-muted mt-1">{beat.date}</span>
+              )}
+              {beat.description.trim() && (
+                <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
+                  {beat.description}
+                </span>
+              )}
+            </>
+          ) : (
+            beat.date.trim() && (
+              <span className="block truncate text-[10px] text-dark-muted mt-0.5">{beat.date}</span>
+            )
           )}
         </>
-      ) : (
-        beat.date.trim() && (
-          <span className="block truncate text-[10px] text-dark-muted mt-0.5">{beat.date}</span>
-        )
       )}
       {connected && (
         <span

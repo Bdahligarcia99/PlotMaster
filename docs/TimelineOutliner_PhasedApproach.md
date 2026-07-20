@@ -59,28 +59,38 @@ When wording would confuse (e.g. “person” vs “lane”), use **subtitle tex
 ### 2.2 Beat (node)
 
 - **Id**, **laneId**, **order** along time within that lane (or derived from position + normalized on save)
-- **Properties (minimum):** **title**, **description**, **date** (story-facing; can be partial or free text early)
+- **`kind`:** `"story"` (default) or `"empty"` (experimental spacer — see §2.2a)
+- **Properties (minimum, story beats only):** **title**, **description**, **date** (story-facing; can be partial or free text early)
 - Room for additional properties in later sub-phases
 
 Script and UI refer to these as **beats**.
 
+### 2.2a Empty beats (experimental)
+
+- **`kind: "empty"`** — a beat with **no story properties** (no title, description, or date shown or edited)
+- **Purpose:** pure visual-alignment spacer so a lane can add a blank block to align its stack with beats in other lanes
+- **Created via:** the **+ Beat** toolbar split button → **Empty Beat** option (primary click still adds a normal story beat)
+- **Rendered with:** dashed ghost styling and a muted centered **Empty** label; still draggable and selectable
+- **Cannot participate** in crossing connectors (store validation + toolbar tooltip)
+- **Script:** `Beat <id> lane: <laneId> order: <n> empty: true` (no title/description/date tokens)
+
 ### 2.3 Crossing connector
 
-A **crossing connector** is a distinct data record — analogous in *intent* to a family tree **Union** node (an additive, selectable link) — but it is **never rendered as a graph node/hub**. It is a plain record referencing two beat ids, drawn as an **SVG overlay line** directly between the two beat blocks.
+A **crossing connector** is a distinct data record — analogous in *intent* to a family tree **Union** node (an additive, selectable link) — but it is **never rendered as a graph node/hub**. It is a plain record referencing N beat ids, drawn as an **SVG overlay star/hub** from each linked beat to a computed centroid point.
 
 - **Id**
-- **`beatIdA`**, **`beatIdB`** — references to two **existing** beats (each remains on its own lane with its own order)
+- **`beatIds: string[]`** — references to **N existing beats** (N ≥ 2, all distinct; **at most one beat per lane** per crossing)
 - **Properties (optional):** **title**, **description**, **date** (story-facing metadata for the intersection moment)
-- **Multiple crossing connectors** are allowed between the **same pair** of lanes (several story moments at different beats)
+- **Multiple crossing connectors** are allowed between overlapping sets of lanes (several story moments at different beats)
 
-**v1 constraint:** Each connector links exactly **two beats**. Creating or deleting a connector never moves a beat between lanes or changes its order — that only happens via an explicit drag (see §1's "Rendering model" and §3.4).
+**Constraint:** Each connector includes **at most one beat from each lane** — a single connector can never include two beats from the same lane. Creating or deleting a connector never moves a beat between lanes or changes its order — that only happens via an explicit drag (see §1's "Rendering model" and §3.4).
 
-**Future (“crossing v2”):** A single connector joining **more than two** beats/lanes at once. Chain crossings on different beat pairs (A–B, B–C) already work naturally in v1 because each connector is independent.
+**Rendering:** For each connection, `ConnectorOverlay` draws one line from each linked beat's center to the **centroid** (average x/y of all endpoint centers), with a clickable marker at the centroid. For exactly two beats this is visually identical to the old midpoint-line behavior.
 
 ### 2.4 Edges
 
 - **Within-lane:** Sequencing is **implicit DOM order** — beats simply stack in array order inside their lane's column; there is no explicit "edge" record between consecutive beats on the same lane.
-- **Cross-lane:** Crossing connectors are **rendered**, not modeled, as edges — an SVG line computed on the fly between the two linked beat blocks' current positions (recomputed on drag/resize/reorder). Each lane's own stack order continues independently, **unaffected** by connectors (mirrors family tree: partner edges do not reroute a person's own parent/child edges).
+- **Cross-lane:** Crossing connectors are **rendered**, not modeled, as edges — an SVG star/hub computed on the fly from each linked beat block to a centroid (recomputed on drag/resize/reorder). Each lane's own stack order continues independently, **unaffected** by connectors (mirrors family tree: partner edges do not reroute a person's own parent/child edges).
 
 ---
 
@@ -102,11 +112,13 @@ Section **§1.1** defines the **toolbar mapping** (new person → lane, new chil
 
 ### 3.2 Crossing creation (beat-centric)
 
-- **Semantic selection** is **two existing beats**, matching the family tree Union flow (select two person nodes → Union).
-- Beats are typically on **different lanes** (same-lane connectors are allowed but uncommon).
-- Action creates a **crossing connector** record with a line drawn to both beats — **purely additive**; neither beat moves lanes or changes order.
-- **Toggle:** Re-selecting the same two already-connected beats and activating the **Crossing** control again **removes** that connector (toggle off), rather than creating a duplicate.
-- **Primary control:** Same **toolbar slot and flow as Union** in family tree (§1.1): user selects **beat A** and **beat B**, then activates **Union / Create crossing connector** (timeline label + tooltip as needed).
+- **Semantic selection** is **two or more existing beats, one per lane**, matching the family tree Union flow extended to N endpoints (select beats → Crossing).
+- Beats must be on **different lanes** (same-lane connectors are not allowed).
+- Empty beats (`kind: "empty"`) cannot be part of a crossing.
+- Action creates a **crossing connector** record with star/hub lines drawn to all selected beats — **purely additive**; no beat moves lanes or changes order.
+- **Toggle:** Re-selecting the same beat set (order-independent) and activating the **Crossing** control again **removes** that connector (toggle off), rather than creating a duplicate.
+- **Toolbar disable + tooltip:** The Crossing control is disabled with an explanatory tooltip when the selection has fewer than two beats, includes two beats on the same lane, or includes an empty beat.
+- **Primary control:** Same **toolbar slot and flow as Union** in family tree (§1.1): user selects **beat A**, **beat B**, (optionally more), then activates **Union / Create crossing connector** (timeline label + tooltip as needed).
 
 ### 3.3 Delete behaviors
 
@@ -117,13 +129,13 @@ Section **§1.1** defines the **toolbar mapping** (new person → lane, new chil
 - Delete **this beat only**
 - Delete **this beat and all following** on that lane’s ordered sequence
 
-**Crossing connector delete:** Mirrors family tree union delete — removing the connector deletes only the connector record and its line; **both beats remain** on their lanes. Deleting a beat that is an endpoint removes that connector (and its line) as well. The **toggle-off** flow in §3.2 (re-select the same two beats and activate **Crossing** again) is a faster alternative to selecting the connector line/marker and deleting it via the Inspector.
+**Crossing connector delete:** Mirrors family tree union delete — removing the connector deletes only the connector record and its lines; **all remaining beats stay** on their lanes. Deleting a beat that is any one of a crossing's beats removes that connector (and its lines) as well. The **toggle-off** flow in §3.2 (re-select the same beat set and activate **Crossing** again) is a faster alternative to selecting the connector line/marker and deleting it via the Inspector.
 
 ### 3.4 Reorder
 
 - **Beats:** Drag-and-drop a beat block to reorder it within its own lane's stack, **or** drop it into a different lane's stack (an explicit, deliberate move — see §1's "Rendering model"). Order is renormalized on both the source and destination lane.
 - **Lanes:** Drag a lane's **starting gate** label to reorder lanes (see Phase 1); beats and connector lines follow the new column order.
-- **Crossing connectors:** No special reorder rules — the connector line redraws between wherever the two linked beats currently sit, including immediately during a drag (same spirit as family tree edges reflowing when a person node moves).
+- **Crossing connectors:** No special reorder rules — the connector lines redraw between wherever the linked beats currently sit, including immediately during a drag (same spirit as family tree edges reflowing when a person node moves).
 
 ---
 
@@ -196,19 +208,19 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 
 ---
 
-### Phase 2 — Crossing connectors (v1)
+### Phase 2 — Crossing connectors (v1 + multi-beat)
 
-**Goal:** Additive connectors linking two existing beats across lanes, mirroring family tree Union behavior — rendered as SVG lines, never as graph nodes.
+**Goal:** Additive connectors linking two or more existing beats across lanes (one per lane), mirroring family tree Union behavior — rendered as SVG star/hub lines, never as graph nodes.
 
-- [x] **Crossing connector** record (`beatIdA`, `beatIdB` + optional title/description/date) + an **`SVG ConnectorOverlay`** line between the two beat blocks (no continuity swap, no beat lane changes, no hub node).
-- [x] **Creation flow:** select **beat A**, **shift+select beat B**, then the **Crossing** toolbar control (same slot/affordance as family tree Union) → new connector + line drawn between both beats.
-- [x] **Inspector** for crossing connector (title/description/date, delete).
-- [x] **Script:** encode connectors as `Crossing <id> a: <beatIdA> b: <beatIdB> [title/description/date]`; **round-trip** connector create/delete.
-- [x] **Delete:** deleting a connector removes only the connector record and its line; both beats remain. Deleting a beat removes any connectors that reference it.
+- [x] **Crossing connector** record (`beatIds: string[]` + optional title/description/date) + an **`SVG ConnectorOverlay`** star/hub from each beat to a centroid (no continuity swap, no beat lane changes, no hub node).
+- [x] **Creation flow:** select **two or more beats** (one per lane, no empty beats), **shift+select** additional beats, then the **Crossing** toolbar control (same slot/affordance as family tree Union) → new connector + lines drawn to all beats.
+- [x] **Inspector** for crossing connector (linked beat titles, title/description/date, delete).
+- [x] **Script:** encode connectors as `Crossing <id> beats: id1,id2,id3 [title/description/date]`; **round-trip** connector create/delete.
+- [x] **Delete:** deleting a connector removes only the connector record and its lines; all beats remain. Deleting a beat removes any connectors that reference it.
 
-**Deliverable:** Crossing connectors linking any two beats across lanes, purely additive — no lane-continuity changes.
+**Deliverable:** Crossing connectors linking N beats across lanes (one per lane), purely additive — no lane-continuity changes.
 
-**Implemented in:** `ConnectorOverlay`, `timelineStore` (`addConnection`/`updateConnection`/`removeConnection`), `timelineScript.ts`, `TimelineToolbar`, `TimelineInspector`, `TimelineEntitiesPanel` (Crossings list).
+**Implemented in:** `ConnectorOverlay`, `timelineStore` (`addConnection`/`updateConnection`/`removeConnection`/`canFormCrossing`), `timelineScript.ts`, `TimelineToolbar`, `TimelineInspector`, `TimelineEntitiesPanel` (Crossings list).
 
 ---
 
@@ -251,13 +263,12 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 
 ---
 
-### Phase 6 — Crossing v2 (future)
+### Phase 6 — Multi-beat crossings (implemented)
 
-**Scope (not detailed here):**
+- [x] A single connector joining **more than two** beats/lanes at once (N ≥ 2, one beat per lane), rendered as star/hub lines from each beat to a computed centroid with a clickable marker at the hub.
+- Built on the same independent-connector-record model as v1 — **no hub graph node**; each crossing is still a plain `TimelineConnection` with `beatIds: string[]`.
 
-- A single connector joining **more than two** beats/lanes at once (hub with 3+ links).
-
-Chain crossings on different beat pairs (A–B, B–C) already work in v1 because each connector is independent. Revisit multi-endpoint hubs only after v1 connector usage is validated.
+Chain crossings on different beat sets (A–B, B–C) also work because each connector is independent.
 
 ---
 

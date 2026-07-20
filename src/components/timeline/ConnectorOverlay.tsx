@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import type { TimelineConnection } from "../../store/timelineTypes";
 
-interface ConnectorLine {
+interface ConnectorHub {
   id: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  midX: number;
-  midY: number;
+  points: { x: number; y: number }[];
+  centroidX: number;
+  centroidY: number;
 }
 
 interface ConnectorOverlayProps {
@@ -22,7 +19,7 @@ interface ConnectorOverlayProps {
 }
 
 /**
- * SVG overlay drawing cross-lane crossing connectors as simple lines between beat blocks.
+ * SVG overlay drawing cross-lane crossing connectors as star/hub lines from each beat to a centroid.
  * Lives as a normal-flow child inside the same scrolling content wrapper as the lane columns,
  * so offsets computed relative to that wrapper stay valid across scroll — no scroll-position
  * recomputation is needed, only on layout/content changes (resize, drag, reorder).
@@ -36,26 +33,30 @@ export default function ConnectorOverlay({
   onOpenConnection,
   recomputeToken,
 }: ConnectorOverlayProps) {
-  const [lines, setLines] = useState<ConnectorLine[]>([]);
+  const [hubs, setHubs] = useState<ConnectorHub[]>([]);
 
   const recompute = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
     const containerRect = container.getBoundingClientRect();
-    const next: ConnectorLine[] = [];
+    const next: ConnectorHub[] = [];
     for (const conn of connections) {
-      const elA = getBeatElement(conn.beatIdA);
-      const elB = getBeatElement(conn.beatIdB);
-      if (!elA || !elB) continue;
-      const rectA = elA.getBoundingClientRect();
-      const rectB = elB.getBoundingClientRect();
-      const x1 = rectA.left + rectA.width / 2 - containerRect.left;
-      const y1 = rectA.top + rectA.height / 2 - containerRect.top;
-      const x2 = rectB.left + rectB.width / 2 - containerRect.left;
-      const y2 = rectB.top + rectB.height / 2 - containerRect.top;
-      next.push({ id: conn.id, x1, y1, x2, y2, midX: (x1 + x2) / 2, midY: (y1 + y2) / 2 });
+      const points: { x: number; y: number }[] = [];
+      for (const beatId of conn.beatIds) {
+        const el = getBeatElement(beatId);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        points.push({
+          x: rect.left + rect.width / 2 - containerRect.left,
+          y: rect.top + rect.height / 2 - containerRect.top,
+        });
+      }
+      if (points.length < 2) continue;
+      const centroidX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+      const centroidY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+      next.push({ id: conn.id, points, centroidX, centroidY });
     }
-    setLines(next);
+    setHubs(next);
   }, [connections, containerRef, getBeatElement]);
 
   useLayoutEffect(() => {
@@ -77,30 +78,33 @@ export default function ConnectorOverlay({
 
   return (
     <svg className="pointer-events-none absolute inset-0 h-full w-full" style={{ zIndex: 5 }}>
-      {lines.map((line) => {
-        const selected = line.id === selectedConnectionId;
+      {hubs.map((hub) => {
+        const selected = hub.id === selectedConnectionId;
         return (
-          <g key={line.id}>
-            <line
-              x1={line.x1}
-              y1={line.y1}
-              x2={line.x2}
-              y2={line.y2}
-              stroke={selected ? "#f59e0b" : "#60a5fa"}
-              strokeWidth={selected ? 2.5 : 1.5}
-              strokeDasharray={selected ? undefined : "5 4"}
-              opacity={0.85}
-            />
+          <g key={hub.id}>
+            {hub.points.map((point, index) => (
+              <line
+                key={index}
+                x1={point.x}
+                y1={point.y}
+                x2={hub.centroidX}
+                y2={hub.centroidY}
+                stroke={selected ? "#f59e0b" : "#60a5fa"}
+                strokeWidth={selected ? 2.5 : 1.5}
+                strokeDasharray={selected ? undefined : "5 4"}
+                opacity={0.85}
+              />
+            ))}
             <circle
-              cx={line.midX}
-              cy={line.midY}
+              cx={hub.centroidX}
+              cy={hub.centroidY}
               r={7}
               fill={selected ? "#f59e0b" : "#1e293b"}
               stroke={selected ? "#f59e0b" : "#60a5fa"}
               strokeWidth={1.5}
               className="pointer-events-auto cursor-pointer"
-              onClick={(e) => onSelectConnection(line.id, e)}
-              onDoubleClick={(e) => onOpenConnection(line.id, e)}
+              onClick={(e) => onSelectConnection(hub.id, e)}
+              onDoubleClick={(e) => onOpenConnection(hub.id, e)}
             />
           </g>
         );

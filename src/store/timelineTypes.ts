@@ -44,16 +44,16 @@ export interface TimelineBeat {
   id: string;
   laneId: string;
   order: number;
+  kind: "story" | "empty";
   title: string;
   description: string;
   date: string;
 }
 
-/** Crossing connector: an additive visual link between two beats. Never a graph node/hub. */
+/** Crossing connector: an additive visual link between N beats (N ≥ 2), at most one beat per lane. Never a graph node/hub. */
 export interface TimelineConnection {
   id: string;
-  beatIdA: string;
-  beatIdB: string;
+  beatIds: string[];
   title: string;
   description: string;
   date: string;

@@ -3,6 +3,8 @@ import { create } from "zustand";
 import {
   getStorageDriver,
   isTimelineProjectPayload,
+  type TimelineBeatRecord,
+  type TimelineConnectionRecord,
   type TimelineOrientation,
   type TimelineProjectPayload,
 } from "../storage/StorageDriver";
@@ -81,6 +83,78 @@ function renormalizeLaneOrders(beats: TimelineBeat[], laneId: string): TimelineB
   return [...beats.filter((b) => !laneBeatIds.has(b.id)), ...laneBeats];
 }
 
+type StoredConnection = TimelineConnectionRecord & {
+  beatIdA?: string;
+  beatIdB?: string;
+};
+
+function normalizeLoadedBeat(beat: TimelineBeatRecord): TimelineBeat {
+  return {
+    id: beat.id,
+    laneId: beat.laneId,
+    order: beat.order,
+    kind: beat.kind === "empty" ? "empty" : "story",
+    title: beat.title,
+    description: beat.description,
+    date: beat.date,
+  };
+}
+
+function normalizeLoadedConnection(connection: StoredConnection): TimelineConnection {
+  if (connection.beatIds && connection.beatIds.length >= 2) {
+    return {
+      id: connection.id,
+      beatIds: connection.beatIds,
+      title: connection.title ?? "",
+      description: connection.description ?? "",
+      date: connection.date ?? "",
+    };
+  }
+  if (connection.beatIdA && connection.beatIdB) {
+    return {
+      id: connection.id,
+      beatIds: [connection.beatIdA, connection.beatIdB],
+      title: connection.title ?? "",
+      description: connection.description ?? "",
+      date: connection.date ?? "",
+    };
+  }
+  return {
+    id: connection.id,
+    beatIds: connection.beatIds ?? [],
+    title: connection.title ?? "",
+    description: connection.description ?? "",
+    date: connection.date ?? "",
+  };
+}
+
+export function canFormCrossing(
+  beatIds: string[],
+  beats: TimelineBeat[]
+): { ok: boolean; reason?: "fewer-than-2" | "not-found" | "same-lane" | "empty-beat" } {
+  const deduped = [...new Set(beatIds)];
+  if (deduped.length < 2) return { ok: false, reason: "fewer-than-2" };
+
+  const beatMap = new Map(beats.map((b) => [b.id, b]));
+  const laneIds: string[] = [];
+  for (const id of deduped) {
+    const beat = beatMap.get(id);
+    if (!beat) return { ok: false, reason: "not-found" };
+    if (beat.kind === "empty") return { ok: false, reason: "empty-beat" };
+    laneIds.push(beat.laneId);
+  }
+  if (new Set(laneIds).size !== laneIds.length) return { ok: false, reason: "same-lane" };
+  return { ok: true };
+}
+
+export function connectionMatchesBeatSet(connection: TimelineConnection, beatIds: string[]): boolean {
+  const a = [...new Set(connection.beatIds)];
+  const b = [...new Set(beatIds)];
+  if (a.length !== b.length || a.length < 2) return false;
+  const setA = new Set(a);
+  return b.every((id) => setA.has(id));
+}
+
 interface TimelineStore {
   activeProjectId: string | null;
   timelineOrientation: TimelineOrientation;
@@ -113,7 +187,7 @@ interface TimelineStore {
   selectOnly: (item: TimelineSelectionItem | null) => void;
   toggleSelection: (item: TimelineSelectionItem) => void;
   addLane: () => string;
-  addBeat: (laneId?: string) => string | null;
+  addBeat: (laneId?: string, kind?: "story" | "empty") => string | null;
   updateLane: (laneId: string, patch: Partial<Pick<TimelineLane, "label" | "laneType" | "sortOrder">>) => void;
   updateBeat: (
     beatId: string,
@@ -122,16 +196,13 @@ interface TimelineStore {
   moveBeat: (beatId: string, targetLaneId: string, targetIndex: number) => void;
   removeLane: (laneId: string) => void;
   removeBeat: (beatId: string) => void;
-  addConnection: (beatIdA: string, beatIdB: string) => string | null;
+  addConnection: (beatIds: string[]) => string | null;
   updateConnection: (
     connectionId: string,
     patch: Partial<Pick<TimelineConnection, "title" | "description" | "date">>
   ) => void;
   removeConnection: (connectionId: string) => void;
-  toggleConnection: (
-    beatIdA: string,
-    beatIdB: string
-  ) => { created: boolean; connectionId: string | null };
+  toggleConnection: (beatIds: string[]) => { created: boolean; connectionId: string | null };
   reorderLane: (laneId: string, newIndex: number) => void;
   applyScriptText: (text: string) => { ok: boolean; errors: string[] };
   syncScriptDraftFromModel: () => string;
@@ -162,8 +233,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const orientation =
       hadData && payload.timelineOrientation === "horizontal" ? "horizontal" : "vertical";
     const lanes = hadData ? (payload.lanes ?? []) : [];
-    const beats = hadData ? (payload.beats ?? []) : [];
-    const connections = hadData ? (payload.connections ?? []) : [];
+    const beats = hadData ? (payload.beats ?? []).map(normalizeLoadedBeat) : [];
+    const connections = hadData ? (payload.connections ?? []).map(normalizeLoadedConnection) : [];
 
     set({
       activeProjectId: projectId,
@@ -281,7 +352,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     return id;
   },
 
-  addBeat: (laneId) => {
+  addBeat: (laneId, kind = "story") => {
     const s = get();
     const targetLaneId = laneId ?? resolveLaneIdFromSelection(s.lanes, s.beats, s.selection);
     if (!targetLaneId) return null;
@@ -289,14 +360,26 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const nextOrder =
       laneBeats.length === 0 ? 0 : Math.max(...laneBeats.map((b) => b.order)) + 1;
     const id = generateTimelineId();
-    const beat: TimelineBeat = {
-      id,
-      laneId: targetLaneId,
-      order: nextOrder,
-      title: getDefaultBeatTitle(laneBeats),
-      description: "",
-      date: "",
-    };
+    const beat: TimelineBeat =
+      kind === "empty"
+        ? {
+            id,
+            laneId: targetLaneId,
+            order: nextOrder,
+            kind: "empty",
+            title: "",
+            description: "",
+            date: "",
+          }
+        : {
+            id,
+            laneId: targetLaneId,
+            order: nextOrder,
+            kind: "story",
+            title: getDefaultBeatTitle(laneBeats),
+            description: "",
+            date: "",
+          };
     set({
       beats: [...s.beats, beat],
       selection: [{ type: "beat", id }],
@@ -375,7 +458,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       .map((lane, index) => ({ ...lane, sortOrder: index }));
     const beats = s.beats.filter((b) => b.laneId !== laneId);
     const connections = s.connections.filter(
-      (c) => !removedBeatIds.has(c.beatIdA) && !removedBeatIds.has(c.beatIdB)
+      (c) => !c.beatIds.some((id) => removedBeatIds.has(id))
     );
     set({
       lanes,
@@ -396,7 +479,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     if (!beat) return;
     const remaining = s.beats.filter((b) => b.id !== beatId);
     const beats = renormalizeLaneOrders(remaining, beat.laneId);
-    const connections = s.connections.filter((c) => c.beatIdA !== beatId && c.beatIdB !== beatId);
+    const connections = s.connections.filter((c) => !c.beatIds.includes(beatId));
     set({
       beats,
       connections,
@@ -407,17 +490,15 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     });
   },
 
-  addConnection: (beatIdA, beatIdB) => {
-    if (beatIdA === beatIdB) return null;
+  addConnection: (beatIds) => {
+    const deduped = [...new Set(beatIds)];
+    const check = canFormCrossing(deduped, get().beats);
+    if (!check.ok) return null;
     const s = get();
-    const aExists = s.beats.some((b) => b.id === beatIdA);
-    const bExists = s.beats.some((b) => b.id === beatIdB);
-    if (!aExists || !bExists) return null;
     const id = generateTimelineId();
     const connection: TimelineConnection = {
       id,
-      beatIdA,
-      beatIdB,
+      beatIds: deduped,
       title: "",
       description: "",
       date: "",
@@ -454,14 +535,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     });
   },
 
-  toggleConnection: (beatIdA, beatIdB) => {
-    if (beatIdA === beatIdB) return { created: false, connectionId: null };
+  toggleConnection: (beatIds) => {
+    const deduped = [...new Set(beatIds)];
+    const check = canFormCrossing(deduped, get().beats);
+    if (!check.ok) return { created: false, connectionId: null };
     const s = get();
-    const existing = s.connections.find(
-      (c) =>
-        (c.beatIdA === beatIdA && c.beatIdB === beatIdB) ||
-        (c.beatIdA === beatIdB && c.beatIdB === beatIdA)
-    );
+    const existing = s.connections.find((c) => connectionMatchesBeatSet(c, deduped));
     if (existing) {
       set({
         connections: s.connections.filter((c) => c.id !== existing.id),
@@ -474,14 +553,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       });
       return { created: false, connectionId: existing.id };
     }
-    const aExists = s.beats.some((b) => b.id === beatIdA);
-    const bExists = s.beats.some((b) => b.id === beatIdB);
-    if (!aExists || !bExists) return { created: false, connectionId: null };
     const id = generateTimelineId();
     const connection: TimelineConnection = {
       id,
-      beatIdA,
-      beatIdB,
+      beatIds: deduped,
       title: "",
       description: "",
       date: "",
