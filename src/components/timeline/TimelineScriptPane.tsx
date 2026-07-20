@@ -1,15 +1,16 @@
 import { useMemo, useState } from "react";
 import {
   generateTimelineScript,
+  getPrimarySelection,
   lineReferencesTimelineEntity,
   useTimelineStore,
 } from "../../store/timelineStore";
-import { isLaneHeaderNodeId, laneIdFromHeaderNodeId } from "../../store/timelineTypes";
 
 export default function TimelineScriptPane() {
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
-  const primarySelectedNodeId = useTimelineStore((s) => s.primarySelectedNodeId);
+  const connections = useTimelineStore((s) => s.connections);
+  const selection = useTimelineStore((s) => s.selection);
   const scriptPanelLayout = useTimelineStore((s) => s.scriptPanelLayout);
   const setScriptPanelLayout = useTimelineStore((s) => s.setScriptPanelLayout);
   const scriptDraft = useTimelineStore((s) => s.scriptDraft);
@@ -21,8 +22,8 @@ export default function TimelineScriptPane() {
   const [localDraft, setLocalDraft] = useState<string | null>(null);
 
   const generatedScript = useMemo(
-    () => generateTimelineScript(lanes, beats),
-    [lanes, beats]
+    () => generateTimelineScript(lanes, beats, connections),
+    [lanes, beats, connections]
   );
 
   const codeText = localDraft ?? scriptDraft ?? generatedScript;
@@ -30,12 +31,9 @@ export default function TimelineScriptPane() {
   const scriptLines = useMemo(() => viewScript.split("\n"), [viewScript]);
 
   const highlightEntityId = useMemo(() => {
-    if (!primarySelectedNodeId) return null;
-    if (isLaneHeaderNodeId(primarySelectedNodeId)) {
-      return laneIdFromHeaderNodeId(primarySelectedNodeId);
-    }
-    return primarySelectedNodeId;
-  }, [primarySelectedNodeId]);
+    const primary = getPrimarySelection(selection);
+    return primary?.id ?? null;
+  }, [selection]);
 
   const handleCopy = async () => {
     try {

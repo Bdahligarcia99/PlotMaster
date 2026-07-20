@@ -1,4 +1,3 @@
-import type { Edge, Node } from "reactflow";
 import { create } from "zustand";
 import {
   getStorageDriver,
@@ -7,22 +6,30 @@ import {
   type TimelineProjectPayload,
 } from "../storage/StorageDriver";
 import { generateTimelineId } from "../storage/timelineIds";
-import { buildTimelineGraph, getDefaultBeatTitle, getDefaultLaneLabel } from "./timelineGraph";
 import { generateTimelineScript, parseTimelineScript } from "./timelineScript";
 import {
-  isLaneHeaderNodeId,
-  laneHeaderNodeId,
-  laneIdFromHeaderNodeId,
+  DEFAULT_ZOOM_LANE_COUNT,
+  getDefaultBeatTitle,
+  getDefaultLaneLabel,
   type TimelineBeat,
+  type TimelineConnection,
   type TimelineLane,
-  type TimelineNodeData,
+  type TimelineSelectionItem,
 } from "./timelineTypes";
 
 const SAVE_DEBOUNCE_MS = 500;
 
-export type { TimelineOrientation, TimelineLane, TimelineBeat, TimelineNodeData };
+export type { TimelineOrientation, TimelineLane, TimelineBeat, TimelineConnection, TimelineSelectionItem };
 export { generateTimelineScript, parseTimelineScript, lineReferencesTimelineEntity } from "./timelineScript";
-export { LANE_TYPE_PRESETS } from "./timelineTypes";
+export {
+  LANE_TYPE_PRESETS,
+  ZOOM_LANE_COUNT_STEPS,
+  DEFAULT_ZOOM_LANE_COUNT,
+  LANE_MIN_WIDTH_PX,
+  LANE_GATE_HEIGHT_PX,
+  getZoomLaneCountSteps,
+  snapZoomLaneCount,
+} from "./timelineTypes";
 
 export function createDefaultTimelinePayload(): TimelineProjectPayload {
   return {
@@ -31,29 +38,32 @@ export function createDefaultTimelinePayload(): TimelineProjectPayload {
     timelineOrientation: "vertical",
     lanes: [],
     beats: [],
+    connections: [],
   };
-}
-
-function rebuildGraph(
-  lanes: TimelineLane[],
-  beats: TimelineBeat[],
-  orientation: TimelineOrientation
-): { nodes: Node<TimelineNodeData>[]; edges: Edge[] } {
-  return buildTimelineGraph(lanes, beats, orientation);
 }
 
 function resolveLaneIdFromSelection(
   lanes: TimelineLane[],
   beats: TimelineBeat[],
-  selectedNodeIds: string[]
+  selection: TimelineSelectionItem[]
 ): string | null {
-  if (selectedNodeIds.length === 0) return lanes[0]?.id ?? null;
-  const primary = selectedNodeIds[0];
-  const headerLaneId = laneIdFromHeaderNodeId(primary);
-  if (headerLaneId) return headerLaneId;
-  const beat = beats.find((b) => b.id === primary);
-  if (beat) return beat.laneId;
+  const primary = selection[0];
+  if (!primary) return lanes[0]?.id ?? null;
+  if (primary.type === "lane") return primary.id;
+  if (primary.type === "beat") {
+    const beat = beats.find((b) => b.id === primary.id);
+    if (beat) return beat.laneId;
+  }
   return lanes[0]?.id ?? null;
+}
+
+function renormalizeLaneOrders(beats: TimelineBeat[], laneId: string): TimelineBeat[] {
+  const laneBeats = beats
+    .filter((b) => b.laneId === laneId)
+    .sort((a, b) => a.order - b.order)
+    .map((beat, index) => ({ ...beat, order: index }));
+  const laneBeatIds = new Set(laneBeats.map((b) => b.id));
+  return [...beats.filter((b) => !laneBeatIds.has(b.id)), ...laneBeats];
 }
 
 interface TimelineStore {
@@ -61,10 +71,9 @@ interface TimelineStore {
   timelineOrientation: TimelineOrientation;
   lanes: TimelineLane[];
   beats: TimelineBeat[];
-  nodes: Node<TimelineNodeData>[];
-  edges: Edge[];
-  selectedNodeIds: string[];
-  primarySelectedNodeId: string | null;
+  connections: TimelineConnection[];
+  selection: TimelineSelectionItem[];
+  zoomLaneCount: number;
   scriptPanelLayout: "split" | "codeOnly" | "viewOnly";
   scriptDraft: string | null;
   hasUnsavedChanges: boolean;
@@ -76,7 +85,12 @@ interface TimelineStore {
   flushSaveAndSave: () => Promise<boolean>;
   setTimelineOrientation: (orientation: TimelineOrientation) => void;
   setScriptPanelLayout: (layout: "split" | "codeOnly" | "viewOnly") => void;
-  setSelectedNodeIds: (ids: string[] | ((prev: string[]) => string[])) => void;
+  setZoomLaneCount: (count: number) => void;
+  setSelection: (
+    items: TimelineSelectionItem[] | ((prev: TimelineSelectionItem[]) => TimelineSelectionItem[])
+  ) => void;
+  selectOnly: (item: TimelineSelectionItem | null) => void;
+  toggleSelection: (item: TimelineSelectionItem) => void;
   addLane: () => string;
   addBeat: (laneId?: string) => string | null;
   updateLane: (laneId: string, patch: Partial<Pick<TimelineLane, "label" | "laneType" | "sortOrder">>) => void;
@@ -84,7 +98,15 @@ interface TimelineStore {
     beatId: string,
     patch: Partial<Pick<TimelineBeat, "title" | "description" | "date" | "order" | "laneId">>
   ) => void;
-  removeNodes: (nodeIds: string[]) => void;
+  moveBeat: (beatId: string, targetLaneId: string, targetIndex: number) => void;
+  removeLane: (laneId: string) => void;
+  removeBeat: (beatId: string) => void;
+  addConnection: (beatIdA: string, beatIdB: string) => string | null;
+  updateConnection: (
+    connectionId: string,
+    patch: Partial<Pick<TimelineConnection, "title" | "description" | "date">>
+  ) => void;
+  removeConnection: (connectionId: string) => void;
   applyScriptText: (text: string) => { ok: boolean; errors: string[] };
   syncScriptDraftFromModel: () => string;
 }
@@ -94,10 +116,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   timelineOrientation: "vertical",
   lanes: [],
   beats: [],
-  nodes: [],
-  edges: [],
-  selectedNodeIds: [],
-  primarySelectedNodeId: null,
+  connections: [],
+  selection: [],
+  zoomLaneCount: DEFAULT_ZOOM_LANE_COUNT,
   scriptPanelLayout: "split",
   scriptDraft: null,
   hasUnsavedChanges: false,
@@ -113,17 +134,15 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       hadData && payload.timelineOrientation === "horizontal" ? "horizontal" : "vertical";
     const lanes = hadData ? (payload.lanes ?? []) : [];
     const beats = hadData ? (payload.beats ?? []) : [];
-    const graph = rebuildGraph(lanes, beats, orientation);
+    const connections = hadData ? (payload.connections ?? []) : [];
 
     set({
       activeProjectId: projectId,
       timelineOrientation: orientation,
       lanes,
       beats,
-      nodes: graph.nodes,
-      edges: graph.edges,
-      selectedNodeIds: [],
-      primarySelectedNodeId: null,
+      connections,
+      selection: [],
       scriptDraft: null,
       hasUnsavedChanges: false,
       lastSaveError: null,
@@ -149,6 +168,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         timelineOrientation: s.timelineOrientation,
         lanes: s.lanes,
         beats: s.beats,
+        connections: s.connections,
       };
       await driver.saveProjectData(s.activeProjectId, payload);
       await driver.updateProjectMeta(s.activeProjectId, { updatedAt: Date.now() });
@@ -170,12 +190,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   },
 
   setTimelineOrientation: (orientation) => {
-    const s = get();
-    const graph = rebuildGraph(s.lanes, s.beats, orientation);
     set({
       timelineOrientation: orientation,
-      nodes: graph.nodes,
-      edges: graph.edges,
       hasUnsavedChanges: true,
       lastSaveError: null,
     });
@@ -183,12 +199,23 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
 
   setScriptPanelLayout: (layout) => set({ scriptPanelLayout: layout }),
 
-  setSelectedNodeIds: (idsOrFn) => {
+  setZoomLaneCount: (count) => set({ zoomLaneCount: count }),
+
+  setSelection: (itemsOrFn) => {
+    set((state) => ({
+      selection: typeof itemsOrFn === "function" ? itemsOrFn(state.selection) : itemsOrFn,
+    }));
+  },
+
+  selectOnly: (item) => set({ selection: item ? [item] : [] }),
+
+  toggleSelection: (item) => {
     set((state) => {
-      const ids = typeof idsOrFn === "function" ? idsOrFn(state.selectedNodeIds) : idsOrFn;
+      const exists = state.selection.some((s) => s.type === item.type && s.id === item.id);
       return {
-        selectedNodeIds: ids,
-        primarySelectedNodeId: ids[0] ?? null,
+        selection: exists
+          ? state.selection.filter((s) => !(s.type === item.type && s.id === item.id))
+          : [...state.selection, item],
       };
     });
   },
@@ -203,15 +230,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       laneType: "character",
       sortOrder,
     };
-    const lanes = [...s.lanes, lane];
-    const graph = rebuildGraph(lanes, s.beats, s.timelineOrientation);
-    const headerId = laneHeaderNodeId(id);
     set({
-      lanes,
-      nodes: graph.nodes,
-      edges: graph.edges,
-      selectedNodeIds: [headerId],
-      primarySelectedNodeId: headerId,
+      lanes: [...s.lanes, lane],
+      selection: [{ type: "lane", id }],
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
@@ -221,7 +242,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
 
   addBeat: (laneId) => {
     const s = get();
-    const targetLaneId = laneId ?? resolveLaneIdFromSelection(s.lanes, s.beats, s.selectedNodeIds);
+    const targetLaneId = laneId ?? resolveLaneIdFromSelection(s.lanes, s.beats, s.selection);
     if (!targetLaneId) return null;
     const laneBeats = s.beats.filter((b) => b.laneId === targetLaneId);
     const nextOrder =
@@ -235,14 +256,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       description: "",
       date: "",
     };
-    const beats = [...s.beats, beat];
-    const graph = rebuildGraph(s.lanes, beats, s.timelineOrientation);
     set({
-      beats,
-      nodes: graph.nodes,
-      edges: graph.edges,
-      selectedNodeIds: [id],
-      primarySelectedNodeId: id,
+      beats: [...s.beats, beat],
+      selection: [{ type: "beat", id }],
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
@@ -253,11 +269,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   updateLane: (laneId, patch) => {
     const s = get();
     const lanes = s.lanes.map((lane) => (lane.id === laneId ? { ...lane, ...patch } : lane));
-    const graph = rebuildGraph(lanes, s.beats, s.timelineOrientation);
     set({
       lanes,
-      nodes: graph.nodes,
-      edges: graph.edges,
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
@@ -267,59 +280,133 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   updateBeat: (beatId, patch) => {
     const s = get();
     const beats = s.beats.map((beat) => (beat.id === beatId ? { ...beat, ...patch } : beat));
-    const graph = rebuildGraph(s.lanes, beats, s.timelineOrientation);
     set({
       beats,
-      nodes: graph.nodes,
-      edges: graph.edges,
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
     });
   },
 
-  removeNodes: (nodeIds) => {
+  moveBeat: (beatId, targetLaneId, targetIndex) => {
     const s = get();
-    const laneIdsToRemove = new Set<string>();
-    const beatIdsToRemove = new Set<string>();
+    const beat = s.beats.find((b) => b.id === beatId);
+    if (!beat) return;
+    const sourceLaneId = beat.laneId;
 
-    for (const nodeId of nodeIds) {
-      const headerLaneId = laneIdFromHeaderNodeId(nodeId);
-      if (headerLaneId) {
-        laneIdsToRemove.add(headerLaneId);
-        continue;
-      }
-      if (s.beats.some((b) => b.id === nodeId)) {
-        beatIdsToRemove.add(nodeId);
-      }
-    }
+    const withoutMoved = s.beats.filter((b) => b.id !== beatId);
+    const destBeats = withoutMoved
+      .filter((b) => b.laneId === targetLaneId)
+      .sort((a, b) => a.order - b.order);
+    const clampedIndex = Math.max(0, Math.min(targetIndex, destBeats.length));
+    destBeats.splice(clampedIndex, 0, { ...beat, laneId: targetLaneId });
+    const renumberedDest = destBeats.map((b, i) => ({ ...b, order: i }));
 
-    const lanes = s.lanes
-      .filter((lane) => !laneIdsToRemove.has(lane.id))
-      .map((lane, index) => ({ ...lane, sortOrder: index }));
-
-    let beats = s.beats.filter(
-      (beat) => !beatIdsToRemove.has(beat.id) && !laneIdsToRemove.has(beat.laneId)
-    );
-
-    const normalizedBeats: TimelineBeat[] = [];
-    for (const lane of lanes) {
-      const laneBeats = beats
-        .filter((b) => b.laneId === lane.id)
+    let beats: TimelineBeat[];
+    if (sourceLaneId === targetLaneId) {
+      beats = [...withoutMoved.filter((b) => b.laneId !== targetLaneId), ...renumberedDest];
+    } else {
+      const renumberedSource = withoutMoved
+        .filter((b) => b.laneId === sourceLaneId)
         .sort((a, b) => a.order - b.order)
-        .map((beat, index) => ({ ...beat, order: index }));
-      normalizedBeats.push(...laneBeats);
+        .map((b, i) => ({ ...b, order: i }));
+      beats = [
+        ...withoutMoved.filter((b) => b.laneId !== targetLaneId && b.laneId !== sourceLaneId),
+        ...renumberedSource,
+        ...renumberedDest,
+      ];
     }
-    beats = normalizedBeats;
 
-    const graph = rebuildGraph(lanes, beats, s.timelineOrientation);
+    set({
+      beats,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
+  removeLane: (laneId) => {
+    const s = get();
+    const removedBeatIds = new Set(s.beats.filter((b) => b.laneId === laneId).map((b) => b.id));
+    const lanes = s.lanes
+      .filter((lane) => lane.id !== laneId)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((lane, index) => ({ ...lane, sortOrder: index }));
+    const beats = s.beats.filter((b) => b.laneId !== laneId);
+    const connections = s.connections.filter(
+      (c) => !removedBeatIds.has(c.beatIdA) && !removedBeatIds.has(c.beatIdB)
+    );
     set({
       lanes,
       beats,
-      nodes: graph.nodes,
-      edges: graph.edges,
-      selectedNodeIds: [],
-      primarySelectedNodeId: null,
+      connections,
+      selection: s.selection.filter(
+        (item) => !(item.type === "lane" && item.id === laneId) && !(item.type === "beat" && removedBeatIds.has(item.id))
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
+  removeBeat: (beatId) => {
+    const s = get();
+    const beat = s.beats.find((b) => b.id === beatId);
+    if (!beat) return;
+    const remaining = s.beats.filter((b) => b.id !== beatId);
+    const beats = renormalizeLaneOrders(remaining, beat.laneId);
+    const connections = s.connections.filter((c) => c.beatIdA !== beatId && c.beatIdB !== beatId);
+    set({
+      beats,
+      connections,
+      selection: s.selection.filter((item) => !(item.type === "beat" && item.id === beatId)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
+  addConnection: (beatIdA, beatIdB) => {
+    if (beatIdA === beatIdB) return null;
+    const s = get();
+    const aExists = s.beats.some((b) => b.id === beatIdA);
+    const bExists = s.beats.some((b) => b.id === beatIdB);
+    if (!aExists || !bExists) return null;
+    const id = generateTimelineId();
+    const connection: TimelineConnection = {
+      id,
+      beatIdA,
+      beatIdB,
+      title: "",
+      description: "",
+      date: "",
+    };
+    set({
+      connections: [...s.connections, connection],
+      selection: [{ type: "connection", id }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return id;
+  },
+
+  updateConnection: (connectionId, patch) => {
+    const s = get();
+    const connections = s.connections.map((c) => (c.id === connectionId ? { ...c, ...patch } : c));
+    set({
+      connections,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
+  removeConnection: (connectionId) => {
+    const s = get();
+    set({
+      connections: s.connections.filter((c) => c.id !== connectionId),
+      selection: s.selection.filter((item) => !(item.type === "connection" && item.id === connectionId)),
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
@@ -331,13 +418,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     if (parsed.errors.length > 0) {
       return { ok: false, errors: parsed.errors };
     }
-    const s = get();
-    const graph = rebuildGraph(parsed.lanes, parsed.beats, s.timelineOrientation);
     set({
       lanes: parsed.lanes,
       beats: parsed.beats,
-      nodes: graph.nodes,
-      edges: graph.edges,
+      connections: parsed.connections,
       scriptDraft: text,
       hasUnsavedChanges: true,
       lastSaveError: null,
@@ -347,7 +431,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
 
   syncScriptDraftFromModel: () => {
     const s = get();
-    const text = generateTimelineScript(s.lanes, s.beats);
+    const text = generateTimelineScript(s.lanes, s.beats, s.connections);
     set({ scriptDraft: text });
     return text;
   },
@@ -361,6 +445,7 @@ function storeSnapshot(state: TimelineStore): string {
     orientation: state.timelineOrientation,
     lanes: state.lanes,
     beats: state.beats,
+    connections: state.connections,
   });
 }
 
@@ -381,23 +466,37 @@ useTimelineStore.subscribe((state) => {
   }
 });
 
+export function getPrimarySelection(selection: TimelineSelectionItem[]): TimelineSelectionItem | null {
+  return selection[0] ?? null;
+}
+
 export function getSelectedLane(
   lanes: TimelineLane[],
-  beats: TimelineBeat[],
-  primarySelectedNodeId: string | null
+  selection: TimelineSelectionItem[]
 ): TimelineLane | null {
-  if (!primarySelectedNodeId) return null;
-  const headerLaneId = laneIdFromHeaderNodeId(primarySelectedNodeId);
-  if (headerLaneId) return lanes.find((l) => l.id === headerLaneId) ?? null;
-  const beat = beats.find((b) => b.id === primarySelectedNodeId);
-  if (beat) return lanes.find((l) => l.id === beat.laneId) ?? null;
-  return null;
+  const primary = getPrimarySelection(selection);
+  if (!primary || primary.type !== "lane") return null;
+  return lanes.find((l) => l.id === primary.id) ?? null;
 }
 
 export function getSelectedBeat(
   beats: TimelineBeat[],
-  primarySelectedNodeId: string | null
+  selection: TimelineSelectionItem[]
 ): TimelineBeat | null {
-  if (!primarySelectedNodeId || isLaneHeaderNodeId(primarySelectedNodeId)) return null;
-  return beats.find((b) => b.id === primarySelectedNodeId) ?? null;
+  const primary = getPrimarySelection(selection);
+  if (!primary || primary.type !== "beat") return null;
+  return beats.find((b) => b.id === primary.id) ?? null;
+}
+
+export function getSelectedConnection(
+  connections: TimelineConnection[],
+  selection: TimelineSelectionItem[]
+): TimelineConnection | null {
+  const primary = getPrimarySelection(selection);
+  if (!primary || primary.type !== "connection") return null;
+  return connections.find((c) => c.id === primary.id) ?? null;
+}
+
+export function isSelected(selection: TimelineSelectionItem[], item: TimelineSelectionItem): boolean {
+  return selection.some((s) => s.type === item.type && s.id === item.id);
 }

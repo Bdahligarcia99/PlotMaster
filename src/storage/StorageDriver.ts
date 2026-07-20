@@ -82,12 +82,23 @@ export interface TimelineBeatRecord {
   date: string;
 }
 
+/** Crossing connector: an additive visual link between two beats (never a graph node/hub). */
+export interface TimelineConnectionRecord {
+  id: string;
+  beatIdA: string;
+  beatIdB: string;
+  title: string;
+  description: string;
+  date: string;
+}
+
 export interface TimelineProjectPayload {
   version: 1;
   moduleType: "timeline";
   timelineOrientation: TimelineOrientation;
   lanes?: TimelineLaneRecord[];
   beats?: TimelineBeatRecord[];
+  connections?: TimelineConnectionRecord[];
 }
 
 export type ProjectData = ProjectPayload | TimelineProjectPayload;

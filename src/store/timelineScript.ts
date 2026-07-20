@@ -1,4 +1,4 @@
-import type { TimelineBeat, TimelineLane } from "./timelineTypes";
+import type { TimelineBeat, TimelineConnection, TimelineLane } from "./timelineTypes";
 
 function escapeQuoted(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -34,7 +34,11 @@ function parseKeyValueRest(line: string): Record<string, string> {
   return out;
 }
 
-export function generateTimelineScript(lanes: TimelineLane[], beats: TimelineBeat[]): string {
+export function generateTimelineScript(
+  lanes: TimelineLane[],
+  beats: TimelineBeat[],
+  connections: TimelineConnection[] = []
+): string {
   const lines: string[] = ["@declarations", ""];
   const sortedLanes = [...lanes].sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -65,6 +69,24 @@ export function generateTimelineScript(lanes: TimelineLane[], beats: TimelineBea
     lines.push(parts.join(" "));
   }
 
+  if (connections.length > 0) {
+    lines.push("");
+    const sortedConnections = [...connections].sort((a, b) => a.id.localeCompare(b.id));
+    for (const connection of sortedConnections) {
+      const parts = [`Crossing ${connection.id} a: ${connection.beatIdA} b: ${connection.beatIdB}`];
+      if (connection.title.trim()) {
+        parts.push(`title: "${escapeQuoted(connection.title)}"`);
+      }
+      if (connection.description.trim()) {
+        parts.push(`description: "${escapeQuoted(connection.description)}"`);
+      }
+      if (connection.date.trim()) {
+        parts.push(`date: "${escapeQuoted(connection.date)}"`);
+      }
+      lines.push(parts.join(" "));
+    }
+  }
+
   lines.push("", "@timeline", "");
   return lines.join("\n");
 }
@@ -72,12 +94,14 @@ export function generateTimelineScript(lanes: TimelineLane[], beats: TimelineBea
 export interface ParsedTimelineScript {
   lanes: TimelineLane[];
   beats: TimelineBeat[];
+  connections: TimelineConnection[];
   errors: string[];
 }
 
 export function parseTimelineScript(text: string): ParsedTimelineScript {
   const lanes: TimelineLane[] = [];
   const beats: TimelineBeat[] = [];
+  const connections: TimelineConnection[] = [];
   const errors: string[] = [];
   const laneIds = new Set<string>();
   const beatIds = new Set<string>();
@@ -136,6 +160,30 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         date: kv.date ?? "",
       });
       beatIds.add(id);
+      continue;
+    }
+
+    if (line.startsWith("Crossing ")) {
+      const idMatch = /^Crossing\s+(\S+)\s+/i.exec(line);
+      if (!idMatch) {
+        errors.push(`Invalid crossing line: ${line}`);
+        continue;
+      }
+      const id = idMatch[1];
+      const abMatch = /\ba:\s*(\S+)\s+b:\s*(\S+)/.exec(line);
+      if (!abMatch) {
+        errors.push(`Crossing ${id} missing a:/b: beat references`);
+        continue;
+      }
+      const kv = parseKeyValueRest(line);
+      connections.push({
+        id,
+        beatIdA: abMatch[1],
+        beatIdB: abMatch[2],
+        title: kv.title ?? "",
+        description: kv.description ?? "",
+        date: kv.date ?? "",
+      });
     }
   }
 
@@ -145,7 +193,16 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
     }
   }
 
-  return { lanes, beats, errors };
+  for (const connection of connections) {
+    if (!beatIds.has(connection.beatIdA)) {
+      errors.push(`Crossing ${connection.id} references unknown beat ${connection.beatIdA}`);
+    }
+    if (!beatIds.has(connection.beatIdB)) {
+      errors.push(`Crossing ${connection.id} references unknown beat ${connection.beatIdB}`);
+    }
+  }
+
+  return { lanes, beats, connections, errors };
 }
 
 export function lineReferencesTimelineEntity(line: string, entityId: string): boolean {

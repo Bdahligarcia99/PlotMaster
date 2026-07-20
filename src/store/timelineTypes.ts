@@ -1,15 +1,27 @@
-import type { TimelineOrientation } from "../storage/StorageDriver";
-
 export const LANE_TYPE_PRESETS = ["character", "act", "theme", "subplot"] as const;
 
-export const TIMELINE_GRID_SIZE = 8;
-export const LANE_WIDTH = 160;
-export const LANE_GAP = 40;
-export const BEAT_DY = 72;
-export const LANE_HEADER_HEIGHT = 36;
-export const TIMELINE_CANVAS_BOTTOM_Y = 480;
-export const TIMELINE_CANVAS_ORIGIN_X = 60;
-export const TIMELINE_LANE_HEADER_Y = 24;
+/** Discrete zoom steps: how many lane columns are targeted to fit the viewport at once. */
+export const ZOOM_LANE_COUNT_STEPS = [3, 4, 5, 6, 8, 10, 12] as const;
+export const DEFAULT_ZOOM_LANE_COUNT = 5;
+
+/** Floor so a lane column never becomes unusably narrow on tiny viewports. */
+export const LANE_MIN_WIDTH_PX = 140;
+
+/** Fixed height of the sticky "starting gate" row pinned to the base of the board. */
+export const LANE_GATE_HEIGHT_PX = 56;
+
+export function getZoomLaneCountSteps(): readonly number[] {
+  return ZOOM_LANE_COUNT_STEPS;
+}
+
+/** Snap a target lane count to the nearest discrete zoom step. */
+export function snapZoomLaneCount(count: number): number {
+  let best: number = ZOOM_LANE_COUNT_STEPS[0];
+  for (const step of ZOOM_LANE_COUNT_STEPS) {
+    if (Math.abs(step - count) < Math.abs(best - count)) best = step;
+  }
+  return best;
+}
 
 export interface TimelineLane {
   id: string;
@@ -27,38 +39,26 @@ export interface TimelineBeat {
   date: string;
 }
 
-export interface LaneNodeData {
-  kind: "lane";
-  laneId: string;
-  label: string;
-  laneType: string;
-}
-
-export interface BeatNodeData {
-  kind: "beat";
-  beatId: string;
+/** Crossing connector: an additive visual link between two beats. Never a graph node/hub. */
+export interface TimelineConnection {
+  id: string;
+  beatIdA: string;
+  beatIdB: string;
   title: string;
+  description: string;
+  date: string;
 }
 
-export type TimelineNodeData = LaneNodeData | BeatNodeData;
-
-export function laneHeaderNodeId(laneId: string): string {
-  return `lane-header-${laneId}`;
+/** A single selectable thing on the board — a lane, a beat, or a crossing connector. */
+export interface TimelineSelectionItem {
+  type: "lane" | "beat" | "connection";
+  id: string;
 }
 
-export function isLaneHeaderNodeId(nodeId: string): boolean {
-  return nodeId.startsWith("lane-header-");
+export function getDefaultLaneLabel(sortOrder: number): string {
+  return `Lane ${sortOrder + 1}`;
 }
 
-export function laneIdFromHeaderNodeId(nodeId: string): string | null {
-  if (!isLaneHeaderNodeId(nodeId)) return null;
-  return nodeId.slice("lane-header-".length);
-}
-
-export function laneColumnX(sortOrder: number): number {
-  return TIMELINE_CANVAS_ORIGIN_X + sortOrder * (LANE_WIDTH + LANE_GAP);
-}
-
-export function beatYForOrder(order: number, _orientation: TimelineOrientation): number {
-  return TIMELINE_CANVAS_BOTTOM_Y - order * BEAT_DY;
+export function getDefaultBeatTitle(existingLaneBeats: TimelineBeat[]): string {
+  return `Beat ${existingLaneBeats.length + 1}`;
 }

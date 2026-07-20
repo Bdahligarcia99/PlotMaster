@@ -4,7 +4,7 @@ import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import TimelineEntitiesPanel from "../components/timeline/TimelineEntitiesPanel";
-import TimelineCanvas from "../components/timeline/TimelineCanvas";
+import TimelineBoard from "../components/timeline/TimelineBoard";
 import TimelineToolbar from "../components/timeline/TimelineToolbar";
 import TimelineScriptPane from "../components/timeline/TimelineScriptPane";
 import TimelineInspector from "../components/timeline/TimelineInspector";
@@ -33,12 +33,12 @@ export default function TimelineScreen() {
   const [editNameValue, setEditNameValue] = useState("");
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
-  const primarySelectedNodeId = useTimelineStore((s) => s.primarySelectedNodeId);
+  const selection = useTimelineStore((s) => s.selection);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
 
   useEffect(() => {
-    if (!primarySelectedNodeId) setInspectorOpen(false);
-  }, [primarySelectedNodeId]);
+    if (selection.length === 0) setInspectorOpen(false);
+  }, [selection]);
 
   useWindowTitle(projectName ? `${projectName} - Synapse IWE` : "Synapse IWE");
 
@@ -270,7 +270,7 @@ export default function TimelineScreen() {
             </button>
           )}
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <TimelineCanvas onNodeSelectForEdit={() => setInspectorOpen(true)} />
+            <TimelineBoard onSelectForEdit={() => setInspectorOpen(true)} />
             {scriptPaneOpen && (
               <>
                 <div

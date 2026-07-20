@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   getSelectedBeat,
+  getSelectedConnection,
   getSelectedLane,
   LANE_TYPE_PRESETS,
   useTimelineStore,
@@ -9,14 +10,18 @@ import {
 export default function TimelineInspector() {
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
-  const primarySelectedNodeId = useTimelineStore((s) => s.primarySelectedNodeId);
+  const connections = useTimelineStore((s) => s.connections);
+  const selection = useTimelineStore((s) => s.selection);
   const updateLane = useTimelineStore((s) => s.updateLane);
   const updateBeat = useTimelineStore((s) => s.updateBeat);
+  const updateConnection = useTimelineStore((s) => s.updateConnection);
+  const removeConnection = useTimelineStore((s) => s.removeConnection);
+  const removeLane = useTimelineStore((s) => s.removeLane);
+  const removeBeat = useTimelineStore((s) => s.removeBeat);
 
-  const selectedLane = getSelectedLane(lanes, beats, primarySelectedNodeId);
-  const selectedBeat = getSelectedBeat(beats, primarySelectedNodeId);
-  const editingLane = selectedBeat ? null : selectedLane;
-  const editingBeat = selectedBeat;
+  const editingLane = getSelectedLane(lanes, selection);
+  const editingBeat = getSelectedBeat(beats, selection);
+  const editingConnection = getSelectedConnection(connections, selection);
 
   const [laneLabel, setLaneLabel] = useState("");
   const [laneType, setLaneType] = useState("character");
@@ -24,6 +29,9 @@ export default function TimelineInspector() {
   const [beatTitle, setBeatTitle] = useState("");
   const [beatDescription, setBeatDescription] = useState("");
   const [beatDate, setBeatDate] = useState("");
+  const [connectionTitle, setConnectionTitle] = useState("");
+  const [connectionDescription, setConnectionDescription] = useState("");
+  const [connectionDate, setConnectionDate] = useState("");
 
   useEffect(() => {
     if (editingLane) {
@@ -46,13 +54,21 @@ export default function TimelineInspector() {
     }
   }, [editingBeat?.id, editingBeat?.title, editingBeat?.description, editingBeat?.date]);
 
-  if (!editingLane && !editingBeat) {
+  useEffect(() => {
+    if (editingConnection) {
+      setConnectionTitle(editingConnection.title);
+      setConnectionDescription(editingConnection.description);
+      setConnectionDate(editingConnection.date);
+    }
+  }, [editingConnection?.id, editingConnection?.title, editingConnection?.description, editingConnection?.date]);
+
+  if (!editingLane && !editingBeat && !editingConnection) {
     return (
       <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
         <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide mb-3">
           Inspector
         </h3>
-        <p className="text-dark-muted text-xs">Select a lane or beat to edit properties.</p>
+        <p className="text-dark-muted text-xs">Select a lane, beat, or crossing to edit properties.</p>
       </div>
     );
   }
@@ -65,7 +81,17 @@ export default function TimelineInspector() {
 
       {editingLane && (
         <div className="space-y-3">
-          <p className="text-xs text-dark-muted">Lane</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-dark-muted">Lane</p>
+            <button
+              type="button"
+              onClick={() => removeLane(editingLane.id)}
+              className="text-xs text-red-400 hover:text-red-300"
+              title="Delete lane and its beats"
+            >
+              Delete
+            </button>
+          </div>
           <label className="block space-y-1">
             <span className="text-xs text-dark-muted">Label</span>
             <input
@@ -124,7 +150,17 @@ export default function TimelineInspector() {
 
       {editingBeat && (
         <div className="space-y-3">
-          <p className="text-xs text-dark-muted">Beat</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-dark-muted">Beat</p>
+            <button
+              type="button"
+              onClick={() => removeBeat(editingBeat.id)}
+              className="text-xs text-red-400 hover:text-red-300"
+              title="Delete beat"
+            >
+              Delete
+            </button>
+          </div>
           <label className="block space-y-1">
             <span className="text-xs text-dark-muted">Title</span>
             <input
@@ -170,6 +206,68 @@ export default function TimelineInspector() {
           </label>
           <p className="text-[10px] text-dark-muted font-mono truncate" title={editingBeat.id}>
             id: {editingBeat.id}
+          </p>
+        </div>
+      )}
+
+      {editingConnection && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-dark-muted">Crossing</p>
+            <button
+              type="button"
+              onClick={() => removeConnection(editingConnection.id)}
+              className="text-xs text-red-400 hover:text-red-300"
+              title="Delete this crossing connector"
+            >
+              Delete
+            </button>
+          </div>
+          <label className="block space-y-1">
+            <span className="text-xs text-dark-muted">Title</span>
+            <input
+              type="text"
+              value={connectionTitle}
+              onChange={(e) => setConnectionTitle(e.target.value)}
+              onBlur={() => {
+                if (connectionTitle !== editingConnection.title) {
+                  updateConnection(editingConnection.id, { title: connectionTitle });
+                }
+              }}
+              placeholder="What links these beats?"
+              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-dark-muted">Description</span>
+            <textarea
+              value={connectionDescription}
+              onChange={(e) => setConnectionDescription(e.target.value)}
+              onBlur={() => {
+                if (connectionDescription !== editingConnection.description) {
+                  updateConnection(editingConnection.id, { description: connectionDescription });
+                }
+              }}
+              rows={3}
+              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-none focus:outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-dark-muted">Date</span>
+            <input
+              type="text"
+              value={connectionDate}
+              onChange={(e) => setConnectionDate(e.target.value)}
+              onBlur={() => {
+                if (connectionDate !== editingConnection.date) {
+                  updateConnection(editingConnection.id, { date: connectionDate });
+                }
+              }}
+              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
+            />
+          </label>
+          <p className="text-[10px] text-dark-muted font-mono truncate" title={editingConnection.id}>
+            id: {editingConnection.id}
           </p>
         </div>
       )}
