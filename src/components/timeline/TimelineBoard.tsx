@@ -44,6 +44,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const trackContentRef = useRef<HTMLDivElement>(null);
   const beatRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [viewportWidth, setViewportWidth] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const [layoutTick, setLayoutTick] = useState(0);
   const dragRafRef = useRef<number | null>(null);
 
@@ -56,12 +57,14 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
     viewportResizeObserverRef.current = null;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? el.clientWidth;
-      setViewportWidth(width);
+      const rect = entries[0]?.contentRect;
+      setViewportWidth(rect?.width ?? el.clientWidth);
+      setViewportHeight(rect?.height ?? el.clientHeight);
     });
     ro.observe(el);
     viewportResizeObserverRef.current = ro;
     setViewportWidth(el.clientWidth);
+    setViewportHeight(el.clientHeight);
   }, []);
 
   useEffect(() => {
@@ -75,6 +78,11 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   }, [lanes.length, viewportWidth, zoomLaneCount]);
 
   const totalContentWidth = Math.max(viewportWidth, laneWidthPx * lanes.length);
+
+  // How tall each lane's track should be at minimum — the scrollable lanes area's height (the
+  // outer viewport minus the fixed-height gate row). Using min-height (not a hard height/stretch)
+  // lets a lane's content still grow taller than the viewport and stay properly scrollable.
+  const laneTrackMinHeightPx = Math.max(0, viewportHeight - LANE_GATE_HEIGHT_PX);
 
   const beatsByLane = useMemo(() => {
     const map = new Map<string, typeof beats>();
@@ -291,6 +299,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
                   key={lane.id}
                   laneId={lane.id}
                   width={laneWidthPx}
+                  minHeight={laneTrackMinHeightPx}
                   beats={beatsByLane.get(lane.id) ?? []}
                   selectedBeatIds={selectedBeatIds}
                   connectedBeatIds={connectedBeatIds}

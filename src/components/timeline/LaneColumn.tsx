@@ -6,6 +6,9 @@ import type { TimelineBeat } from "../../store/timelineTypes";
 interface LaneColumnProps {
   laneId: string;
   width: number;
+  /** Minimum height (px) for the lane's track — the visible viewport height. The column still
+   * grows taller than this to fit its beats when there are more than fit on-screen. */
+  minHeight: number;
   beats: TimelineBeat[];
   selectedBeatIds: Set<string>;
   connectedBeatIds: Set<string>;
@@ -21,6 +24,7 @@ interface LaneColumnProps {
 export default function LaneColumn({
   laneId,
   width,
+  minHeight,
   beats,
   selectedBeatIds,
   connectedBeatIds,
@@ -35,14 +39,26 @@ export default function LaneColumn({
   const sorted = [...beats].sort((a, b) => a.order - b.order);
   const beatIds = sorted.map((b) => b.id);
 
+  const trackWidthPercent = beatWidthPercent / 2;
+
   return (
     <div
       ref={setNodeRef}
-      style={{ width, flexBasis: width }}
-      className={`flex flex-shrink-0 flex-col-reverse items-center gap-2 px-2 py-2 border-r border-dark-accent/20 transition-colors ${
+      style={{ width, flexBasis: width, minHeight: minHeight > 0 ? minHeight : undefined }}
+      className={`relative flex flex-shrink-0 flex-col-reverse items-center gap-2 px-2 py-2 border-r border-dark-accent/20 transition-colors ${
         isOver ? "bg-blue-500/10" : ""
       }`}
     >
+      {/* Lane track: a darker rail down the center so each lane reads as a distinct column, even
+          in the empty space above the topmost beat. Width tracks the beat-width slider. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 rounded-2xl bg-black/25"
+        style={{ width: `${trackWidthPercent}%` }}
+      >
+        <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-white/15" />
+      </div>
+
       <SortableContext items={beatIds} strategy={verticalListSortingStrategy}>
         {sorted.map((beat) => (
           <BeatBlock
