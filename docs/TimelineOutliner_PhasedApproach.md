@@ -3,7 +3,7 @@
 **Status:** Planning document (not yet implemented).  
 **Last updated:** Consolidates product and technical decisions from design discussions.
 
-This document describes a **timeline / story outliner** module for Synapse IWE. It is modeled after the **family tree node editor** (canvas + script + entities + inspector) but optimized for **long-form story planning**: parallel arcs (character, subplot, act, theme, etc.), **beats** along a time axis, and **crossing beats** where two arcs intersect in the narrative.
+This document describes a **timeline / story outliner** module for Synapse IWE. It is modeled after the **family tree node editor** (canvas + script + entities + inspector) but optimized for **long-form story planning**: parallel arcs (character, subplot, act, theme, etc.), **beats** along a time axis, and **crossing connectors** that link two existing beats where two arcs intersect in the narrative.
 
 ---
 
@@ -12,11 +12,11 @@ This document describes a **timeline / story outliner** module for Synapse IWE. 
 | Family tree | Timeline outliner |
 |-------------|-------------------|
 | People, unions, generations | **Lanes**, **beats**, **time** |
-| Hierarchical / genealogical edges | **Straight** segments along a lane; **diagonal** segments for lane crossover |
+| Hierarchical / genealogical edges | **Straight** segments along a lane; **connector** links between two beats on different lanes |
 | Script: persons, unions | Script: **lanes**, **beats**, **crossings** |
-| Toolbar: new person / new child / union | Toolbar: **new lane** / **new beat** / **crossing beat** (same slots; see §1.1) |
+| Toolbar: new person / new child / union | Toolbar: **new lane** / **new beat** / **crossing connector** (same slots; see §1.1) |
 
-**Purpose:** Give writers a **visual outline** for a novel (or other medium): multiple **lanes** = simultaneously occurring threads; **beats** = story moments along each thread; **crossing beats** = moments where two threads merge in story space (e.g. two characters meet), implemented as an **X** swap of continuity between two lanes.
+**Purpose:** Give writers a **visual outline** for a novel (or other medium): multiple **lanes** = simultaneously occurring threads; **beats** = story moments along each thread; **crossing connectors** = additive links between two existing beats where two threads intersect in story space (e.g. two characters meet at the same moment). Each lane keeps its own beat sequence — connectors do **not** move beats between lanes or swap continuity (mirrors family tree **Union** nodes: purely additive, endpoints unchanged).
 
 **Time direction (vertical layout):** Beats stack **bottom → top**; **bottom = beginning** of the story. (Mirror rules when orientation is horizontal.)
 
@@ -30,7 +30,7 @@ The outliner **reuses the same interaction vocabulary** as the family tree so sw
 |------------------------------|---------------------------|
 | **New person** | **New lane** — adds a parallel arc (character, subplot, act, theme, etc.). Same toolbar **slot** and similar icon/placement as family tree “new person” where practical. |
 | **New child** | **New beat** — adds the next story moment **on** the active lane (or selected lane), stacking **up** the time axis from the beginning. Same **slot** and flow as “new child.” |
-| **Union** (create partnership / connect two parents) | **Create crossing beat** — after choosing **two lanes** (or a beat on each lane as lane shorthand; see §3.2), the same **union-style** control (or equivalent **slot** in the toolbar) completes a **crossing**. Labels or tooltips in timeline mode should say **crossing** / **cross beat** while keeping **layout and muscle memory** aligned with union creation. |
+| **Union** (create partnership / connect two parents) | **Create crossing connector** — after choosing **two beats** (typically one on each lane; see §3.2), the same **union-style** control (or equivalent **slot** in the toolbar) completes a **crossing**. Labels or tooltips in timeline mode should say **crossing** / **cross beat** while keeping **layout and muscle memory** aligned with union creation (select two nodes → Union). |
 
 **Principles:**
 
@@ -49,7 +49,6 @@ When wording would confuse (e.g. “person” vs “lane”), use **subtitle tex
 - **Id**, **label**
 - **Lane type:** Suggested presets (e.g. character, act, theme, subplot) plus **user-defined** custom types (string or enum + custom list)
 - **Sort order** / index among lanes (for display and reorder)
-- **`crossingPairId`:** `string | null` — see §4. When non-null, this lane is **paired** with exactly one other lane for reorder purposes.
 
 **No fixed starter content:** Users create lanes freely (no mandatory three-act template).
 
@@ -63,19 +62,23 @@ When wording would confuse (e.g. “person” vs “lane”), use **subtitle tex
 
 Script and UI refer to these as **beats**.
 
-### 2.3 Crossing beat
+### 2.3 Crossing connector
+
+A **crossing connector** is a distinct entity (hub node), analogous to a family tree **Union** node — not a beat that replaces or absorbs the two endpoints.
 
 - **Id**
-- **Lane A** and **lane B** (the only two lanes involved in v1)
-- **Timeline placement** / links to continuity: crossing **creates a new beat** (or junction) that represents the narrative intersection; exact graph representation (single node vs two anchors + junction) is an implementation detail in Phase B.
-- **Multiple crossing beats** are allowed between the **same pair** of lanes (several story moments)
+- **`beatIdA`**, **`beatIdB`** — references to two **existing** beats (each remains on its own lane with its own order)
+- **Properties (optional):** **title**, **description**, **date** (story-facing metadata for the intersection moment)
+- **Multiple crossing connectors** are allowed between the **same pair** of lanes (several story moments at different beats)
 
-**v1 constraint:** Crossing is only between **two lanes**. No third lane, no A–B and B–C chains until a future “crossing v2” pass.
+**v1 constraint:** Each connector links exactly **two beats**. Beats are never moved between lanes as a result of creating or deleting a connector.
+
+**Future (“crossing v2”):** A single connector joining **more than two** beats/lanes at once (hub with 3+ links). Chain crossings on different beat pairs (A–B, B–C) already work naturally in v1 because each connector is independent.
 
 ### 2.4 Edges
 
 - **Within-lane:** Straight segments along the time axis between consecutive beats (where the narrative is linear on that lane).
-- **Cross-lane:** **Diagonal** segments forming an **X**: after the crossing, the **series** from lane A continues on lane B and vice versa (swap of continuity). The intersection is the **crossing beat**.
+- **Cross-lane:** Connector edges from each linked **beat** to the **crossing connector hub** (or direct beat-to-beat links if implementation chooses no hub node — see §7). Each lane’s own straight-line sequence continues on its own lane, **unaffected** by connectors (mirrors family tree: partner edges do not reroute a person’s own parent/child edges).
 
 ---
 
@@ -87,64 +90,40 @@ Section **§1.1** defines the **toolbar mapping** (new person → lane, new chil
 
 | Pattern | Timeline behavior |
 |--------|---------------------|
-| **Click** | Select **beat** or **crossing beat**; highlight on canvas + entities |
+| **Click** | Select **beat** or **crossing connector**; highlight on canvas + entities |
 | **Click background** | Clear selection; inspector behavior aligned with family tree conventions |
 | **Entities panel** | Click **lane** or **beat** → same as canvas selection |
-| **Double-click** | Focus inspector for **beat** or **lane** properties (lane: name, type, etc.) |
-| **Shift+click** | **Crossing creation:** second pick completes pair (see §4.2); optional multi-select for bulk actions later |
+| **Double-click** | Focus inspector for **beat**, **lane**, or **crossing connector** properties |
+| **Shift+click** | **Crossing creation:** second beat pick completes pair (see §3.2); optional multi-select for bulk actions later |
 
-**Lane selection:** Click **lane chrome / origin** → inspector shows **lane** fields. **Drag lane origin** to reorder (moves **pair** if `crossingPairId` is set — see §4).
+**Lane selection:** Click **lane chrome / origin** → inspector shows **lane** fields. **Drag lane origin** to reorder; beats follow (auto-select / layout reflow). Connector edges redraw to wherever the linked beats currently sit.
 
-### 3.2 Crossing creation (lane-centric)
+### 3.2 Crossing creation (beat-centric)
 
-- **Semantic selection** is **two lanes**, not “any two beats” as the primary concept.
-- **Shorthand:** User may **click a beat** ⇒ resolve to **that beat’s lane** as the selected lane for the operation.
-- Action creates a **new crossing beat** between those two lanes (plus continuity swap / X geometry per spec).
-- **Primary control:** Same **toolbar slot and flow as Union** in family tree (§1.1): user resolves **lane A** and **lane B**, then activates **Union / Create crossing beat** (timeline label + tooltip as needed).
+- **Semantic selection** is **two existing beats**, matching the family tree Union flow (select two person nodes → Union).
+- Beats are typically on **different lanes** (same-lane connectors are allowed but uncommon).
+- Action creates a **crossing connector** hub with edges to both beats — **purely additive**; neither beat moves lanes or changes order.
+- **Primary control:** Same **toolbar slot and flow as Union** in family tree (§1.1): user selects **beat A** and **beat B**, then activates **Union / Create crossing connector** (timeline label + tooltip as needed).
 
 ### 3.3 Delete behaviors
 
-**Lane delete:** Warn that **all beats on that lane** (and crossing metadata tied only to that lane) will be removed; confirm.
+**Lane delete:** Warn that **all beats on that lane** (and any crossing connectors whose endpoints reference those beats) will be removed; confirm.
 
 **Beat delete modes** (expose in UI over time):
 
 - Delete **this beat only**
 - Delete **this beat and all following** on that lane’s ordered sequence
 
-(Crossing-specific delete rules: defined in Phase B when graph structure is fixed.)
+**Crossing connector delete:** Mirrors family tree union delete — removing the connector deletes only the connector node and its edges; **both beats remain** on their lanes. Deleting a beat that is an endpoint removes that connector (and its edges) as well.
 
 ### 3.4 Reorder
 
-- **Lanes without a pair:** Drag origin → move lane; beats follow (auto-select / layout reflow).
-- **Lanes with `crossingPairId`:** **Both lanes in the pair move together**; they **cannot** be separated in reorder until all crossings between them are removed (see §4.3).
+- **Lanes:** Drag origin → move lane independently; beats follow (auto-select / layout reflow).
+- **Crossing connectors:** No special reorder rules — connector edges redraw between wherever the two linked beats currently sit (same as family tree edges reflowing when a person node moves).
 
 ---
 
-## 4. Crossing pair ID (`crossingPairId`)
-
-### 4.1 Rules (v1)
-
-- Exactly **two lanes** per crossing relationship.
-- The **same two lanes** may host **many crossing beats**; they still share **one** `crossingPairId`.
-- When the **first** crossing is created between lane A and B:
-  - Allocate `crossingPairId = newId()`
-  - Set `lane.crossingPairId = crossingPairId` on **both** A and B.
-- When **additional** crossings are added between **the same** A and B: **reuse** the existing `crossingPairId` (no second pair).
-- When **all** crossing beats between A and B are **removed**:
-  - Clear `crossingPairId` on both lanes (they reorder independently again).
-
-### 4.2 Invariants
-
-- If `crossingPairId` is non-null, there is **exactly one other lane** with the same id (enforced by editor logic).
-- Reorder operations **never** split a pair.
-
-### 4.3 Future (“crossing v2”)
-
-- Chains (A–B, B–C), hubs, or more than two lanes: likely **connected components** or **group merge/split** instead of a strict pair id. **Out of scope** for initial phases; this document preserves v1 simplicity.
-
----
-
-## 5. Entities, aspects, and active workspace
+## 4. Entities, aspects, and active workspace
 
 **Long-term:** One **entity** (e.g. a character) has **multiple aspects**:
 
@@ -168,7 +147,7 @@ Section **§1.1** defines the **toolbar mapping** (new person → lane, new chil
 
 ---
 
-## 6. Phased implementation
+## 5. Phased implementation
 
 Phases are **sequential recommendations**; some overlap is possible with clear interfaces.
 
@@ -181,7 +160,7 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 - [ ] Decide project schema: **per-project orientation** storage location (alongside family tree project model).
 - [ ] Stub **route / screen**: `TimelineScreen` (or equivalent) and entry from workspace shell.
 - [ ] **Empty state** + “coming soon” acceptable until Phase 1 delivers canvas.
-- [ ] Document **IDs**: beat id, lane id, `crossingPairId` format (UUID strings recommended).
+- [ ] Document **IDs**: beat id, lane id, crossing connector id format (UUID strings recommended).
 
 **Deliverable:** Placeholder screen + saved project fields for `timelineOrientation`.
 
@@ -200,25 +179,23 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 - [ ] **Entities panel (timeline mode):** tree **Lanes → Beats**; click to select.
 - [ ] **Script v1:** serializable **declarations** for lanes and beats + `@timeline` body (exact grammar TBD in Phase 1 tick); **round-trip** lane/beat create/rename/order.
 
-**Out of scope:** Crossing beats, diagonal edges, `crossingPairId`.
+**Out of scope:** Crossing connectors, cross-lane connector edges.
 
 **Deliverable:** Usable single-thread and multi-lane outline with linear beats only.
 
 ---
 
-### Phase 2 — Crossing beats (pair-only, v1)
+### Phase 2 — Crossing connectors (v1)
 
-**Goal:** Two-lane crossings, X continuity, pair reorder, lane-centric selection.
+**Goal:** Additive connectors linking two existing beats across lanes, mirroring family tree Union behavior.
 
-- [ ] **`crossingPairId`** assignment / reuse / clear on last crossing removed.
-- [ ] **Crossing beat** entity + **diagonal** edge layout (straight-line segments only, including diagonals per earlier spec).
-- [ ] **Creation flow:** select **lane A** (or beat ⇒ lane A), **shift+select lane B** (or beat ⇒ lane B), then **Union / Create crossing beat** (same affordance as family tree union) → new crossing beat + topology swap.
-- [ ] **Reorder:** dragging **either lane** in a pair moves **both** lanes and all beats; forbid unpairing until crossings removed.
-- [ ] **Inspector** for crossing beat (title/description/date as needed).
-- [ ] **Script:** encode crossings and pair id (or derive pair id from script on load); **round-trip** crossing create/delete.
-- [ ] **Delete:** define behavior when deleting a crossing beat or a beat involved in a crossing (document edge cases).
+- [ ] **Crossing connector** entity (hub node) + **connector edges** to two beats (no continuity swap, no beat lane changes).
+- [ ] **Creation flow:** select **beat A**, **shift+select beat B** (or multi-select equivalent), then **Union / Create crossing connector** (same affordance as family tree union) → new connector hub + edges to both beats.
+- [ ] **Inspector** for crossing connector (title/description/date as needed).
+- [ ] **Script:** encode connectors with two beat-id references; **round-trip** connector create/delete.
+- [ ] **Delete:** deleting a connector removes only the connector and its edges; both beats remain. Deleting a beat removes any connectors that reference it.
 
-**Deliverable:** Full v1 crossing model as specified; **no** three-lane or chain crossings.
+**Deliverable:** Crossing connectors linking any two beats across lanes, purely additive — no lane-continuity changes.
 
 ---
 
@@ -239,7 +216,7 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 
 **Goal:** Production-grade editing.
 
-- [ ] **Lane reorder** by dragging **lane origin** (respect **pair** moves).  
+- [ ] **Lane reorder** by dragging **lane origin** (lanes move independently; connector edges reflow).
 - [ ] **Lane delete** with **warning** and cascade delete beats.  
 - [ ] **Beat delete modes:** this node only vs this + **all following** on lane.  
 - [ ] **Undo/redo** (if app-wide pattern exists, hook timeline store).
@@ -265,26 +242,24 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 
 **Scope (not detailed here):**
 
-- More than two lanes or **chain** crossings (A–B, B–C).  
-- **Group merge/split** or graph **connected components** for reorder.  
-- Optional **hub** lanes.
+- A single connector joining **more than two** beats/lanes at once (hub with 3+ links).
 
-Revisit only after v1 crossing usage is validated.
+Chain crossings on different beat pairs (A–B, B–C) already work in v1 because each connector is independent. Revisit multi-endpoint hubs only after v1 connector usage is validated.
 
 ---
 
-## 7. Testing and acceptance (cross-phase)
+## 6. Testing and acceptance (cross-phase)
 
-- **Round-trip:** Script ↔ canvas for lanes, beats, crossings, pair ids.  
-- **Pair reorder:** Two paired lanes always move together; clearing last crossing clears pair id.  
+- **Round-trip:** Script ↔ canvas for lanes, beats, and crossing connectors.  
+- **Connector independence:** Reordering either lane never affects the other lane’s beat order or the connector’s endpoints; only the rendered edge path changes.  
 - **Regression:** Family tree scene and profile editor unchanged when timeline flag is off.  
-- **Orientation:** Switch orientation does not lose beats; order and pair invariants preserved.
+- **Orientation:** Switch orientation does not lose beats; lane order and connector references preserved.
 
 ---
 
-## 8. Open items (to refine during Phase 1–2)
+## 7. Open items (to refine during Phase 1–2)
 
-- Exact **internal graph** for a crossing beat (single junction node vs multiple nodes).  
+- **Visual style** for the crossing connector hub (dedicated node like `UnionNode`, vs. a plain edge with no intermediate node).  
 - **Date** field format (ISO vs fuzzy story labels).  
 - **Script grammar** final tokens (`@lane`, `@beat`, `@crossing`, …).  
 - Whether **beats** store **absolute flow coordinates** or **only logical order** + layout engine.  
@@ -292,7 +267,7 @@ Revisit only after v1 crossing usage is validated.
 
 ---
 
-## 9. Document maintenance
+## 8. Document maintenance
 
 When implementation starts, add:
 
