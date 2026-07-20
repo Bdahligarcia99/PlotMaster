@@ -778,6 +778,20 @@ export function generateFamilyTreeScript(
     return parts.length > 0 ? ` [${parts.join(" | ")}]` : "";
   };
 
+  if (connectionStyles.length > 0) {
+    lines.push("# Connection Styles");
+    for (const style of connectionStyles) {
+      const dash = `[${style.dashPattern.join(", ")}]`;
+      const descPart = style.description
+        ? `, description: "${style.description.replace(/"/g, '\\"')}"`
+        : "";
+      lines.push(
+        `@${style.id} "${style.name}" { stroke: ${style.stroke}, width: ${style.strokeWidth}, dash: ${dash}${descPart} }`
+      );
+    }
+    lines.push("");
+  }
+
   lines.push("@declarations");
   if (compactDeclarations) {
     if (showNodeInfo) {
@@ -907,7 +921,7 @@ export function generateFamilyTreeScript(
     const libraryStyle = data.connectionStyleId
       ? connectionStyles.find((s) => s.id === data.connectionStyleId)
       : undefined;
-    const styleTag = libraryStyle ? ` [style: ${libraryStyle.id} "${libraryStyle.name}"]` : "";
+    const styleTag = libraryStyle ? ` [style: "${libraryStyle.name}"]` : "";
     const headerLine = `@${union.id}: ${leftPart} <=> ${rightPart}${rootGenTag}${styleTag}`;
     if (childTokens.length > 0) {
       lines.push(`${headerLine} {`);
