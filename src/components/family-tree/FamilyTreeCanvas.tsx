@@ -418,10 +418,11 @@ export default function FamilyTreeCanvas({
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
       const state = useFamilyTreeStore.getState();
-      let lockedUnionId: string | null = null;
+      // Dragging a union always moves its family together. Dragging a connected
+      // partner/child only does so when that union's family lock is enabled.
+      let groupUnionId: string | null = null;
       if (node.data?.kind === "union") {
-        const unionNode = state.nodes.find((n) => n.id === node.id);
-        if (unionNode && (unionNode.data as UnionNodeData).familyLocked) lockedUnionId = node.id;
+        groupUnionId = node.id;
       } else if (node.data?.kind === "person") {
         const found = state.nodes.find(
           (n) =>
@@ -429,13 +430,13 @@ export default function FamilyTreeCanvas({
             (n.data as UnionNodeData).familyLocked &&
             getUnionFamilyMemberIds(n.id, state.nodes, state.edges).includes(node.id)
         );
-        if (found) lockedUnionId = found.id;
+        if (found) groupUnionId = found.id;
       }
-      if (lockedUnionId) {
-        const memberIds = getUnionFamilyMemberIds(lockedUnionId, state.nodes, state.edges);
+      if (groupUnionId) {
+        const memberIds = getUnionFamilyMemberIds(groupUnionId, state.nodes, state.edges);
         const startPositions: Record<string, { x: number; y: number }> = {};
-        const unionNode = state.nodes.find((n) => n.id === lockedUnionId);
-        if (unionNode) startPositions[lockedUnionId] = { x: unionNode.position.x, y: unionNode.position.y };
+        const unionNode = state.nodes.find((n) => n.id === groupUnionId);
+        if (unionNode) startPositions[groupUnionId] = { x: unionNode.position.x, y: unionNode.position.y };
         for (const memberId of memberIds) {
           const memberNode = state.nodes.find((n) => n.id === memberId);
           if (memberNode) startPositions[memberId] = { x: memberNode.position.x, y: memberNode.position.y };
@@ -531,7 +532,6 @@ export default function FamilyTreeCanvas({
     if (!soleNode) return new Set<string>();
 
     if (soleNode.type === "union" && (soleNode.data as UnionNodeData).kind === "union") {
-      if (!(soleNode.data as UnionNodeData).familyLocked) return new Set<string>();
       return new Set(getUnionFamilyMemberIds(soleId, nodes, edges));
     }
 
