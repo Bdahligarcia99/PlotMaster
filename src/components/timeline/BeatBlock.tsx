@@ -1,25 +1,45 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { BEAT_COLLAPSED_HEIGHT_PX, BEAT_HEIGHT_TRANSITION_MS } from "../../store/timelineTypes";
 import type { TimelineBeat } from "../../store/timelineTypes";
 
 interface BeatBlockProps {
   beat: TimelineBeat;
   selected: boolean;
   connected: boolean;
+  beatWidthPercent: number;
+  beatsExpanded: boolean;
+  expandedBeatHeightPx: number;
   onClick: (e: React.MouseEvent) => void;
   registerRef: (beatId: string, el: HTMLElement | null) => void;
 }
 
-export default function BeatBlock({ beat, selected, connected, onClick, registerRef }: BeatBlockProps) {
+export default function BeatBlock({
+  beat,
+  selected,
+  connected,
+  beatWidthPercent,
+  beatsExpanded,
+  expandedBeatHeightPx,
+  onClick,
+  registerRef,
+}: BeatBlockProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: beat.id,
     data: { type: "beat", laneId: beat.laneId },
   });
 
+  const heightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
+  const heightTransition = `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`;
+
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
+    transition: transition ? `${transition}, ${heightTransition}` : heightTransition,
     opacity: isDragging ? 0.4 : 1,
+    width: `${beatWidthPercent}%`,
+    height: heightPx,
+    overflowX: "hidden",
+    overflowY: "auto",
   };
 
   return (
@@ -40,8 +60,21 @@ export default function BeatBlock({ beat, selected, connected, onClick, register
       }`}
     >
       <span className="block truncate font-medium">{beat.title || "Beat"}</span>
-      {beat.date.trim() && (
-        <span className="block truncate text-[10px] text-dark-muted mt-0.5">{beat.date}</span>
+      {beatsExpanded ? (
+        <>
+          {beat.date.trim() && (
+            <span className="block text-[10px] text-dark-muted mt-1">{beat.date}</span>
+          )}
+          {beat.description.trim() && (
+            <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
+              {beat.description}
+            </span>
+          )}
+        </>
+      ) : (
+        beat.date.trim() && (
+          <span className="block truncate text-[10px] text-dark-muted mt-0.5">{beat.date}</span>
+        )
       )}
       {connected && (
         <span

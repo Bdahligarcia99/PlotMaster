@@ -52,6 +52,14 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
 
   const isExpanded = (laneId: string) => expandedLanes[laneId] !== false;
 
+  const allCollapsed =
+    sortedLanes.length > 0 && sortedLanes.every((lane) => !isExpanded(lane.id));
+
+  const toggleAllLanes = () => {
+    const nextExpanded = allCollapsed;
+    setExpandedLanes(Object.fromEntries(sortedLanes.map((lane) => [lane.id, nextExpanded])));
+  };
+
   return (
     <div className="w-full flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden h-full">
       <div className="p-4 border-b border-dark-accent/50">
@@ -60,7 +68,18 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
         </h2>
         <p className="text-dark-muted text-xs mt-1">Lanes → Beats</p>
       </div>
-      <div className="p-3 border-b border-dark-accent/50">
+      <div className="p-3 border-b border-dark-accent/50 space-y-2">
+        {sortedLanes.length > 0 && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={toggleAllLanes}
+              className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded hover:bg-dark-accent/30"
+            >
+              {allCollapsed ? "Expand all" : "Collapse all"}
+            </button>
+          </div>
+        )}
         <input
           type="text"
           placeholder="Search..."

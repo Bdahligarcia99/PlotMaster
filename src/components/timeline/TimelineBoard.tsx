@@ -17,7 +17,7 @@ import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import { useTimelineStore } from "../../store/timelineStore";
-import { LANE_GATE_HEIGHT_PX, LANE_MIN_WIDTH_PX } from "../../store/timelineTypes";
+import { BEAT_HEIGHT_TRANSITION_MS, LANE_GATE_HEIGHT_PX, LANE_MIN_WIDTH_PX } from "../../store/timelineTypes";
 
 interface TimelineBoardProps {
   onSelectForEdit?: () => void;
@@ -29,6 +29,9 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const connections = useTimelineStore((s) => s.connections);
   const selection = useTimelineStore((s) => s.selection);
   const zoomLaneCount = useTimelineStore((s) => s.zoomLaneCount);
+  const beatWidthPercent = useTimelineStore((s) => s.beatWidthPercent);
+  const beatsExpanded = useTimelineStore((s) => s.beatsExpanded);
+  const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
   const selectOnly = useTimelineStore((s) => s.selectOnly);
   const toggleSelection = useTimelineStore((s) => s.toggleSelection);
   const moveBeat = useTimelineStore((s) => s.moveBeat);
@@ -97,7 +100,23 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
 
   useEffect(() => {
     setLayoutTick((t) => t + 1);
-  }, [beats, lanes, laneWidthPx]);
+  }, [beats, lanes, laneWidthPx, beatsExpanded, expandedBeatHeightPx]);
+
+  useEffect(() => {
+    let start: number | null = null;
+    let rafId: number;
+
+    const tick = (now: number) => {
+      if (start === null) start = now;
+      setLayoutTick((t) => t + 1);
+      if (now - start < BEAT_HEIGHT_TRANSITION_MS + 50) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [beatsExpanded, expandedBeatHeightPx]);
 
   const bumpDragTick = useCallback(() => {
     if (dragRafRef.current != null) return;
@@ -240,6 +259,9 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
                   beats={beatsByLane.get(lane.id) ?? []}
                   selectedBeatIds={selectedBeatIds}
                   connectedBeatIds={connectedBeatIds}
+                  beatWidthPercent={beatWidthPercent}
+                  beatsExpanded={beatsExpanded}
+                  expandedBeatHeightPx={expandedBeatHeightPx}
                   onBeatClick={handleBeatClick}
                   registerBeatRef={registerBeatRef}
                 />

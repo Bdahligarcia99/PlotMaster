@@ -9,7 +9,13 @@ import {
 import { generateTimelineId } from "../storage/timelineIds";
 import { generateTimelineScript, parseTimelineScript } from "./timelineScript";
 import {
+  BEAT_WIDTH_PERCENT_MAX,
+  BEAT_WIDTH_PERCENT_MIN,
+  DEFAULT_BEAT_WIDTH_PERCENT,
+  DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
   DEFAULT_ZOOM_LANE_COUNT,
+  EXPANDED_BEAT_HEIGHT_MAX,
+  EXPANDED_BEAT_HEIGHT_MIN,
   getDefaultBeatTitle,
   getDefaultLaneLabel,
   type TimelineBeat,
@@ -28,6 +34,14 @@ export {
   DEFAULT_ZOOM_LANE_COUNT,
   LANE_MIN_WIDTH_PX,
   LANE_GATE_HEIGHT_PX,
+  DEFAULT_BEAT_WIDTH_PERCENT,
+  BEAT_WIDTH_PERCENT_MIN,
+  BEAT_WIDTH_PERCENT_MAX,
+  BEAT_COLLAPSED_HEIGHT_PX,
+  DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
+  EXPANDED_BEAT_HEIGHT_MIN,
+  EXPANDED_BEAT_HEIGHT_MAX,
+  BEAT_HEIGHT_TRANSITION_MS,
   getZoomLaneCountSteps,
   snapZoomLaneCount,
 } from "./timelineTypes";
@@ -75,6 +89,9 @@ interface TimelineStore {
   connections: TimelineConnection[];
   selection: TimelineSelectionItem[];
   zoomLaneCount: number;
+  beatWidthPercent: number;
+  beatsExpanded: boolean;
+  expandedBeatHeightPx: number;
   scriptPanelLayout: "split" | "codeOnly" | "viewOnly";
   scriptDraft: string | null;
   hasUnsavedChanges: boolean;
@@ -87,6 +104,9 @@ interface TimelineStore {
   setTimelineOrientation: (orientation: TimelineOrientation) => void;
   setScriptPanelLayout: (layout: "split" | "codeOnly" | "viewOnly") => void;
   setZoomLaneCount: (count: number) => void;
+  setBeatWidthPercent: (percent: number) => void;
+  setBeatsExpanded: (expanded: boolean) => void;
+  setExpandedBeatHeightPx: (px: number) => void;
   setSelection: (
     items: TimelineSelectionItem[] | ((prev: TimelineSelectionItem[]) => TimelineSelectionItem[])
   ) => void;
@@ -125,6 +145,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   connections: [],
   selection: [],
   zoomLaneCount: DEFAULT_ZOOM_LANE_COUNT,
+  beatWidthPercent: DEFAULT_BEAT_WIDTH_PERCENT,
+  beatsExpanded: false,
+  expandedBeatHeightPx: DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
   scriptPanelLayout: "split",
   scriptDraft: null,
   hasUnsavedChanges: false,
@@ -206,6 +229,18 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   setScriptPanelLayout: (layout) => set({ scriptPanelLayout: layout }),
 
   setZoomLaneCount: (count) => set({ zoomLaneCount: count }),
+
+  setBeatWidthPercent: (percent) =>
+    set({
+      beatWidthPercent: Math.min(BEAT_WIDTH_PERCENT_MAX, Math.max(BEAT_WIDTH_PERCENT_MIN, percent)),
+    }),
+
+  setBeatsExpanded: (expanded) => set({ beatsExpanded: expanded }),
+
+  setExpandedBeatHeightPx: (px) =>
+    set({
+      expandedBeatHeightPx: Math.min(EXPANDED_BEAT_HEIGHT_MAX, Math.max(EXPANDED_BEAT_HEIGHT_MIN, px)),
+    }),
 
   setSelection: (itemsOrFn) => {
     set((state) => ({

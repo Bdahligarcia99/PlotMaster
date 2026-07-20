@@ -220,6 +220,7 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 - [ ] **Toggle UI** reflows: time axis and lane accumulation edge flip; **positions** recomputed or stored in logical order only.
 - [ ] **Export** (optional): PDF or image of timeline (reuse patterns from family tree export if applicable).
 - [ ] **Performance:** many beats per lane; virtualize list in entities if needed.
+- [x] **Session-only view controls:** entities panel collapse-all/expand-all; toolbar beat-width slider; expand-beats toggle with height slider (not persisted per project).
 
 **Deliverable:** Orientation is a first-class project setting.
 

@@ -10,6 +10,16 @@ export const LANE_MIN_WIDTH_PX = 140;
 /** Fixed height of the sticky "starting gate" row pinned to the base of the board. */
 export const LANE_GATE_HEIGHT_PX = 56;
 
+export const DEFAULT_BEAT_WIDTH_PERCENT = 100;
+export const BEAT_WIDTH_PERCENT_MIN = 20;
+export const BEAT_WIDTH_PERCENT_MAX = 100;
+
+export const BEAT_COLLAPSED_HEIGHT_PX = 44;
+export const DEFAULT_EXPANDED_BEAT_HEIGHT_PX = 160;
+export const EXPANDED_BEAT_HEIGHT_MIN = 80;
+export const EXPANDED_BEAT_HEIGHT_MAX = 400;
+export const BEAT_HEIGHT_TRANSITION_MS = 200;
+
 export function getZoomLaneCountSteps(): readonly number[] {
   return ZOOM_LANE_COUNT_STEPS;
 }

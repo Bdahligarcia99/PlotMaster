@@ -1,16 +1,28 @@
 import { useState, useEffect } from "react";
 import Button from "../ui/Button";
 import { useTimelineStore, ZOOM_LANE_COUNT_STEPS } from "../../store/timelineStore";
+import {
+  BEAT_WIDTH_PERCENT_MAX,
+  BEAT_WIDTH_PERCENT_MIN,
+  EXPANDED_BEAT_HEIGHT_MAX,
+  EXPANDED_BEAT_HEIGHT_MIN,
+} from "../../store/timelineTypes";
 
 export default function TimelineToolbar() {
   const lanes = useTimelineStore((s) => s.lanes);
   const selection = useTimelineStore((s) => s.selection);
   const zoomLaneCount = useTimelineStore((s) => s.zoomLaneCount);
+  const beatWidthPercent = useTimelineStore((s) => s.beatWidthPercent);
+  const beatsExpanded = useTimelineStore((s) => s.beatsExpanded);
+  const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
   const addLane = useTimelineStore((s) => s.addLane);
   const addBeat = useTimelineStore((s) => s.addBeat);
   const connections = useTimelineStore((s) => s.connections);
   const toggleConnection = useTimelineStore((s) => s.toggleConnection);
   const setZoomLaneCount = useTimelineStore((s) => s.setZoomLaneCount);
+  const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
+  const setBeatsExpanded = useTimelineStore((s) => s.setBeatsExpanded);
+  const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -121,6 +133,45 @@ export default function TimelineToolbar() {
           +
         </button>
       </div>
+
+      <div className="flex items-center gap-2" title="Beat block width as percentage of lane column">
+        <span className="text-xs text-dark-muted whitespace-nowrap">Beat width: {beatWidthPercent}%</span>
+        <input
+          type="range"
+          min={BEAT_WIDTH_PERCENT_MIN}
+          max={BEAT_WIDTH_PERCENT_MAX}
+          step={5}
+          value={beatWidthPercent}
+          onChange={(e) => setBeatWidthPercent(Number(e.target.value))}
+          className="w-20 h-1 accent-blue-500 cursor-pointer"
+        />
+      </div>
+
+      <div className="h-4 w-px bg-dark-accent/60 mx-1" />
+
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setBeatsExpanded(!beatsExpanded)}
+        title={beatsExpanded ? "Collapse beat blocks to compact height" : "Expand beat blocks to show descriptions"}
+      >
+        {beatsExpanded ? "Collapse beats" : "Expand beats"}
+      </Button>
+
+      {beatsExpanded && (
+        <div className="flex items-center gap-2" title="Expanded beat block height">
+          <span className="text-xs text-dark-muted whitespace-nowrap">Height: {expandedBeatHeightPx}px</span>
+          <input
+            type="range"
+            min={EXPANDED_BEAT_HEIGHT_MIN}
+            max={EXPANDED_BEAT_HEIGHT_MAX}
+            step={10}
+            value={expandedBeatHeightPx}
+            onChange={(e) => setExpandedBeatHeightPx(Number(e.target.value))}
+            className="w-20 h-1 accent-blue-500 cursor-pointer"
+          />
+        </div>
+      )}
 
       {message && <span className="text-xs text-dark-muted ml-2">{message}</span>}
     </div>
