@@ -665,6 +665,7 @@ export function generateFamilyTreeScript(
     nodeSizesById?: Record<string, { width: number; height: number }>;
     generationAnchors?: GenerationAnchor[];
     genLabelMode?: "letters" | "numbers" | "both";
+    connectionStyles?: ConnectionStyleDef[];
   }
 ): string {
   const compactDeclarations = options?.compactDeclarations ?? false;
@@ -675,6 +676,7 @@ export function generateFamilyTreeScript(
   const nodeSizesById = options?.nodeSizesById ?? {};
   const generationAnchors = options?.generationAnchors ?? [];
   const genLabelMode = options?.genLabelMode ?? "letters";
+  const connectionStyles = options?.connectionStyles ?? [];
 
   const anchorById = new Map(generationAnchors.map((a) => [a.id, a]));
   const hasAnchors = generationAnchors.length > 0;
@@ -902,7 +904,11 @@ export function generateFamilyTreeScript(
     const rightRole = data.rightPartnerRole;
     const leftPart = `${leftName}${leftRole ? ` (${leftRole})` : ""}`;
     const rightPart = `${rightName}${rightRole ? ` (${rightRole})` : ""}`;
-    const headerLine = `@${union.id}: ${leftPart} <=> ${rightPart}${rootGenTag}`;
+    const libraryStyle = data.connectionStyleId
+      ? connectionStyles.find((s) => s.id === data.connectionStyleId)
+      : undefined;
+    const styleTag = libraryStyle ? ` [style: ${libraryStyle.id} "${libraryStyle.name}"]` : "";
+    const headerLine = `@${union.id}: ${leftPart} <=> ${rightPart}${rootGenTag}${styleTag}`;
     if (childTokens.length > 0) {
       lines.push(`${headerLine} {`);
       lines.push(`  children: ${childTokens.join(", ")}`);

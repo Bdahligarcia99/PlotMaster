@@ -21,6 +21,7 @@ export default function FamilyTreeScriptPane() {
   const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
+  const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
   const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
   const nodeInfoTopLeft = useFamilyTreeStore((s) => s.nodeInfoTopLeft);
   const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
@@ -42,8 +43,9 @@ export default function FamilyTreeScriptPane() {
         nodeSizesById,
         generationAnchors,
         genLabelMode,
+        connectionStyles,
       }),
-    [nodes, edges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById, generationAnchors, genLabelMode]
+    [nodes, edges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById, generationAnchors, genLabelMode, connectionStyles]
   );
 
   const scriptLines = useMemo(() => script.split("\n"), [script]);

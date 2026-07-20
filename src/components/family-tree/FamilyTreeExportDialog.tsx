@@ -33,6 +33,7 @@ export default function FamilyTreeExportDialog({
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
+  const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
 
   const [scriptExportError, setScriptExportError] = useState<string | null>(null);
 
@@ -84,6 +85,7 @@ export default function FamilyTreeExportDialog({
       nodeSizesById,
       generationAnchors,
       genLabelMode,
+      connectionStyles,
     });
     if (!script.trim()) {
       setScriptExportError("Script is empty");

@@ -162,6 +162,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
 
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
+  const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
 
   const getPersonGenLabel = (personId: string) => {
     const node = nodes.find((n) => n.id === personId && (n.data as { kind?: string }).kind === "person");
@@ -286,6 +287,14 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
                     const leftName = getPersonName(nodes, leftId);
                     const rightName = getPersonName(nodes, rightId);
                     const isCollapsed = collapsedUnits.has(unit.unionId);
+                    const unionData = nodes.find((n) => n.id === unit.unionId)?.data as UnionNodeData | undefined;
+                    let styleLabel: string | null = null;
+                    if (unionData?.connectionStyleOverride) {
+                      styleLabel = "Custom";
+                    } else if (unionData?.connectionStyleId) {
+                      const style = connectionStyles.find((s) => s.id === unionData.connectionStyleId);
+                      if (style) styleLabel = style.name;
+                    }
 
                     return (
                       <div
@@ -312,6 +321,11 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
                           >
                             {leftName} ↔ {rightName}
                           </button>
+                          {styleLabel && (
+                            <span className="text-[10px] text-dark-muted px-1.5 py-0.5 rounded bg-dark-accent/40 flex-shrink-0">
+                              {styleLabel}
+                            </span>
+                          )}
                         </div>
                         {!isCollapsed && (
                           <div className="px-3 pb-2 space-y-1">
