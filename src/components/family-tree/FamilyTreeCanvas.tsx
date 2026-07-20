@@ -420,10 +420,13 @@ export default function FamilyTreeCanvas({
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
       const state = useFamilyTreeStore.getState();
-      // Dragging a union always moves its family together. Dragging a connected
-      // partner/child only does so when that union's family lock is enabled.
+      // Dragging a union normally moves its family together, unless it was double-clicked
+      // into "sole selection" mode, which lets it be dragged independently. Dragging a
+      // connected partner/child only group-drags when that union's family lock is enabled.
+      const isSoleSelectedUnion =
+        unionSoleSelection && state.selectedNodeIds.length === 1 && state.selectedNodeIds[0] === node.id;
       let groupUnionId: string | null = null;
-      if (node.data?.kind === "union") {
+      if (node.data?.kind === "union" && !isSoleSelectedUnion) {
         groupUnionId = node.id;
       } else if (node.data?.kind === "person") {
         const found = state.nodes.find(
@@ -449,7 +452,7 @@ export default function FamilyTreeCanvas({
       }
       if (node.data?.kind === "person" && node.data?.isGenArmed === false) setNodeGenArmed(node.id);
     },
-    [setNodeGenArmed]
+    [setNodeGenArmed, unionSoleSelection]
   );
 
   const onNodeDrag = useCallback(
