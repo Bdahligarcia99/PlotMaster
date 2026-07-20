@@ -172,18 +172,20 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 
 **Goal:** Vertical-first canvas mirroring family tree patterns: React Flow (or shared graph layer), store, basic layout.
 
-- [ ] **`timelineStore`**: lanes array, beats array, CRUD, **order** within lane, **bottom = start** layout convention.
-- [ ] **Canvas:** lanes as horizontal **strips** or columns; beats as **nodes** stacked along time axis; **straight edges** only between consecutive beats on a lane.
-- [ ] **Toolbar (family tree parity, §1.1):** **New person** slot → **new lane**; **New child** slot → **new beat**; place **Union** slot as disabled or hidden until Phase 2, or show “Crossing (coming soon)” — implement **lane + beat** actions in this phase.
-- [ ] **Create lane** — new lane appears at **accumulation edge** (e.g. bottom for vertical time-up); triggered from the **new lane** control.
-- [ ] **Create beat** — add beat to selected lane (or default lane); triggered from the **new beat** control; titles on nodes.
-- [ ] **Inspector:** **Lane** — label, **lane type** (preset + custom). **Beat** — title, description, date.
-- [ ] **Entities panel (timeline mode):** tree **Lanes → Beats**; click to select.
-- [ ] **Script v1:** serializable **declarations** for lanes and beats + `@timeline` body (exact grammar TBD in Phase 1 tick); **round-trip** lane/beat create/rename/order.
+- [x] **`timelineStore`**: lanes array, beats array, CRUD, **order** within lane, **bottom = start** layout convention.
+- [x] **Canvas:** lanes as horizontal **strips** or columns; beats as **nodes** stacked along time axis; **straight edges** only between consecutive beats on a lane.
+- [x] **Toolbar (family tree parity, §1.1):** **New person** slot → **new lane**; **New child** slot → **new beat**; place **Union** slot as disabled or hidden until Phase 2, or show “Crossing (coming soon)” — implement **lane + beat** actions in this phase.
+- [x] **Create lane** — new lane appears at **accumulation edge** (e.g. bottom for vertical time-up); triggered from the **new lane** control.
+- [x] **Create beat** — add beat to selected lane (or default lane); triggered from the **new beat** control; titles on nodes.
+- [x] **Inspector:** **Lane** — label, **lane type** (preset + custom). **Beat** — title, description, date.
+- [x] **Entities panel (timeline mode):** tree **Lanes → Beats**; click to select.
+- [x] **Script v1:** serializable **declarations** for lanes and beats + `@timeline` body (exact grammar TBD in Phase 1 tick); **round-trip** lane/beat create/rename/order.
 
 **Out of scope:** Crossing connectors, cross-lane connector edges.
 
 **Deliverable:** Usable single-thread and multi-lane outline with linear beats only.
+
+**Implemented in:** `timelineStore`, `TimelineCanvas`, `TimelineToolbar`, `TimelineInspector`, `TimelineEntitiesPanel`, `TimelineScriptPane`, `timelineScript.ts`.
 
 ---
 

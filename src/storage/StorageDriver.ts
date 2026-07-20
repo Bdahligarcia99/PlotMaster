@@ -65,11 +65,29 @@ export interface ProjectPayload {
 /** Timeline axis orientation (per project). */
 export type TimelineOrientation = "vertical" | "horizontal";
 
-/** Project payload (timeline outliner). Phase 0: orientation only; lanes/beats land in Phase 1+. */
+/** Project payload (timeline outliner). */
+export interface TimelineLaneRecord {
+  id: string;
+  label: string;
+  laneType: string;
+  sortOrder: number;
+}
+
+export interface TimelineBeatRecord {
+  id: string;
+  laneId: string;
+  order: number;
+  title: string;
+  description: string;
+  date: string;
+}
+
 export interface TimelineProjectPayload {
   version: 1;
   moduleType: "timeline";
   timelineOrientation: TimelineOrientation;
+  lanes?: TimelineLaneRecord[];
+  beats?: TimelineBeatRecord[];
 }
 
 export type ProjectData = ProjectPayload | TimelineProjectPayload;

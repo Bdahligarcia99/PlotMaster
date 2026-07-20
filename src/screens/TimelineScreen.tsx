@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import TimelineEntitiesPanel from "../components/timeline/TimelineEntitiesPanel";
-import TimelineCanvasPlaceholder from "../components/timeline/TimelineCanvasPlaceholder";
+import TimelineCanvas from "../components/timeline/TimelineCanvas";
+import TimelineToolbar from "../components/timeline/TimelineToolbar";
 import TimelineScriptPane from "../components/timeline/TimelineScriptPane";
 import TimelineInspector from "../components/timeline/TimelineInspector";
 import TimelineSaveControls from "../components/timeline/TimelineSaveControls";
@@ -13,20 +14,31 @@ import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
 
+const ENTITIES_MIN_W = 220;
+const ENTITIES_MAX_W = 520;
+const SCRIPT_MIN_H = 160;
+const SCRIPT_MAX_H = 520;
+
 export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [scriptPaneOpen, setScriptPaneOpen] = useState(true);
+  const [entitiesWidth, setEntitiesWidth] = useState(260);
+  const [scriptHeight, setScriptHeight] = useState(240);
   const [projectName, setProjectName] = useState("");
   const [loading, setLoading] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState("");
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
-  const timelineOrientation = useTimelineStore((s) => s.timelineOrientation);
+  const primarySelectedNodeId = useTimelineStore((s) => s.primarySelectedNodeId);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
+
+  useEffect(() => {
+    if (!primarySelectedNodeId) setInspectorOpen(false);
+  }, [primarySelectedNodeId]);
 
   useWindowTitle(projectName ? `${projectName} - Synapse IWE` : "Synapse IWE");
 
@@ -60,6 +72,62 @@ export default function TimelineScreen() {
     setEditNameValue(projectName);
     setIsEditingName(true);
   };
+
+  const entitiesDragStart = useRef<number | null>(null);
+  const entitiesStartWidth = useRef(260);
+  const scriptDragStart = useRef<number | null>(null);
+  const scriptStartHeight = useRef(240);
+
+  const handleEntitiesPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      entitiesDragStart.current = e.clientX;
+      entitiesStartWidth.current = entitiesWidth;
+      document.body.style.userSelect = "none";
+    },
+    [entitiesWidth]
+  );
+
+  const handleScriptPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      scriptDragStart.current = e.clientY;
+      scriptStartHeight.current = scriptHeight;
+      document.body.style.userSelect = "none";
+    },
+    [scriptHeight]
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (e: PointerEvent) => {
+      if (entitiesDragStart.current !== null) {
+        const deltaX = e.clientX - entitiesDragStart.current;
+        const maxW = Math.min(ENTITIES_MAX_W, window.innerWidth * 0.45);
+        setEntitiesWidth(
+          Math.min(maxW, Math.max(ENTITIES_MIN_W, entitiesStartWidth.current + deltaX))
+        );
+      }
+      if (scriptDragStart.current !== null) {
+        const deltaY = scriptDragStart.current - e.clientY;
+        const maxH = Math.min(SCRIPT_MAX_H, window.innerHeight * 0.5);
+        setScriptHeight(
+          Math.min(maxH, Math.max(SCRIPT_MIN_H, scriptStartHeight.current + deltaY))
+        );
+      }
+    };
+    const handlePointerUp = () => {
+      entitiesDragStart.current = null;
+      scriptDragStart.current = null;
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -143,7 +211,6 @@ export default function TimelineScreen() {
                   ? "bg-dark-accent border-dark-accent text-dark-text"
                   : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
               }`}
-              title={leftSidebarOpen ? "Hide Entities" : "Show Entities"}
             >
               Entities
             </button>
@@ -154,7 +221,6 @@ export default function TimelineScreen() {
                   ? "bg-dark-accent border-dark-accent text-dark-text"
                   : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
               }`}
-              title={scriptPaneOpen ? "Hide Script" : "Show Script"}
             >
               Script
             </button>
@@ -165,7 +231,6 @@ export default function TimelineScreen() {
                   ? "bg-dark-accent border-dark-accent text-dark-text"
                   : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
               }`}
-              title={inspectorOpen ? "Hide Inspector" : "Show Inspector"}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -175,43 +240,63 @@ export default function TimelineScreen() {
         }
       />
 
-      <div className="flex-1 flex min-h-0">
-        <div
-          className="flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out flex"
-          style={{ width: leftSidebarOpen ? 260 : 0 }}
-        >
-          <TimelineEntitiesPanel />
-        </div>
-        {!leftSidebarOpen && (
-          <button
-            onClick={() => setLeftSidebarOpen(true)}
-            className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
-            title="Show Entities"
-          >
-            <span className="text-xs font-medium transform -rotate-90 whitespace-nowrap origin-center">
-              Entities
-            </span>
-          </button>
-        )}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          <TimelineCanvasPlaceholder orientation={timelineOrientation} />
-          <div
-            className="flex-shrink-0 overflow-hidden transition-[height] duration-200 ease-in-out"
-            style={{ height: scriptPaneOpen ? 240 : 0 }}
-          >
-            <TimelineScriptPane />
-          </div>
-          {!scriptPaneOpen && (
+      <div className="flex-1 flex min-h-0 flex-col">
+        <TimelineToolbar />
+        <div className="flex-1 flex min-h-0">
+          {leftSidebarOpen && (
+            <>
+              <div className="flex-shrink-0 overflow-hidden flex" style={{ width: entitiesWidth }}>
+                <TimelineEntitiesPanel onSelectForEdit={() => setInspectorOpen(true)} />
+              </div>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                onPointerDown={handleEntitiesPointerDown}
+                className="w-2 flex-shrink-0 cursor-col-resize flex items-center justify-center group border-r border-dark-accent/50 hover:border-dark-accent/80 transition-colors select-none"
+              >
+                <div className="w-0.5 h-8 rounded-full bg-dark-muted/40 group-hover:bg-dark-muted/70" />
+              </div>
+            </>
+          )}
+          {!leftSidebarOpen && (
             <button
-              onClick={() => setScriptPaneOpen(true)}
-              className="h-6 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-t border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text text-xs transition-colors"
-              title="Show Script"
+              onClick={() => setLeftSidebarOpen(true)}
+              className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
+              title="Show Entities"
             >
-              Script
+              <span className="text-xs font-medium transform -rotate-90 whitespace-nowrap origin-center">
+                Entities
+              </span>
             </button>
           )}
+          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+            <TimelineCanvas onNodeSelectForEdit={() => setInspectorOpen(true)} />
+            {scriptPaneOpen && (
+              <>
+                <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  onPointerDown={handleScriptPointerDown}
+                  className="h-2 flex-shrink-0 cursor-row-resize flex items-center justify-center border-t border-dark-accent/50 hover:border-dark-accent/80 transition-colors select-none"
+                >
+                  <div className="h-0.5 w-8 rounded-full bg-dark-muted/40" />
+                </div>
+                <div className="flex-shrink-0 overflow-hidden" style={{ height: scriptHeight }}>
+                  <TimelineScriptPane />
+                </div>
+              </>
+            )}
+            {!scriptPaneOpen && (
+              <button
+                onClick={() => setScriptPaneOpen(true)}
+                className="h-6 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-t border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text text-xs transition-colors"
+              >
+                Script
+              </button>
+            )}
+          </div>
+          {inspectorOpen && <TimelineInspector />}
         </div>
-        {inspectorOpen && <TimelineInspector />}
       </div>
     </div>
   );
