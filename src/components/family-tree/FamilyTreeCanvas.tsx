@@ -413,38 +413,40 @@ export default function FamilyTreeCanvas({
     anchorId: string;
     startPositions: Record<string, { x: number; y: number }>;
   } | null>(null);
-  /** When true, a double-clicked union is selected without family member highlight. */
-  const [unionSoleSelection, setUnionSoleSelection] = useState(false);
 
   const onNodeDragStart = useCallback(
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
       const state = useFamilyTreeStore.getState();
-      // Dragging a union normally moves its family together, unless it was double-clicked
-      // into "sole selection" mode, which lets it be dragged independently. Dragging a
-      // connected partner/child only group-drags when that union's family lock is enabled.
-      const isSoleSelectedUnion =
-        unionSoleSelection && state.selectedNodeIds.length === 1 && state.selectedNodeIds[0] === node.id;
-      let groupUnionId: string | null = null;
-      if (node.data?.kind === "union" && !isSoleSelectedUnion) {
-        groupUnionId = node.id;
+      // By default every node (including a union) drags independently. Two things widen
+      // the drag to the whole family: (1) the dragged node is part of a multi-node
+      // selection (e.g. double-clicking a union selects it + its family), in which case
+      // the whole selection moves together; (2) the dragged node belongs to a union whose
+      // family lock is enabled, in which case that union's family always moves together.
+      let groupIds: string[] | null = null;
+      if (state.selectedNodeIds.length > 1 && state.selectedNodeIds.includes(node.id)) {
+        groupIds = state.selectedNodeIds;
+      } else if (node.data?.kind === "union") {
+        const unionNode = state.nodes.find((n) => n.id === node.id);
+        if (unionNode && (unionNode.data as UnionNodeData).familyLocked) {
+          groupIds = [node.id, ...getUnionFamilyMemberIds(node.id, state.nodes, state.edges)];
+        }
       } else if (node.data?.kind === "person") {
-        const found = state.nodes.find(
+        const lockedUnion = state.nodes.find(
           (n) =>
             n.type === "union" &&
             (n.data as UnionNodeData).familyLocked &&
             getUnionFamilyMemberIds(n.id, state.nodes, state.edges).includes(node.id)
         );
-        if (found) groupUnionId = found.id;
+        if (lockedUnion) {
+          groupIds = [lockedUnion.id, ...getUnionFamilyMemberIds(lockedUnion.id, state.nodes, state.edges)];
+        }
       }
-      if (groupUnionId) {
-        const memberIds = getUnionFamilyMemberIds(groupUnionId, state.nodes, state.edges);
+      if (groupIds) {
         const startPositions: Record<string, { x: number; y: number }> = {};
-        const unionNode = state.nodes.find((n) => n.id === groupUnionId);
-        if (unionNode) startPositions[groupUnionId] = { x: unionNode.position.x, y: unionNode.position.y };
-        for (const memberId of memberIds) {
-          const memberNode = state.nodes.find((n) => n.id === memberId);
-          if (memberNode) startPositions[memberId] = { x: memberNode.position.x, y: memberNode.position.y };
+        for (const id of groupIds) {
+          const n = state.nodes.find((nn) => nn.id === id);
+          if (n) startPositions[id] = { x: n.position.x, y: n.position.y };
         }
         unionDragGroupRef.current = { anchorId: node.id, startPositions };
       } else {
@@ -452,7 +454,7 @@ export default function FamilyTreeCanvas({
       }
       if (node.data?.kind === "person" && node.data?.isGenArmed === false) setNodeGenArmed(node.id);
     },
-    [setNodeGenArmed, unionSoleSelection]
+    [setNodeGenArmed]
   );
 
   const onNodeDrag = useCallback(
@@ -537,7 +539,7 @@ export default function FamilyTreeCanvas({
     if (!soleNode) return new Set<string>();
 
     if (soleNode.type === "union" && (soleNode.data as UnionNodeData).kind === "union") {
-      if (unionSoleSelection) return new Set<string>();
+      if (!(soleNode.data as UnionNodeData).familyLocked) return new Set<string>();
       return new Set(getUnionFamilyMemberIds(soleId, nodes, edges));
     }
 
@@ -549,7 +551,7 @@ export default function FamilyTreeCanvas({
     );
     if (!lockedUnion) return new Set<string>();
     return new Set(getUnionFamilyMemberIds(lockedUnion.id, nodes, edges));
-  }, [selectedNodeIds, nodes, edges, unionSoleSelection]);
+  }, [selectedNodeIds, nodes, edges]);
 
   const nodesWithSelection = nodes.map((n) => ({
     ...n,
@@ -592,7 +594,6 @@ export default function FamilyTreeCanvas({
   const onSelectionChange: OnSelectionChangeFunc = useCallback(
     ({ nodes: selectedNodes }) => {
       if (selectedNodes.length === 0 && doubleClickIgnoreClearRef.current) return;
-      setUnionSoleSelection(false);
       setSelectedNodeIds(selectedNodes.map((n) => n.id));
     },
     [setSelectedNodeIds]
@@ -603,7 +604,6 @@ export default function FamilyTreeCanvas({
       if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
         evt.preventDefault();
         evt.stopPropagation();
-        setUnionSoleSelection(false);
         setSelectedNodeIds((prev) => {
           const next = prev.includes(node.id)
             ? prev.filter((id) => id !== node.id)
@@ -611,7 +611,6 @@ export default function FamilyTreeCanvas({
           return next;
         });
       } else {
-        setUnionSoleSelection(false);
         setSelectedNodeIds([node.id]);
       }
     },
@@ -623,8 +622,13 @@ export default function FamilyTreeCanvas({
       evt.preventDefault();
       evt.stopPropagation();
       doubleClickIgnoreClearRef.current = true;
-      setUnionSoleSelection(node.data?.kind === "union");
-      setSelectedNodeIds([node.id]);
+      if (node.data?.kind === "union") {
+        const state = useFamilyTreeStore.getState();
+        const memberIds = getUnionFamilyMemberIds(node.id, state.nodes, state.edges);
+        setSelectedNodeIds([node.id, ...memberIds]);
+      } else {
+        setSelectedNodeIds([node.id]);
+      }
       onNodeSelectForEdit?.();
       // Reset flag after React Flow's onSelectionChange may have fired
       setTimeout(() => {
@@ -634,7 +638,6 @@ export default function FamilyTreeCanvas({
     [setSelectedNodeIds, onNodeSelectForEdit]
   );
   const onPaneClick = useCallback(() => {
-    setUnionSoleSelection(false);
     setSelectedNodeIds([]);
   }, [setSelectedNodeIds]);
 
