@@ -1,9 +1,11 @@
-import { memo, useCallback, useEffect, useRef } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { Handle, NodeToolbar, Position, type NodeProps } from "reactflow";
 import type { UnionNodeData } from "../../store/familyTreeStore";
 import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H } from "../../store/familyTreeStore";
+import UnionConnectionStyleEditor from "./UnionConnectionStyleEditor";
 
 function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
+  const [editorOpen, setEditorOpen] = useState(false);
   const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
   const exportCaptureFlags = useFamilyTreeStore((s) => s.exportCaptureFlags);
   const showNotesForExport = exportCaptureFlags?.includeNotes && data.notes?.trim();
@@ -67,7 +69,7 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
 
       <div
         ref={sizeRef}
-        className={`px-3 py-2 rounded-lg border min-w-[60px] flex flex-col items-center justify-center transition-colors ${
+        className={`relative px-3 py-2 rounded-lg border min-w-[60px] flex flex-col items-center justify-center transition-colors ${
           selected
             ? "bg-dark-accent/80 border-blue-500 shadow-md"
             : isBackward
@@ -75,6 +77,25 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
               : "bg-dark-accent/50 border-dark-accent hover:border-dark-muted"
         }`}
       >
+        <button
+          type="button"
+          title="Edit connection style"
+          onClick={(e) => {
+            e.stopPropagation();
+            setEditorOpen(true);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-dark-surface border border-dark-accent text-dark-muted hover:text-dark-text hover:border-blue-500 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+            />
+          </svg>
+        </button>
         <Handle type="target" position={Position.Top} id="leftPartner" style={{ left: "25%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="target" position={Position.Top} id="rightPartner" style={{ left: "75%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="source" position={Position.Bottom} id="children" className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
@@ -87,6 +108,9 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
           </span>
         )}
       </div>
+      <NodeToolbar nodeId={id} isVisible={editorOpen} position={Position.Right} offset={12}>
+        <UnionConnectionStyleEditor unionId={id} onClose={() => setEditorOpen(false)} />
+      </NodeToolbar>
     </div>
   );
 }

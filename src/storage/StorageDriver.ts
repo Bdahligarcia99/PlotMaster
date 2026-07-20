@@ -1,4 +1,5 @@
 import type { Node, Edge } from "reactflow";
+import type { ConnectionStyleDef } from "../store/familyTreeStore";
 
 /** Module types for project index. */
 export type ProjectModuleType =
@@ -57,6 +58,7 @@ export interface ProjectPayload {
   edges: Edge[];
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
+  connectionStyles?: ConnectionStyleDef[];
   ui?: FamilyTreeUIFlags;
 }
 

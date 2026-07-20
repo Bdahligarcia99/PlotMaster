@@ -174,6 +174,35 @@ export type UnionType = "forward" | "backward";
 /** Parent role in a union; at most one father and one mother per union. */
 export type ParentRole = "father" | "mother";
 
+export interface ConnectionVisualStyle {
+  stroke: string;
+  strokeWidth: number;
+  dashPattern: number[];
+}
+
+export interface ConnectionStyleDef extends ConnectionVisualStyle {
+  id: string;
+  name: string;
+}
+
+export const DEFAULT_CONNECTION_STYLE: ConnectionVisualStyle = {
+  stroke: "#64748b",
+  strokeWidth: 1.5,
+  dashPattern: [],
+};
+
+export function resolveUnionConnectionStyle(
+  data: Pick<UnionNodeData, "connectionStyleId" | "connectionStyleOverride">,
+  connectionStyles: ConnectionStyleDef[]
+): ConnectionVisualStyle {
+  if (data.connectionStyleOverride) return data.connectionStyleOverride;
+  if (data.connectionStyleId) {
+    const found = connectionStyles.find((s) => s.id === data.connectionStyleId);
+    if (found) return found;
+  }
+  return DEFAULT_CONNECTION_STYLE;
+}
+
 export interface UnionNodeData {
   kind: "union";
   partnerIds: [string | null, string | null]; // Parent IDs; null = slot not yet filled (backward union in progress)
@@ -187,6 +216,8 @@ export interface UnionNodeData {
   partnerHandleSwap?: boolean;
   notes: string;
   unionType?: UnionType; // Default "forward" for legacy
+  connectionStyleId?: string;
+  connectionStyleOverride?: ConnectionVisualStyle;
 }
 
 export type FamilyTreeNodeData = PersonNodeData | UnionNodeData;
@@ -196,6 +227,7 @@ export interface FamilyTreeSavedState {
   edges: Edge[];
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
+  connectionStyles?: ConnectionStyleDef[];
   uiFlags?: { snapToGrid?: boolean; showCoordinates?: boolean };
   ui?: {
     genLabelMode?: "letters" | "numbers" | "both";
@@ -1096,6 +1128,7 @@ interface FamilyTreeStore {
   showGenerationAnchors: boolean;
   showGenInheritIndicator: boolean;
   generationAnchors: GenerationAnchor[];
+  connectionStyles: ConnectionStyleDef[];
   /** Anchor ids in edit mode (draggable, capture input). Confirmed anchors pass input through. */
   editingAnchorIds: string[];
   genLabelMode: "letters" | "numbers" | "both";
@@ -1150,6 +1183,12 @@ interface FamilyTreeStore {
   removeGenerationAnchor: (anchorId: string) => void;
   updateGenerationAnchorLabel: (anchorId: string, customLabel: string) => void;
   updateGenerationAnchorBounds: (anchorId: string, updates: { yTop?: number; height?: number }) => void;
+  addConnectionStyle: (style: Omit<ConnectionStyleDef, "id">) => string;
+  updateConnectionStyle: (id: string, patch: Partial<Omit<ConnectionStyleDef, "id">>) => void;
+  deleteConnectionStyle: (id: string) => void;
+  duplicateConnectionStyle: (id: string) => string | null;
+  setUnionConnectionStyleId: (unionId: string, styleId: string | undefined) => void;
+  setUnionConnectionStyleOverride: (unionId: string, style: ConnectionVisualStyle | undefined) => void;
   setGenLabelMode: (v: "letters" | "numbers" | "both") => void;
   setNodeGenArmed: (nodeId: string) => void;
   updateNodeGenAnchor: (nodeId: string, genAnchorId: string | null) => void;
@@ -1232,6 +1271,7 @@ let prevShowGenerationAnchors: boolean | null = null;
 let prevShowGenInheritIndicator: boolean | null = null;
 let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
 let prevGenerationAnchorsJson: string | null = null;
+let prevConnectionStylesJson: string | null = null;
 
 /** Performs sort/layout logic. Returns true if layout was applied, false if no valid unions. */
 function runLayoutImpl(get: () => FamilyTreeStore): boolean {
@@ -1602,6 +1642,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   showGenerationAnchors: true,
   showGenInheritIndicator: true,
   generationAnchors: [],
+  connectionStyles: [],
   editingAnchorIds: [] as string[],
   genLabelMode: "letters",
   genInheritFlashByNodeId: {},
@@ -1743,6 +1784,78 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         if (typeof updates.yTop === "number") next.yTop = updates.yTop;
         if (typeof updates.height === "number" && updates.height >= 32) next.height = updates.height;
         return next;
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  addConnectionStyle: (style) => {
+    const id = generateId();
+    set((s) => ({
+      connectionStyles: [...s.connectionStyles, { ...style, id }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+    return id;
+  },
+  updateConnectionStyle: (id, patch) =>
+    set((s) => ({
+      connectionStyles: s.connectionStyles.map((st) => (st.id === id ? { ...st, ...patch } : st)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  deleteConnectionStyle: (id) =>
+    set((s) => ({
+      connectionStyles: s.connectionStyles.filter((st) => st.id !== id),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  duplicateConnectionStyle: (id) => {
+    const source = get().connectionStyles.find((st) => st.id === id);
+    if (!source) return null;
+    const newId = generateId();
+    set((s) => ({
+      connectionStyles: [
+        ...s.connectionStyles,
+        {
+          ...source,
+          id: newId,
+          name: `${source.name} copy`,
+        },
+      ],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+    return newId;
+  },
+  setUnionConnectionStyleId: (unionId, styleId) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        if (n.id !== unionId || (n.data as UnionNodeData).kind !== "union") return n;
+        const d = n.data as UnionNodeData;
+        return {
+          ...n,
+          data: {
+            ...d,
+            connectionStyleId: styleId,
+            connectionStyleOverride: undefined,
+          },
+        };
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setUnionConnectionStyleOverride: (unionId, style) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        if (n.id !== unionId || (n.data as UnionNodeData).kind !== "union") return n;
+        const d = n.data as UnionNodeData;
+        return {
+          ...n,
+          data: {
+            ...d,
+            connectionStyleOverride: style,
+          },
+        };
       }),
       hasUnsavedChanges: true,
       lastSaveError: null,
@@ -2642,6 +2755,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       edges,
       anchorNodeId: payload?.anchorNodeId ?? null,
       generationAnchors: (payload as { generationAnchors?: GenerationAnchor[] })?.generationAnchors ?? [],
+      connectionStyles: payload?.connectionStyles ?? [],
       snapToGrid: payload?.ui?.snapToGrid ?? true,
       genLabelMode:
         (payload?.ui?.genLabelMode === "numbers" || payload?.ui?.genLabelMode === "both"
@@ -2702,6 +2816,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         edges: s.edges,
         anchorNodeId: s.anchorNodeId,
         generationAnchors: s.generationAnchors,
+        connectionStyles: s.connectionStyles,
         ui: {
           genLabelMode: s.genLabelMode,
           showGenerationAnchors: s.showGenerationAnchors,
@@ -2776,6 +2891,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       nodes: [],
       edges: [],
       generationAnchors: [],
+      connectionStyles: [],
       editingAnchorIds: [],
       selectedNodeIds: [],
       primarySelectedNodeId: null,
@@ -2796,6 +2912,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         edges: [],
         anchorNodeId: null,
         generationAnchors: [],
+        connectionStyles: [],
         ui: {
           genLabelMode: "letters",
           showGenerationAnchors: true,
@@ -2833,7 +2950,8 @@ useFamilyTreeStore.subscribe((state) => {
     state.showGenerationAnchors !== prevShowGenerationAnchors ||
     state.showGenInheritIndicator !== prevShowGenInheritIndicator ||
     state.genLabelMode !== prevGenLabelMode ||
-    JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson;
+    JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson ||
+    JSON.stringify(state.connectionStyles) !== prevConnectionStylesJson;
   prevNodes = state.nodes;
   prevEdges = state.edges;
   prevShowNodeInfoEnabled = state.showNodeInfoEnabled;
@@ -2849,6 +2967,7 @@ useFamilyTreeStore.subscribe((state) => {
   prevShowGenInheritIndicator = state.showGenInheritIndicator;
   prevGenLabelMode = state.genLabelMode;
   prevGenerationAnchorsJson = JSON.stringify(state.generationAnchors);
+  prevConnectionStylesJson = JSON.stringify(state.connectionStyles);
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&
     state.activeProjectId &&

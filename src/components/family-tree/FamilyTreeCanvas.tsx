@@ -16,7 +16,12 @@ import {
   BackgroundVariant,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { useFamilyTreeStore, type PersonNodeData, type UnionNodeData } from "../../store/familyTreeStore";
+import {
+  useFamilyTreeStore,
+  resolveUnionConnectionStyle,
+  type PersonNodeData,
+  type UnionNodeData,
+} from "../../store/familyTreeStore";
 import {
   FAMILY_TREE_GRID_SIZE,
   DEFAULT_PERSON_W,
@@ -392,6 +397,7 @@ export default function FamilyTreeCanvas({
     snapToGrid,
     nodeSizesById,
     generationAnchors,
+    connectionStyles,
     genLabelMode,
     updateNodeGenAnchor,
     setGenInheritFlash,
@@ -468,10 +474,28 @@ export default function FamilyTreeCanvas({
     selected: selectedNodeIds.includes(n.id),
   }));
 
-  const displayEdges = useMemo(
-    () => assignPartnerHandles(edges, nodes),
-    [edges, nodes]
-  );
+  const displayEdges = useMemo(() => {
+    const withHandles = assignPartnerHandles(edges, nodes);
+    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+    return withHandles.map((edge) => {
+      const edgeType = (edge.data as { type?: string })?.type;
+      let unionId: string | undefined;
+      if (edgeType === "partner") unionId = edge.target;
+      else if (edgeType === "child") unionId = edge.source;
+      if (!unionId) return edge;
+      const unionNode = nodeById.get(unionId);
+      if (!unionNode || (unionNode.data as UnionNodeData).kind !== "union") return edge;
+      const resolved = resolveUnionConnectionStyle(unionNode.data as UnionNodeData, connectionStyles);
+      return {
+        ...edge,
+        style: {
+          stroke: resolved.stroke,
+          strokeWidth: resolved.strokeWidth,
+          strokeDasharray: resolved.dashPattern.length ? resolved.dashPattern.join(" ") : undefined,
+        },
+      };
+    });
+  }, [edges, nodes, connectionStyles]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
