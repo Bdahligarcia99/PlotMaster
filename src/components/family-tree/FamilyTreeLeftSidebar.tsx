@@ -321,6 +321,17 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
                           >
                             {leftName} ↔ {rightName}
                           </button>
+                          {unionData?.familyLocked && (
+                            <span
+                              title="Family group locked (members drag together)"
+                              className="flex-shrink-0 flex items-center justify-center w-4 h-4 text-amber-400"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <rect x="5" y="11" width="14" height="9" rx="1.5" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 018 0v4" />
+                              </svg>
+                            </span>
+                          )}
                           {styleLabel && (
                             <span className="text-[10px] text-dark-muted px-1.5 py-0.5 rounded bg-dark-accent/40 flex-shrink-0">
                               {styleLabel}

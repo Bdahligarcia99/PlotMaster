@@ -16,6 +16,8 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
+  const setUnionFamilyLocked = useFamilyTreeStore((s) => s.setUnionFamilyLocked);
+  const familyLocked = data.familyLocked ?? false;
   const effectiveStyle = resolveUnionConnectionStyle(data, connectionStyles);
   const x = Math.round(xPos);
   const y = Math.round(yPos);
@@ -98,6 +100,32 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
               d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
             />
           </svg>
+        </button>
+        <button
+          type="button"
+          title={familyLocked ? "Unlock family group (drag members independently)" : "Lock family group (drag members together)"}
+          onClick={(e) => {
+            e.stopPropagation();
+            setUnionFamilyLocked(id, !familyLocked);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className={`absolute -top-1.5 -left-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-dark-surface border transition-opacity z-10 ${
+            familyLocked
+              ? "border-amber-500 text-amber-400 opacity-100"
+              : "border-dark-accent text-dark-muted hover:text-dark-text hover:border-blue-500 opacity-0 group-hover:opacity-100"
+          }`}
+        >
+          {familyLocked ? (
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <rect x="5" y="11" width="14" height="9" rx="1.5" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 018 0v4" />
+            </svg>
+          ) : (
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <rect x="5" y="11" width="14" height="9" rx="1.5" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 017.75-1.5" />
+            </svg>
+          )}
         </button>
         <Handle type="target" position={Position.Top} id="leftPartner" style={{ left: "25%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="target" position={Position.Top} id="rightPartner" style={{ left: "75%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />

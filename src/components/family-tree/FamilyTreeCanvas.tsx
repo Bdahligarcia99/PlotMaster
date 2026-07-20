@@ -410,24 +410,37 @@ export default function FamilyTreeCanvas({
 
   const dragStartRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const unionDragGroupRef = useRef<{
-    unionId: string;
+    anchorId: string;
     startPositions: Record<string, { x: number; y: number }>;
   } | null>(null);
 
   const onNodeDragStart = useCallback(
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
+      const state = useFamilyTreeStore.getState();
+      let lockedUnionId: string | null = null;
       if (node.data?.kind === "union") {
-        const state = useFamilyTreeStore.getState();
-        const memberIds = getUnionFamilyMemberIds(node.id, state.nodes, state.edges);
-        const startPositions: Record<string, { x: number; y: number }> = {
-          [node.id]: { x: node.position.x, y: node.position.y },
-        };
+        const unionNode = state.nodes.find((n) => n.id === node.id);
+        if (unionNode && (unionNode.data as UnionNodeData).familyLocked) lockedUnionId = node.id;
+      } else if (node.data?.kind === "person") {
+        const found = state.nodes.find(
+          (n) =>
+            n.type === "union" &&
+            (n.data as UnionNodeData).familyLocked &&
+            getUnionFamilyMemberIds(n.id, state.nodes, state.edges).includes(node.id)
+        );
+        if (found) lockedUnionId = found.id;
+      }
+      if (lockedUnionId) {
+        const memberIds = getUnionFamilyMemberIds(lockedUnionId, state.nodes, state.edges);
+        const startPositions: Record<string, { x: number; y: number }> = {};
+        const unionNode = state.nodes.find((n) => n.id === lockedUnionId);
+        if (unionNode) startPositions[lockedUnionId] = { x: unionNode.position.x, y: unionNode.position.y };
         for (const memberId of memberIds) {
           const memberNode = state.nodes.find((n) => n.id === memberId);
           if (memberNode) startPositions[memberId] = { x: memberNode.position.x, y: memberNode.position.y };
         }
-        unionDragGroupRef.current = { unionId: node.id, startPositions };
+        unionDragGroupRef.current = { anchorId: node.id, startPositions };
       } else {
         unionDragGroupRef.current = null;
       }
@@ -439,14 +452,14 @@ export default function FamilyTreeCanvas({
   const onNodeDrag = useCallback(
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number } }) => {
       const group = unionDragGroupRef.current;
-      if (!group || node.id !== group.unionId) return;
-      const unionStart = group.startPositions[group.unionId];
-      if (!unionStart) return;
-      const dx = node.position.x - unionStart.x;
-      const dy = node.position.y - unionStart.y;
+      if (!group || node.id !== group.anchorId) return;
+      const anchorStart = group.startPositions[group.anchorId];
+      if (!anchorStart) return;
+      const dx = node.position.x - anchorStart.x;
+      const dy = node.position.y - anchorStart.y;
       setNodes((prev) =>
         prev.map((n) => {
-          if (n.id === group.unionId) return n;
+          if (n.id === group.anchorId) return n;
           const start = group.startPositions[n.id];
           if (!start) return n;
           return { ...n, position: { x: start.x + dx, y: start.y + dy } };
@@ -515,10 +528,21 @@ export default function FamilyTreeCanvas({
     if (selectedNodeIds.length !== 1) return new Set<string>();
     const soleId = selectedNodeIds[0];
     const soleNode = nodes.find((n) => n.id === soleId);
-    if (!soleNode || soleNode.type !== "union" || (soleNode.data as UnionNodeData).kind !== "union") {
-      return new Set<string>();
+    if (!soleNode) return new Set<string>();
+
+    if (soleNode.type === "union" && (soleNode.data as UnionNodeData).kind === "union") {
+      if (!(soleNode.data as UnionNodeData).familyLocked) return new Set<string>();
+      return new Set(getUnionFamilyMemberIds(soleId, nodes, edges));
     }
-    return new Set(getUnionFamilyMemberIds(soleId, nodes, edges));
+
+    const lockedUnion = nodes.find(
+      (n) =>
+        n.type === "union" &&
+        (n.data as UnionNodeData).familyLocked &&
+        getUnionFamilyMemberIds(n.id, nodes, edges).includes(soleId)
+    );
+    if (!lockedUnion) return new Set<string>();
+    return new Set(getUnionFamilyMemberIds(lockedUnion.id, nodes, edges));
   }, [selectedNodeIds, nodes, edges]);
 
   const nodesWithSelection = nodes.map((n) => ({

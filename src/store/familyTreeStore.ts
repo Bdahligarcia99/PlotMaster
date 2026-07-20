@@ -219,6 +219,8 @@ export interface UnionNodeData {
   unionType?: UnionType; // Default "forward" for legacy
   connectionStyleId?: string;
   connectionStyleOverride?: ConnectionVisualStyle;
+  /** When true, dragging any partner/child of this union moves the whole family group together. */
+  familyLocked?: boolean;
 }
 
 export type FamilyTreeNodeData = PersonNodeData | UnionNodeData;
@@ -1227,6 +1229,7 @@ interface FamilyTreeStore {
   duplicateConnectionStyle: (id: string) => string | null;
   setUnionConnectionStyleId: (unionId: string, styleId: string | undefined) => void;
   setUnionConnectionStyleOverride: (unionId: string, style: ConnectionVisualStyle | undefined) => void;
+  setUnionFamilyLocked: (unionId: string, locked: boolean) => void;
   setGenLabelMode: (v: "letters" | "numbers" | "both") => void;
   setNodeGenArmed: (nodeId: string) => void;
   updateNodeGenAnchor: (nodeId: string, genAnchorId: string | null) => void;
@@ -2112,6 +2115,15 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
             connectionStyleOverride: style,
           },
         };
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setUnionFamilyLocked: (unionId, locked) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        if (n.id !== unionId || (n.data as UnionNodeData).kind !== "union") return n;
+        return { ...n, data: { ...n.data, familyLocked: locked } };
       }),
       hasUnsavedChanges: true,
       lastSaveError: null,
