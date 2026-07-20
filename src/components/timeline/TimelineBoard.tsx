@@ -39,23 +39,33 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
 
   const sortedLanes = useMemo(() => [...lanes].sort((a, b) => a.sortOrder - b.sortOrder), [lanes]);
 
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const viewportResizeObserverRef = useRef<ResizeObserver | null>(null);
   const trackContentRef = useRef<HTMLDivElement>(null);
   const beatRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [viewportWidth, setViewportWidth] = useState(0);
   const [layoutTick, setLayoutTick] = useState(0);
   const dragRafRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const el = viewportRef.current;
+  // A callback ref (rather than a plain ref + mount-only effect) so the ResizeObserver gets
+  // (re)attached whenever this node actually mounts — including when it first appears after the
+  // "no lanes yet" placeholder branch is replaced by the real board on adding the first lane.
+  const setViewportRef = useCallback((el: HTMLDivElement | null) => {
+    viewportRef.current = el;
+    viewportResizeObserverRef.current?.disconnect();
+    viewportResizeObserverRef.current = null;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? el.clientWidth;
       setViewportWidth(width);
     });
     ro.observe(el);
+    viewportResizeObserverRef.current = ro;
     setViewportWidth(el.clientWidth);
-    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    return () => viewportResizeObserverRef.current?.disconnect();
   }, []);
 
   const laneWidthPx = useMemo(() => {
@@ -265,7 +275,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       onDragEnd={handleDragEnd}
     >
       <div
-        ref={viewportRef}
+        ref={setViewportRef}
         onClick={handleBackgroundClick}
         className="flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden bg-dark-bg/50"
       >
