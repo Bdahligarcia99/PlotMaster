@@ -22,10 +22,6 @@ export default function FamilyTreeToolbar() {
     setNodeInfoSize,
     nodeInfoSpacing,
     setNodeInfoSpacing,
-    singleChildAlignment,
-    setSingleChildAlignment,
-    childrenRowAlignment3Plus,
-    setChildrenRowAlignment3Plus,
     autosaveEnabled,
     setAutosaveEnabled,
     activeProjectId,
@@ -66,9 +62,6 @@ export default function FamilyTreeToolbar() {
   const childContainerRef = useRef<HTMLDivElement>(null);
   const childDropdownRef = useRef<HTMLDivElement>(null);
   const [autosaveLabelOverride, setAutosaveLabelOverride] = useState<string | null>(null);
-  const [sortMenuOpen, setSortMenuOpen] = useState(false);
-  const sortContainerRef = useRef<HTMLDivElement>(null);
-  const sortDropdownRef = useRef<HTMLDivElement>(null);
   const [genAnchorMenuOpen, setGenAnchorMenuOpen] = useState(false);
   const genAnchorContainerRef = useRef<HTMLDivElement>(null);
   const genAnchorDropdownRef = useRef<HTMLDivElement>(null);
@@ -116,23 +109,6 @@ export default function FamilyTreeToolbar() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-
-  useEffect(() => {
-    if (!sortMenuOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-      const inContainer = sortContainerRef.current?.contains(target);
-      const inDropdown = sortDropdownRef.current?.contains(target);
-      if (!inContainer && !inDropdown) {
-        setSortMenuOpen(false);
-      }
-    };
-    const t = setTimeout(() => document.addEventListener("click", handleClickOutside, { once: true }), 0);
-    return () => {
-      clearTimeout(t);
-      document.removeEventListener("click", handleClickOutside);
-    };
-  }, [sortMenuOpen]);
 
   useEffect(() => {
     if (!genAnchorMenuOpen) return;
@@ -692,89 +668,15 @@ export default function FamilyTreeToolbar() {
             document.body
           )}
       </div>
-      <div ref={sortContainerRef} className="relative flex rounded-lg border border-dark-accent/50">
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleSort}
-          disabled={!canSort}
-          title={getSortTooltip()}
-          className="rounded-none border-0 rounded-l-lg"
-        >
-          Sort
-        </Button>
-        <button
-          type="button"
-          onPointerDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setSortMenuOpen((o) => !o);
-          }}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center"
-          title="Sort options"
-          aria-expanded={sortMenuOpen}
-          aria-haspopup="true"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        {sortMenuOpen &&
-          createPortal(
-            <div
-              ref={sortDropdownRef}
-              className="fixed py-1 min-w-[180px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
-              style={{
-                top: sortContainerRef.current
-                  ? sortContainerRef.current.getBoundingClientRect().bottom + 4
-                  : 0,
-                left: sortContainerRef.current
-                  ? sortContainerRef.current.getBoundingClientRect().left
-                  : 0,
-              }}
-            >
-              <div className="px-3 py-1.5 text-[10px] font-medium text-dark-muted uppercase tracking-wide">
-                Single-child alignment
-              </div>
-              {(["left", "center", "right"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => {
-                    setSingleChildAlignment(opt);
-                    setSortMenuOpen(false);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
-                >
-                  <span className="w-4">{singleChildAlignment === opt ? "✓" : ""}</span>
-                  {opt === "left" ? "Left parent" : opt === "center" ? "Center" : "Right parent"}
-                </button>
-              ))}
-              <div className="px-3 py-1.5 text-[10px] font-medium text-dark-muted uppercase tracking-wide mt-1">
-                3+ children alignment
-              </div>
-              {(["left", "center", "right"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => {
-                    setChildrenRowAlignment3Plus(opt);
-                    setSortMenuOpen(false);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
-                >
-                  <span className="w-4">{childrenRowAlignment3Plus === opt ? "✓" : ""}</span>
-                  {opt.charAt(0).toUpperCase() + opt.slice(1)}
-                </button>
-              ))}
-            </div>,
-            document.body
-          )}
-      </div>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={handleSort}
+        disabled={!canSort}
+        title={getSortTooltip()}
+      >
+        Sort
+      </Button>
       <Button
         variant="secondary"
         size="sm"

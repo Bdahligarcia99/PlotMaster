@@ -1188,8 +1188,6 @@ interface FamilyTreeStore {
   setNodeInfoCenter: (v: boolean) => void;
   setNodeInfoSize: (v: boolean) => void;
   setNodeInfoSpacing: (v: boolean) => void;
-  setSingleChildAlignment: (v: "left" | "center" | "right") => void;
-  setChildrenRowAlignment3Plus: (v: "left" | "center" | "right") => void;
   setPersistUnionSelectionOnChildCreate: (v: boolean) => void;
   setScriptPanelLayout: (v: "split" | "codeOnly" | "viewOnly") => void;
   setScriptCompactDeclarations: (v: boolean) => void;
@@ -1939,9 +1937,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       if (!v && !s.nodeInfoTopLeft && !s.nodeInfoCenter && !s.nodeInfoSize) return {};
       return { nodeInfoSpacing: v, hasUnsavedChanges: true, lastSaveError: null };
     }),
-  setSingleChildAlignment: (v) => set({ singleChildAlignment: v, hasUnsavedChanges: true, lastSaveError: null }),
-  setChildrenRowAlignment3Plus: (v) =>
-    set({ childrenRowAlignment3Plus: v, hasUnsavedChanges: true, lastSaveError: null }),
   setPersistUnionSelectionOnChildCreate: (v) =>
     set({ persistUnionSelectionOnChildCreate: v, hasUnsavedChanges: true, lastSaveError: null }),
   setScriptPanelLayout: (v) =>
