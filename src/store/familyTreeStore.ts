@@ -424,6 +424,24 @@ export function isChildEdge(edge: Edge): boolean {
   return (edge.data as { type?: string })?.type === "child";
 }
 
+/** Direct partner ids + direct child ids of a union, NOT including the union itself or further descendants. */
+export function getUnionFamilyMemberIds(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  const unionNode = nodes.find(
+    (n) => n.id === unionId && n.type === "union" && (n.data as UnionNodeData).kind === "union"
+  );
+  if (!unionNode) return [];
+  const data = unionNode.data as UnionNodeData;
+  const partnerIds = [data.leftPartnerId, data.rightPartnerId, ...(data.partnerIds ?? [])].filter(
+    (id): id is string => id != null
+  );
+  const childIds = edges.filter((e) => e.source === unionId && isChildEdge(e)).map((e) => e.target);
+  return Array.from(new Set([...partnerIds, ...childIds]));
+}
+
 /** True if person is target of any child edge (i.e. has parents / is already a child). */
 export function hasParents(edges: Edge[], personId: string): boolean {
   return edges.some((e) => isChildEdge(e) && e.target === personId);

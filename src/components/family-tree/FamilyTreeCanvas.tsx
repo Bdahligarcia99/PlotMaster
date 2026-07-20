@@ -30,6 +30,7 @@ import {
   DEFAULT_UNION_H,
   getAnchorAtY,
   formatGenerationAnchorLabel,
+  getUnionFamilyMemberIds,
 } from "../../store/familyTreeStore";
 import PersonNode from "./PersonNode";
 import UnionNode from "./UnionNode";
@@ -406,13 +407,51 @@ export default function FamilyTreeCanvas({
   } = useFamilyTreeStore();
 
   const dragStartRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const unionDragGroupRef = useRef<{
+    unionId: string;
+    startPositions: Record<string, { x: number; y: number }>;
+  } | null>(null);
 
   const onNodeDragStart = useCallback(
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
+      if (node.data?.kind === "union") {
+        const state = useFamilyTreeStore.getState();
+        const memberIds = getUnionFamilyMemberIds(node.id, state.nodes, state.edges);
+        const startPositions: Record<string, { x: number; y: number }> = {
+          [node.id]: { x: node.position.x, y: node.position.y },
+        };
+        for (const memberId of memberIds) {
+          const memberNode = state.nodes.find((n) => n.id === memberId);
+          if (memberNode) startPositions[memberId] = { x: memberNode.position.x, y: memberNode.position.y };
+        }
+        unionDragGroupRef.current = { unionId: node.id, startPositions };
+      } else {
+        unionDragGroupRef.current = null;
+      }
       if (node.data?.kind === "person" && node.data?.isGenArmed === false) setNodeGenArmed(node.id);
     },
     [setNodeGenArmed]
+  );
+
+  const onNodeDrag = useCallback(
+    (_: React.MouseEvent, node: { id: string; position: { x: number; y: number } }) => {
+      const group = unionDragGroupRef.current;
+      if (!group || node.id !== group.unionId) return;
+      const unionStart = group.startPositions[group.unionId];
+      if (!unionStart) return;
+      const dx = node.position.x - unionStart.x;
+      const dy = node.position.y - unionStart.y;
+      setNodes((prev) =>
+        prev.map((n) => {
+          if (n.id === group.unionId) return n;
+          const start = group.startPositions[n.id];
+          if (!start) return n;
+          return { ...n, position: { x: start.x + dx, y: start.y + dy } };
+        })
+      );
+    },
+    [setNodes]
   );
 
   const onNodeDragStop = useCallback(
@@ -420,6 +459,7 @@ export default function FamilyTreeCanvas({
       _: React.MouseEvent,
       node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean; genAnchorId?: string | null; name?: string } }
     ) => {
+      unionDragGroupRef.current = null;
       if (node.data?.kind !== "person") return;
       const prevPos = dragStartRef.current.get(node.id);
       dragStartRef.current.delete(node.id);
@@ -469,9 +509,20 @@ export default function FamilyTreeCanvas({
     ]
   );
 
+  const familyLockedMemberIds = useMemo(() => {
+    if (selectedNodeIds.length !== 1) return new Set<string>();
+    const soleId = selectedNodeIds[0];
+    const soleNode = nodes.find((n) => n.id === soleId);
+    if (!soleNode || soleNode.type !== "union" || (soleNode.data as UnionNodeData).kind !== "union") {
+      return new Set<string>();
+    }
+    return new Set(getUnionFamilyMemberIds(soleId, nodes, edges));
+  }, [selectedNodeIds, nodes, edges]);
+
   const nodesWithSelection = nodes.map((n) => ({
     ...n,
     selected: selectedNodeIds.includes(n.id),
+    data: { ...n.data, isFamilyLocked: familyLockedMemberIds.has(n.id) },
   }));
 
   const displayEdges = useMemo(() => {
@@ -584,6 +635,7 @@ export default function FamilyTreeCanvas({
         onNodeDoubleClick={onNodeDoubleClick}
         onPaneClick={onPaneClick}
         onNodeDragStart={onNodeDragStart}
+        onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
         snapToGrid={snapToGrid}
