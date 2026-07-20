@@ -59,7 +59,7 @@ When wording would confuse (e.g. “person” vs “lane”), use **subtitle tex
 ### 2.2 Beat (node)
 
 - **Id**, **laneId**, **order** along time within that lane (or derived from position + normalized on save)
-- **`kind`:** `"story"` (default) or `"empty"` (experimental spacer — see §2.2a)
+- **`kind`:** `"story"` (default), `"empty"` (experimental spacer — see §2.2a), or `"anchor"` (experimental future-event placeholder — see §2.2b)
 - **Properties (minimum, story beats only):** **title**, **description**, **date** (story-facing; can be partial or free text early)
 - Room for additional properties in later sub-phases
 
@@ -72,7 +72,19 @@ Script and UI refer to these as **beats**.
 - **Created via:** the **+ Beat** toolbar split button → **Empty Beat** option (primary click still adds a normal story beat)
 - **Rendered with:** dashed ghost styling and a muted centered **Empty** label; still draggable and selectable
 - **Cannot participate** in crossing connectors (store validation + toolbar tooltip)
-- **Script:** `Beat <id> lane: <laneId> order: <n> empty: true` (no title/description/date tokens)
+- **Script:** `Beat <id> lane: <laneId> order: <n> kind: empty` (optional `anchor:` / `side:` tokens for anchor-spawned ghosts; legacy `empty: true` still accepted when parsing). No title/description/date tokens.
+
+### 2.2b Anchor beats (experimental)
+
+- **`kind: "anchor"`** — a placeholder for a **planned future story event**; has editable **title**, **description**, and **date** like a story beat (anchors represent real, if undetailed, future moments)
+- **Stacking rule:** a new anchor beat always becomes the **top of its lane**; adding a later anchor does not remove or move an earlier one — the earlier anchor stays wherever it is in the stack, just no longer "the newest"
+- **Auto-spawned ghost beats:** when an anchor is created, it auto-creates a configurable number of `kind: "empty"` ghost beats immediately **below** and **above** it (default 1 and 1, adjustable per-anchor via two independent Inspector sliders, 0–8) to reserve its surrounding slots
+- **Default "+ Beat" placement:** pressing the primary **+ Beat** button with no ghost selected inserts a new story beat immediately **before** the lane's **oldest** anchor's entire protected group (below its below-ghosts too), or appends normally if the lane has no anchor yet
+- **Promotion flow:** selecting any `kind: "empty"` beat (anchor-spawned ghost or plain manually-added spacer) and pressing **+ Beat** converts that specific beat into a real story beat **in place**, instead of creating a new one
+- **Crossings:** anchor beats **may** participate in crossing connectors (unlike empty/ghost beats, which cannot)
+- **Delete cascade:** deleting an anchor also deletes its own still-unconverted ghost beats; deleting an anchor does **not** affect any other anchor's ghosts. When a newer anchor supersedes an older one, the older anchor's still-unconverted ghosts are **left in place (orphaned)** — only explicit anchor deletion cascades
+- **Created via:** the **+ Beat** toolbar split button → **Anchor Beat** option
+- **Script:** `kind: anchor` token on anchor beat lines (with normal title/description/date tokens); ghost/empty beat lines use `kind: empty` plus optional `anchor:` / `side:` tokens (replacing the prior `empty: true` token, which remains accepted when parsing for backward compatibility)
 
 ### 2.3 Crossing connector
 

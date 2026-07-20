@@ -57,7 +57,25 @@ export function generateTimelineScript(
 
   for (const beat of sortedBeats) {
     if (beat.kind === "empty") {
-      lines.push(`Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order} empty: true`);
+      const parts = [`Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order}`, "kind: empty"];
+      if (beat.anchorId) parts.push(`anchor: ${beat.anchorId}`);
+      if (beat.ghostSide) parts.push(`side: ${beat.ghostSide}`);
+      lines.push(parts.join(" "));
+      continue;
+    }
+    if (beat.kind === "anchor") {
+      const parts = [
+        `Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order}`,
+        "kind: anchor",
+        `title: "${escapeQuoted(beat.title)}"`,
+      ];
+      if (beat.description.trim()) {
+        parts.push(`description: "${escapeQuoted(beat.description)}"`);
+      }
+      if (beat.date.trim()) {
+        parts.push(`date: "${escapeQuoted(beat.date)}"`);
+      }
+      lines.push(parts.join(" "));
       continue;
     }
     const parts = [
@@ -151,7 +169,27 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         continue;
       }
       const order = Number.parseInt(kv.order ?? "0", 10);
-      if (/empty:\s*true/.test(line)) {
+      if (/kind:\s*anchor/i.test(line)) {
+        const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(line);
+        const title = titleMatch
+          ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
+          : "Beat";
+        beats.push({
+          id,
+          laneId,
+          order: Number.isFinite(order) ? order : 0,
+          kind: "anchor",
+          title,
+          description: kv.description ?? "",
+          date: kv.date ?? "",
+        });
+        beatIds.add(id);
+        continue;
+      }
+      if (/kind:\s*empty/i.test(line) || /empty:\s*true/.test(line)) {
+        const anchorMatch = /anchor:\s*(\S+)/.exec(line);
+        const sideMatch = /side:\s*(above|below)/i.exec(line);
+        const ghostSide = sideMatch?.[1]?.toLowerCase();
         beats.push({
           id,
           laneId,
@@ -160,6 +198,10 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
           title: "",
           description: "",
           date: "",
+          ...(anchorMatch ? { anchorId: anchorMatch[1] } : {}),
+          ...(ghostSide === "above" || ghostSide === "below"
+            ? { ghostSide: ghostSide as "above" | "below" }
+            : {}),
         });
         beatIds.add(id);
         continue;
@@ -212,6 +254,9 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
   for (const beat of beats) {
     if (!laneIds.has(beat.laneId)) {
       errors.push(`Beat ${beat.id} references unknown lane ${beat.laneId}`);
+    }
+    if (beat.anchorId && !beatIds.has(beat.anchorId)) {
+      errors.push(`Beat ${beat.id} references unknown anchor ${beat.anchorId}`);
     }
   }
 

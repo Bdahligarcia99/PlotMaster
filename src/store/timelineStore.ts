@@ -11,13 +11,18 @@ import {
 import { generateTimelineId } from "../storage/timelineIds";
 import { generateTimelineScript, parseTimelineScript } from "./timelineScript";
 import {
+  ANCHOR_GHOST_COUNT_MAX,
+  ANCHOR_GHOST_COUNT_MIN,
   BEAT_WIDTH_PERCENT_MAX,
   BEAT_WIDTH_PERCENT_MIN,
+  DEFAULT_ANCHOR_GHOSTS_ABOVE,
+  DEFAULT_ANCHOR_GHOSTS_BELOW,
   DEFAULT_BEAT_WIDTH_PERCENT,
   DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
   DEFAULT_ZOOM_LANE_COUNT,
   EXPANDED_BEAT_HEIGHT_MAX,
   EXPANDED_BEAT_HEIGHT_MIN,
+  getDefaultAnchorTitle,
   getDefaultBeatTitle,
   getDefaultLaneLabel,
   type TimelineBeat,
@@ -44,6 +49,10 @@ export {
   EXPANDED_BEAT_HEIGHT_MIN,
   EXPANDED_BEAT_HEIGHT_MAX,
   BEAT_HEIGHT_TRANSITION_MS,
+  ANCHOR_GHOST_COUNT_MIN,
+  ANCHOR_GHOST_COUNT_MAX,
+  DEFAULT_ANCHOR_GHOSTS_ABOVE,
+  DEFAULT_ANCHOR_GHOSTS_BELOW,
   getZoomLaneCountSteps,
   snapZoomLaneCount,
 } from "./timelineTypes";
@@ -83,20 +92,59 @@ function renormalizeLaneOrders(beats: TimelineBeat[], laneId: string): TimelineB
   return [...beats.filter((b) => !laneBeatIds.has(b.id)), ...laneBeats];
 }
 
+/** Replace laneId's beats with `sequence` (must contain every beat currently in that lane, in the desired bottom-to-top order), renumbering order 0..n-1. Beats in other lanes are untouched. */
+function applyLaneSequence(beats: TimelineBeat[], laneId: string, sequence: TimelineBeat[]): TimelineBeat[] {
+  const renumbered = sequence.map((b, i) => ({ ...b, order: i }));
+  const renumberedIds = new Set(renumbered.map((b) => b.id));
+  return [...beats.filter((b) => !(b.laneId === laneId && renumberedIds.has(b.id))), ...renumbered];
+}
+
+function createGhostBeat(laneId: string, anchorId: string, ghostSide: "above" | "below"): TimelineBeat {
+  return {
+    id: generateTimelineId(),
+    laneId,
+    order: 0,
+    kind: "empty",
+    title: "",
+    description: "",
+    date: "",
+    anchorId,
+    ghostSide,
+  };
+}
+
+function findAnchorGroupStartIndex(seq: TimelineBeat[], anchorIndex: number): number {
+  const anchor = seq[anchorIndex];
+  let start = anchorIndex;
+  while (start > 0) {
+    const prev = seq[start - 1];
+    if (prev.kind === "empty" && prev.anchorId === anchor.id && prev.ghostSide === "below") {
+      start--;
+    } else {
+      break;
+    }
+  }
+  return start;
+}
+
 type StoredConnection = TimelineConnectionRecord & {
   beatIdA?: string;
   beatIdB?: string;
 };
 
 function normalizeLoadedBeat(beat: TimelineBeatRecord): TimelineBeat {
+  const kind =
+    beat.kind === "empty" ? "empty" : beat.kind === "anchor" ? "anchor" : "story";
   return {
     id: beat.id,
     laneId: beat.laneId,
     order: beat.order,
-    kind: beat.kind === "empty" ? "empty" : "story",
+    kind,
     title: beat.title,
     description: beat.description,
     date: beat.date,
+    ...(beat.anchorId ? { anchorId: beat.anchorId } : {}),
+    ...(beat.ghostSide ? { ghostSide: beat.ghostSide } : {}),
   };
 }
 
@@ -188,6 +236,14 @@ interface TimelineStore {
   toggleSelection: (item: TimelineSelectionItem) => void;
   addLane: () => string;
   addBeat: (laneId?: string, kind?: "story" | "empty") => string | null;
+  addAnchorBeat: (
+    laneId?: string,
+    ghostsAbove?: number,
+    ghostsBelow?: number
+  ) => string | null;
+  addStoryBeatBeforeFirstAnchor: (laneId?: string) => string | null;
+  convertBeatToStory: (beatId: string) => boolean;
+  setAnchorGhostCount: (anchorId: string, side: "above" | "below", count: number) => void;
   updateLane: (laneId: string, patch: Partial<Pick<TimelineLane, "label" | "laneType" | "sortOrder">>) => void;
   updateBeat: (
     beatId: string,
@@ -390,6 +446,187 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     return id;
   },
 
+  addAnchorBeat: (laneId, ghostsAbove = DEFAULT_ANCHOR_GHOSTS_ABOVE, ghostsBelow = DEFAULT_ANCHOR_GHOSTS_BELOW) => {
+    const s = get();
+    const targetLaneId = laneId ?? resolveLaneIdFromSelection(s.lanes, s.beats, s.selection);
+    if (!targetLaneId) return null;
+
+    const seq = s.beats
+      .filter((b) => b.laneId === targetLaneId)
+      .sort((a, b) => a.order - b.order);
+
+    const anchorId = generateTimelineId();
+    const anchor: TimelineBeat = {
+      id: anchorId,
+      laneId: targetLaneId,
+      order: 0,
+      kind: "anchor",
+      title: getDefaultAnchorTitle(seq),
+      description: "",
+      date: "",
+    };
+
+    const belowGhosts: TimelineBeat[] = [];
+    for (let i = 0; i < ghostsBelow; i++) {
+      belowGhosts.push(createGhostBeat(targetLaneId, anchorId, "below"));
+    }
+    const aboveGhosts: TimelineBeat[] = [];
+    for (let i = 0; i < ghostsAbove; i++) {
+      aboveGhosts.push(createGhostBeat(targetLaneId, anchorId, "above"));
+    }
+
+    seq.push(...belowGhosts, anchor, ...aboveGhosts);
+
+    set({
+      beats: applyLaneSequence(s.beats, targetLaneId, seq),
+      selection: [{ type: "beat", id: anchorId }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return anchorId;
+  },
+
+  addStoryBeatBeforeFirstAnchor: (laneId) => {
+    const s = get();
+    const targetLaneId = laneId ?? resolveLaneIdFromSelection(s.lanes, s.beats, s.selection);
+    if (!targetLaneId) return null;
+
+    const seq = s.beats
+      .filter((b) => b.laneId === targetLaneId)
+      .sort((a, b) => a.order - b.order);
+
+    const id = generateTimelineId();
+    const beat: TimelineBeat = {
+      id,
+      laneId: targetLaneId,
+      order: 0,
+      kind: "story",
+      title: getDefaultBeatTitle(seq),
+      description: "",
+      date: "",
+    };
+
+    const firstAnchorIndex = seq.findIndex((b) => b.kind === "anchor");
+    if (firstAnchorIndex < 0) {
+      seq.push(beat);
+    } else {
+      const insertAt = findAnchorGroupStartIndex(seq, firstAnchorIndex);
+      seq.splice(insertAt, 0, beat);
+    }
+
+    set({
+      beats: applyLaneSequence(s.beats, targetLaneId, seq),
+      selection: [{ type: "beat", id }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return id;
+  },
+
+  convertBeatToStory: (beatId) => {
+    const s = get();
+    const beat = s.beats.find((b) => b.id === beatId);
+    if (!beat || beat.kind !== "empty") return false;
+
+    const laneBeatsExcluding = s.beats.filter((b) => b.laneId === beat.laneId && b.id !== beatId);
+    const title = getDefaultBeatTitle(laneBeatsExcluding);
+
+    const beats = s.beats.map((b) =>
+      b.id === beatId
+        ? {
+            ...b,
+            kind: "story" as const,
+            title,
+            anchorId: undefined,
+            ghostSide: undefined,
+          }
+        : b
+    );
+
+    set({
+      beats,
+      selection: [{ type: "beat", id: beatId }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return true;
+  },
+
+  setAnchorGhostCount: (anchorId, side, count) => {
+    const s = get();
+    const anchor = s.beats.find((b) => b.id === anchorId);
+    if (!anchor || anchor.kind !== "anchor") return;
+
+    const clamped = Math.min(ANCHOR_GHOST_COUNT_MAX, Math.max(ANCHOR_GHOST_COUNT_MIN, count));
+    const laneId = anchor.laneId;
+    const seq = s.beats
+      .filter((b) => b.laneId === laneId)
+      .sort((a, b) => a.order - b.order);
+
+    const anchorIndex = seq.findIndex((b) => b.id === anchorId);
+    if (anchorIndex < 0) return;
+
+    let runStart: number;
+    let runEnd: number;
+
+    if (side === "below") {
+      runEnd = anchorIndex;
+      runStart = anchorIndex;
+      while (runStart > 0) {
+        const prev = seq[runStart - 1];
+        if (prev.kind === "empty" && prev.anchorId === anchorId && prev.ghostSide === "below") {
+          runStart--;
+        } else {
+          break;
+        }
+      }
+    } else {
+      runStart = anchorIndex + 1;
+      runEnd = runStart;
+      while (runEnd < seq.length) {
+        const b = seq[runEnd];
+        if (b.kind === "empty" && b.anchorId === anchorId && b.ghostSide === "above") {
+          runEnd++;
+        } else {
+          break;
+        }
+      }
+    }
+
+    const current = runEnd - runStart;
+    if (clamped === current) return;
+
+    if (clamped < current) {
+      const removeCount = current - clamped;
+      if (side === "below") {
+        seq.splice(runStart, removeCount);
+      } else {
+        seq.splice(runEnd - removeCount, removeCount);
+      }
+    } else {
+      const addCount = clamped - current;
+      const newGhosts: TimelineBeat[] = [];
+      for (let i = 0; i < addCount; i++) {
+        newGhosts.push(createGhostBeat(laneId, anchorId, side));
+      }
+      if (side === "below") {
+        seq.splice(runStart, 0, ...newGhosts);
+      } else {
+        seq.splice(runEnd, 0, ...newGhosts);
+      }
+    }
+
+    set({
+      beats: applyLaneSequence(s.beats, laneId, seq),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
   updateLane: (laneId, patch) => {
     const s = get();
     const lanes = s.lanes.map((lane) => (lane.id === laneId ? { ...lane, ...patch } : lane));
@@ -477,13 +714,25 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const s = get();
     const beat = s.beats.find((b) => b.id === beatId);
     if (!beat) return;
-    const remaining = s.beats.filter((b) => b.id !== beatId);
+
+    const idsToRemove = new Set([beatId]);
+    if (beat.kind === "anchor") {
+      for (const b of s.beats) {
+        if (b.anchorId === beatId && b.kind === "empty") {
+          idsToRemove.add(b.id);
+        }
+      }
+    }
+
+    const remaining = s.beats.filter((b) => !idsToRemove.has(b.id));
     const beats = renormalizeLaneOrders(remaining, beat.laneId);
-    const connections = s.connections.filter((c) => !c.beatIds.includes(beatId));
+    const connections = s.connections.filter((c) => !c.beatIds.some((id) => idsToRemove.has(id)));
     set({
       beats,
       connections,
-      selection: s.selection.filter((item) => !(item.type === "beat" && item.id === beatId)),
+      selection: s.selection.filter(
+        (item) => !(item.type === "beat" && idsToRemove.has(item.id))
+      ),
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,

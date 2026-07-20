@@ -4,6 +4,7 @@ import Button from "../ui/Button";
 import {
   canFormCrossing,
   connectionMatchesBeatSet,
+  getSelectedBeat,
   useTimelineStore,
   ZOOM_LANE_COUNT_STEPS,
 } from "../../store/timelineStore";
@@ -24,6 +25,9 @@ export default function TimelineToolbar() {
   const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
   const addLane = useTimelineStore((s) => s.addLane);
   const addBeat = useTimelineStore((s) => s.addBeat);
+  const addAnchorBeat = useTimelineStore((s) => s.addAnchorBeat);
+  const addStoryBeatBeforeFirstAnchor = useTimelineStore((s) => s.addStoryBeatBeforeFirstAnchor);
+  const convertBeatToStory = useTimelineStore((s) => s.convertBeatToStory);
   const connections = useTimelineStore((s) => s.connections);
   const toggleConnection = useTimelineStore((s) => s.toggleConnection);
   const setZoomLaneCount = useTimelineStore((s) => s.setZoomLaneCount);
@@ -87,7 +91,22 @@ export default function TimelineToolbar() {
     return "Select two or more beats (shift-click) on different lanes to connect them";
   };
 
-  const handleAddBeat = (kind: "story" | "empty" = "story") => {
+  const handleAddBeat = () => {
+    const selectedBeat = getSelectedBeat(beats, selection);
+    if (selectedBeat && selectedBeat.kind === "empty") {
+      const ok = convertBeatToStory(selectedBeat.id);
+      setMessage(ok ? "Ghost beat promoted to a real beat." : "Could not convert that beat.");
+      return;
+    }
+    const id = addStoryBeatBeforeFirstAnchor();
+    if (!id) {
+      setMessage("Create a lane first.");
+      return;
+    }
+    setMessage("Beat added.");
+  };
+
+  const handleAddBeatFromMenu = (kind: "story" | "empty") => {
     const id = addBeat(undefined, kind);
     if (!id) {
       setMessage("Create a lane first.");
@@ -96,6 +115,24 @@ export default function TimelineToolbar() {
     setMessage(kind === "empty" ? "Empty beat added." : "Beat added.");
     setBeatMenuOpen(false);
   };
+
+  const handleAddAnchorBeat = () => {
+    const id = addAnchorBeat();
+    if (!id) {
+      setMessage("Create a lane first.");
+      return;
+    }
+    setMessage("Anchor beat added.");
+    setBeatMenuOpen(false);
+  };
+
+  const selectedBeat = getSelectedBeat(beats, selection);
+  const primaryAddBeatTitle =
+    selectedBeat?.kind === "empty"
+      ? "Convert the selected ghost beat into a real beat"
+      : canAddBeat
+        ? "New beat (inserts before the lane's oldest anchor beat, if any)"
+        : "Select a lane or create one first";
 
   const handleConnect = () => {
     if (!canConnect) return;
@@ -132,9 +169,9 @@ export default function TimelineToolbar() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => handleAddBeat("story")}
+          onClick={handleAddBeat}
           disabled={!canAddBeat}
-          title={canAddBeat ? "New beat on selected lane" : "Select a lane or create one first"}
+          title={primaryAddBeatTitle}
           className="rounded-none border-0 rounded-l-lg"
         >
           + Beat
@@ -176,17 +213,24 @@ export default function TimelineToolbar() {
             >
               <button
                 type="button"
-                onClick={() => handleAddBeat("story")}
+                onClick={() => handleAddBeatFromMenu("story")}
                 className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
               >
                 Beat
               </button>
               <button
                 type="button"
-                onClick={() => handleAddBeat("empty")}
+                onClick={() => handleAddBeatFromMenu("empty")}
                 className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
               >
                 Empty Beat
+              </button>
+              <button
+                type="button"
+                onClick={handleAddAnchorBeat}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+              >
+                Anchor Beat
               </button>
             </div>,
             document.body

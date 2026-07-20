@@ -34,6 +34,7 @@ export default function BeatBlock({
   const heightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
   const heightTransition = `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`;
   const isEmpty = beat.kind === "empty";
+  const isAnchor = beat.kind === "anchor";
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -62,16 +63,23 @@ export default function BeatBlock({
           ? selected
             ? "border-dashed border-2 border-blue-500 bg-transparent text-dark-muted ring-1 ring-blue-500/60"
             : "border-dashed border-2 border-dark-accent/70 bg-transparent text-dark-muted hover:border-dark-accent"
-          : selected
-            ? "border-blue-500 bg-blue-500/20 text-dark-text ring-1 ring-blue-500/60"
-            : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent/80 hover:bg-dark-accent/20"
+          : isAnchor
+            ? selected
+              ? "border-blue-500 bg-violet-500/15 text-dark-text ring-1 ring-blue-500/60"
+              : "border-violet-500/70 bg-violet-500/10 text-dark-text hover:border-violet-500/90 hover:bg-violet-500/15"
+            : selected
+              ? "border-blue-500 bg-blue-500/20 text-dark-text ring-1 ring-blue-500/60"
+              : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent/80 hover:bg-dark-accent/20"
       }`}
     >
       {isEmpty ? (
         <span className="flex h-full items-center justify-center text-xs italic text-dark-muted">Empty</span>
       ) : (
         <>
-          <span className="block truncate font-medium">{beat.title || "Beat"}</span>
+          <span className="block truncate font-medium">
+            {isAnchor && <span className="mr-1 text-[10px] opacity-80">⚓</span>}
+            {beat.title || (isAnchor ? "Anchor" : "Beat")}
+          </span>
           {beatsExpanded ? (
             <>
               {beat.date.trim() && (

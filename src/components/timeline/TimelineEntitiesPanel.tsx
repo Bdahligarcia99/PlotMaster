@@ -156,11 +156,20 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                               onClick={(e) => handleClick(beatItem, e)}
                               onDoubleClick={(e) => handleDoubleClick(beatItem, e)}
                               className={`w-full text-left px-4 py-1.5 text-sm truncate hover:bg-dark-accent/20 ${
-                                beatSelected ? "bg-blue-500/15 text-dark-text" : "text-dark-muted"
+                                beatSelected
+                                  ? "bg-blue-500/15 text-dark-text"
+                                  : beat.kind === "anchor"
+                                    ? "text-violet-300/90 hover:bg-violet-500/10"
+                                    : "text-dark-muted"
                               }`}
                             >
                               {beat.kind === "empty" ? (
                                 <span className="italic">(empty)</span>
+                              ) : beat.kind === "anchor" ? (
+                                <>
+                                  <span className="text-[10px] opacity-80">⚓ </span>
+                                  {beat.title || "Anchor"}
+                                </>
                               ) : (
                                 beat.title || "Beat"
                               )}

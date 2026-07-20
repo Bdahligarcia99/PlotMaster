@@ -40,14 +40,23 @@ export interface TimelineLane {
   sortOrder: number;
 }
 
+export const ANCHOR_GHOST_COUNT_MIN = 0;
+export const ANCHOR_GHOST_COUNT_MAX = 8;
+export const DEFAULT_ANCHOR_GHOSTS_ABOVE = 1;
+export const DEFAULT_ANCHOR_GHOSTS_BELOW = 1;
+
 export interface TimelineBeat {
   id: string;
   laneId: string;
   order: number;
-  kind: "story" | "empty";
+  kind: "story" | "empty" | "anchor";
   title: string;
   description: string;
   date: string;
+  /** Set on anchor-spawned ghost beats only — references the owning anchor beat id. */
+  anchorId?: string;
+  /** Set on anchor-spawned ghost beats only — which side of the anchor this ghost reserves. */
+  ghostSide?: "above" | "below";
 }
 
 /** Crossing connector: an additive visual link between N beats (N ≥ 2), at most one beat per lane. Never a graph node/hub. */
@@ -71,4 +80,9 @@ export function getDefaultLaneLabel(sortOrder: number): string {
 
 export function getDefaultBeatTitle(existingLaneBeats: TimelineBeat[]): string {
   return `Beat ${existingLaneBeats.length + 1}`;
+}
+
+export function getDefaultAnchorTitle(existingLaneBeats: TimelineBeat[]): string {
+  const n = existingLaneBeats.filter((b) => b.kind === "anchor").length;
+  return n === 0 ? "Anchor" : `Anchor ${n + 1}`;
 }

@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import {
+  ANCHOR_GHOST_COUNT_MAX,
+  ANCHOR_GHOST_COUNT_MIN,
+} from "../../store/timelineTypes";
+import {
   getSelectedBeat,
   getSelectedConnection,
   getSelectedLane,
@@ -18,6 +22,7 @@ export default function TimelineInspector() {
   const removeConnection = useTimelineStore((s) => s.removeConnection);
   const removeLane = useTimelineStore((s) => s.removeLane);
   const removeBeat = useTimelineStore((s) => s.removeBeat);
+  const setAnchorGhostCount = useTimelineStore((s) => s.setAnchorGhostCount);
 
   const editingLane = getSelectedLane(lanes, selection);
   const editingBeat = getSelectedBeat(beats, selection);
@@ -210,6 +215,68 @@ export default function TimelineInspector() {
                   className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
                 />
               </label>
+              {editingBeat.kind === "anchor" && (
+                <>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-dark-muted">Ghosts above</span>
+                      <span className="text-xs text-dark-muted">
+                        {beats.filter(
+                          (b) =>
+                            b.anchorId === editingBeat.id &&
+                            b.ghostSide === "above" &&
+                            b.kind === "empty"
+                        ).length}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={ANCHOR_GHOST_COUNT_MIN}
+                      max={ANCHOR_GHOST_COUNT_MAX}
+                      step={1}
+                      value={beats.filter(
+                        (b) =>
+                          b.anchorId === editingBeat.id &&
+                          b.ghostSide === "above" &&
+                          b.kind === "empty"
+                      ).length}
+                      onChange={(e) =>
+                        setAnchorGhostCount(editingBeat.id, "above", Number(e.target.value))
+                      }
+                      className="w-full h-1 accent-blue-500 cursor-pointer"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-dark-muted">Ghosts below</span>
+                      <span className="text-xs text-dark-muted">
+                        {beats.filter(
+                          (b) =>
+                            b.anchorId === editingBeat.id &&
+                            b.ghostSide === "below" &&
+                            b.kind === "empty"
+                        ).length}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={ANCHOR_GHOST_COUNT_MIN}
+                      max={ANCHOR_GHOST_COUNT_MAX}
+                      step={1}
+                      value={beats.filter(
+                        (b) =>
+                          b.anchorId === editingBeat.id &&
+                          b.ghostSide === "below" &&
+                          b.kind === "empty"
+                      ).length}
+                      onChange={(e) =>
+                        setAnchorGhostCount(editingBeat.id, "below", Number(e.target.value))
+                      }
+                      className="w-full h-1 accent-blue-500 cursor-pointer"
+                    />
+                  </div>
+                </>
+              )}
             </>
           )}
           <p className="text-[10px] text-dark-muted font-mono truncate" title={editingBeat.id}>

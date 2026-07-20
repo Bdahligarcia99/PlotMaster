@@ -77,10 +77,12 @@ export interface TimelineBeatRecord {
   id: string;
   laneId: string;
   order: number;
-  kind?: "story" | "empty";
+  kind?: "story" | "empty" | "anchor";
   title: string;
   description: string;
   date: string;
+  anchorId?: string;
+  ghostSide?: "above" | "below";
 }
 
 /** Crossing connector: an additive visual link between N beats (never a graph node/hub). */
