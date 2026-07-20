@@ -210,7 +210,7 @@ export default function WorkspaceShell() {
             </div>
           </>
         ) : isTimeline ? (
-          <div className="flex-1 flex min-h-0">
+          <div className="flex-1 flex min-h-0 relative">
             <div
               className="flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out flex"
               style={{ width: leftSidebarOpen ? 260 : 0 }}

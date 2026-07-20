@@ -242,7 +242,7 @@ export default function TimelineScreen() {
 
       <div className="flex-1 flex min-h-0 flex-col">
         <TimelineToolbar onSelectForEdit={() => setInspectorOpen(true)} />
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex min-h-0 relative">
           {leftSidebarOpen && (
             <>
               <div className="flex-shrink-0 overflow-hidden flex" style={{ width: entitiesWidth }}>

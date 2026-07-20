@@ -69,7 +69,7 @@ export default function TimelineInspector() {
 
   if (!editingLane && !editingBeat && !editingConnection) {
     return (
-      <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
+      <div className="absolute inset-y-0 right-0 z-30 w-64 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto shadow-2xl">
         <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide mb-3">
           Inspector
         </h3>
@@ -79,7 +79,7 @@ export default function TimelineInspector() {
   }
 
   return (
-    <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto space-y-4">
+    <div className="absolute inset-y-0 right-0 z-30 w-64 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto shadow-2xl space-y-4">
       <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
         Inspector
       </h3>
