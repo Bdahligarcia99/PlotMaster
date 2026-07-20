@@ -178,6 +178,7 @@ export interface ConnectionVisualStyle {
   stroke: string;
   strokeWidth: number;
   dashPattern: number[];
+  description?: string;
 }
 
 export interface ConnectionStyleDef extends ConnectionVisualStyle {
@@ -1163,6 +1164,7 @@ interface FamilyTreeStore {
   marqueeToolActive: boolean;
   isSpacePanning: boolean;
   exportGuidesVisible: boolean;
+  showLegend: boolean;
   exportGuideScale: number;
   showExportDialog: boolean;
   exportOptions: {
@@ -1215,6 +1217,7 @@ interface FamilyTreeStore {
   setMarqueeToolActive: (v: boolean) => void;
   setIsSpacePanning: (v: boolean) => void;
   setExportGuidesVisible: (v: boolean) => void;
+  setShowLegend: (v: boolean) => void;
   setExportGuideScale: (v: number) => void;
   setShowExportDialog: (v: boolean) => void;
   setExportOptions: (opts: Partial<FamilyTreeStore["exportOptions"]>) => void;
@@ -1884,6 +1887,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   marqueeToolActive: false,
   isSpacePanning: false,
   exportGuidesVisible: false,
+  showLegend: false,
   exportGuideScale: 1,
   showExportDialog: false,
   exportOptions: {
@@ -2161,6 +2165,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setMarqueeToolActive: (v) => set({ marqueeToolActive: v }),
   setIsSpacePanning: (v) => set({ isSpacePanning: v }),
   setExportGuidesVisible: (v) => set({ exportGuidesVisible: v }),
+  setShowLegend: (v) => set({ showLegend: v }),
   setExportGuideScale: (v) =>
     set({ exportGuideScale: Math.max(0.25, Math.min(6, v)) }),
   setShowExportDialog: (v) => set({ showExportDialog: v }),

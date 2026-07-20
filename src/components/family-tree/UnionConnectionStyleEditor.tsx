@@ -20,12 +20,13 @@ interface UnionConnectionStyleEditorProps {
 type StyleDraft = {
   id?: string;
   name: string;
+  description?: string;
   stroke: string;
   strokeWidth: number;
   dashPattern: number[];
 };
 
-function StylePreviewLine({
+export function StylePreviewLine({
   style,
   width = 48,
   height = 16,
@@ -91,6 +92,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   const startNewDraft = useCallback(() => {
     setDraft({
       name: "",
+      description: "",
       ...DEFAULT_CONNECTION_STYLE,
     });
   }, []);
@@ -99,6 +101,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     setDraft({
       id: style.id,
       name: style.name,
+      description: style.description ?? "",
       stroke: style.stroke,
       strokeWidth: style.strokeWidth,
       dashPattern: [...style.dashPattern],
@@ -113,6 +116,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     if (!draft) return;
     const payload = {
       name: draft.name.trim() || "Untitled",
+      description: draft.description?.trim() || undefined,
       stroke: draft.stroke,
       strokeWidth: draft.strokeWidth,
       dashPattern: [...draft.dashPattern],
@@ -132,6 +136,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       stroke: draft.stroke,
       strokeWidth: draft.strokeWidth,
       dashPattern: [...draft.dashPattern],
+      description: draft.description?.trim() || undefined,
     });
     setDraft(null);
   }, [draft, setUnionConnectionStyleOverride, unionId]);
@@ -283,6 +288,15 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
             onChange={(e) => updateDraft({ name: e.target.value })}
             className="!mb-2 !py-2 !px-3 text-sm"
           />
+          <div className="mb-2">
+            <label className="block text-dark-muted text-sm mb-2">Description</label>
+            <textarea
+              value={draft.description ?? ""}
+              onChange={(e) => updateDraft({ description: e.target.value })}
+              className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm resize-y min-h-[60px] focus:outline-none focus:border-blue-500"
+              placeholder="Optional description shown as a tooltip..."
+            />
+          </div>
           <ColorInput
             label="Color"
             value={draft.stroke}

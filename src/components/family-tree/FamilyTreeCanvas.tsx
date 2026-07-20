@@ -38,6 +38,7 @@ import GenerationAnchorsOverlay from "./GenerationAnchorsOverlay";
 import GenerationRuler from "./GenerationRuler";
 import NodeSpacingOverlay from "./NodeSpacingOverlay";
 import ExportGuidesOverlay from "./ExportGuidesOverlay";
+import FamilyTreeLegend from "./FamilyTreeLegend";
 import Modal from "../ui/Modal";
 
 function ViewportBoundsSync() {
@@ -386,6 +387,7 @@ export default function FamilyTreeCanvas({
   onNodeSelectForEdit,
 }: FamilyTreeCanvasProps = {}) {
   const exportGuidesVisible = useFamilyTreeStore((s) => s.exportGuidesVisible);
+  const showLegend = useFamilyTreeStore((s) => s.showLegend);
   const setExportViewportEl = useFamilyTreeStore((s) => s.setExportViewportEl);
   const viewportRef = useRef<HTMLDivElement>(null);
   const {
@@ -670,6 +672,7 @@ export default function FamilyTreeCanvas({
         <GenerationRuler />
         <NodeSpacingOverlay />
         {exportGuidesVisible && <ExportGuidesOverlay />}
+        {showLegend && <FamilyTreeLegend />}
         {marqueeToolActive && <MarqueeOverlay isSpacePanning={isSpacePanning} />}
       </ReactFlow>
       <Modal

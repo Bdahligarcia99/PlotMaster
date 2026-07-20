@@ -47,6 +47,8 @@ export default function FamilyTreeToolbar() {
     setGenLabelMode,
     marqueeToolActive,
     setMarqueeToolActive,
+    showLegend,
+    setShowLegend,
     sortUnion,
     nameRoleSuggestions,
     runNameRoleAnalysis,
@@ -573,6 +575,14 @@ export default function FamilyTreeToolbar() {
         title="Marquee Select (M) - drag box to select multiple nodes"
       >
         Marquee Select
+      </Button>
+      <Button
+        variant={showLegend ? "primary" : "secondary"}
+        size="sm"
+        onClick={() => setShowLegend(!showLegend)}
+        title="Show/hide connection style legend"
+      >
+        Legend
       </Button>
       <div ref={genAnchorContainerRef} className="relative flex rounded-lg border border-dark-accent/50">
         <Button

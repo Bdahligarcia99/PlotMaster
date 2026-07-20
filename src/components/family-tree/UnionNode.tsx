@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "reactflow";
 import type { UnionNodeData } from "../../store/familyTreeStore";
-import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H } from "../../store/familyTreeStore";
+import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H, resolveUnionConnectionStyle } from "../../store/familyTreeStore";
 import UnionConnectionStyleEditor from "./UnionConnectionStyleEditor";
 
 function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
@@ -15,6 +15,8 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
+  const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
+  const effectiveStyle = resolveUnionConnectionStyle(data, connectionStyles);
   const x = Math.round(xPos);
   const y = Math.round(yPos);
 
@@ -69,6 +71,7 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
 
       <div
         ref={sizeRef}
+        title={effectiveStyle.description || undefined}
         className={`relative px-3 py-2 rounded-lg border min-w-[60px] flex flex-col items-center justify-center transition-colors ${
           selected
             ? "bg-dark-accent/80 border-blue-500 shadow-md"

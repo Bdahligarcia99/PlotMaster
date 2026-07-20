@@ -9,7 +9,7 @@ import {
   useDraggable,
   useDroppable,
 } from "@dnd-kit/core";
-import { useFamilyTreeStore } from "../../store/familyTreeStore";
+import { useFamilyTreeStore, resolveUnionConnectionStyle } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
 import type { ParentRole } from "../../store/familyTreeStore";
 import { formatGenerationAnchorLabel, getPersonDisplayName, getPersonNameParts, getUnionIdsForPerson, isChildEdge } from "../../store/familyTreeStore";
@@ -705,6 +705,7 @@ export default function FamilyTreeInspector() {
     nameRoleSuggestions,
     setReviewNamesModalOpen,
   } = useFamilyTreeStore();
+  const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
 
   const selectedNode = primarySelectedNodeId
     ? nodes.find((n) => n.id === primarySelectedNodeId)
@@ -965,6 +966,24 @@ export default function FamilyTreeInspector() {
               swapUnionHandleSides={swapUnionHandleSides}
             />
           </div>
+          {(() => {
+            const unionData = nodeData as UnionNodeData;
+            const effectiveStyle = resolveUnionConnectionStyle(unionData, connectionStyles);
+            const libraryStyle = unionData.connectionStyleId
+              ? connectionStyles.find((s) => s.id === unionData.connectionStyleId)
+              : undefined;
+            const styleName = unionData.connectionStyleOverride ? "Custom" : libraryStyle?.name ?? "Default";
+            if (!effectiveStyle.description && styleName === "Default") return null;
+            return (
+              <div className="mb-4">
+                <label className="block text-dark-muted text-sm mb-2">Connection Style</label>
+                <div className="text-dark-text text-sm">{styleName}</div>
+                {effectiveStyle.description && (
+                  <div className="text-dark-muted text-xs mt-1">{effectiveStyle.description}</div>
+                )}
+              </div>
+            );
+          })()}
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Notes</label>
             <textarea
