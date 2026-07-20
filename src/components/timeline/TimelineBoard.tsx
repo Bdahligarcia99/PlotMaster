@@ -7,10 +7,15 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
+import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import { useTimelineStore } from "../../store/timelineStore";
 import { LANE_GATE_HEIGHT_PX, LANE_MIN_WIDTH_PX } from "../../store/timelineTypes";
 
@@ -27,6 +32,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const selectOnly = useTimelineStore((s) => s.selectOnly);
   const toggleSelection = useTimelineStore((s) => s.toggleSelection);
   const moveBeat = useTimelineStore((s) => s.moveBeat);
+  const reorderLane = useTimelineStore((s) => s.reorderLane);
 
   const sortedLanes = useMemo(() => [...lanes].sort((a, b) => a.sortOrder - b.sortOrder), [lanes]);
 
@@ -156,8 +162,22 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over) return;
-      const beatId = String(active.id);
+
+      const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
       const overData = over.data.current as { type?: string; laneId?: string } | undefined;
+
+      if (activeData?.type === "laneReorder") {
+        if (overData?.type !== "laneReorder") return;
+        const targetLaneId = overData.laneId;
+        if (!targetLaneId) return;
+        const targetIndex = sortedLanes.findIndex((lane) => lane.id === targetLaneId);
+        if (targetIndex < 0) return;
+        const sourceLaneId = activeData.laneId ?? String(active.id);
+        reorderLane(sourceLaneId, targetIndex);
+        return;
+      }
+
+      const beatId = String(active.id);
 
       let targetLaneId: string | null = null;
       let targetIndex = 0;
@@ -182,7 +202,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       if (!targetLaneId) return;
       moveBeat(beatId, targetLaneId, targetIndex);
     },
-    [beats, moveBeat]
+    [beats, moveBeat, reorderLane, sortedLanes]
   );
 
   if (sortedLanes.length === 0) {
@@ -235,28 +255,25 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
             </div>
           </div>
 
-          <div
-            className="flex flex-shrink-0 border-t border-dark-accent bg-dark-surface"
-            style={{ height: LANE_GATE_HEIGHT_PX }}
+          <SortableContext
+            items={sortedLanes.map((lane) => laneGateSortableId(lane.id))}
+            strategy={horizontalListSortingStrategy}
           >
-            {sortedLanes.map((lane) => (
-              <button
-                key={lane.id}
-                type="button"
-                onClick={(e) => handleLaneLabelClick(lane.id, e)}
-                style={{ width: laneWidthPx, flexBasis: laneWidthPx }}
-                className={`flex flex-shrink-0 flex-col items-center justify-center gap-0.5 border-r border-dark-accent/30 px-2 text-center transition-colors ${
-                  selectedLaneIds.has(lane.id)
-                    ? "bg-blue-500/20 text-dark-text"
-                    : "text-dark-muted hover:bg-dark-accent/20 hover:text-dark-text"
-                }`}
-                title={`${lane.label} — starting gate`}
-              >
-                <span className="truncate text-sm font-medium max-w-full">{lane.label}</span>
-                <span className="text-[10px] uppercase text-dark-muted">{lane.laneType}</span>
-              </button>
-            ))}
-          </div>
+            <div
+              className="flex flex-shrink-0 border-t border-dark-accent bg-dark-surface"
+              style={{ height: LANE_GATE_HEIGHT_PX }}
+            >
+              {sortedLanes.map((lane) => (
+                <LaneGateCell
+                  key={lane.id}
+                  lane={lane}
+                  width={laneWidthPx}
+                  selected={selectedLaneIds.has(lane.id)}
+                  onClick={(e) => handleLaneLabelClick(lane.id, e)}
+                />
+              ))}
+            </div>
+          </SortableContext>
         </div>
       </div>
     </DndContext>

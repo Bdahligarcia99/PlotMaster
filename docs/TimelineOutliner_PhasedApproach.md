@@ -104,7 +104,8 @@ Section **§1.1** defines the **toolbar mapping** (new person → lane, new chil
 
 - **Semantic selection** is **two existing beats**, matching the family tree Union flow (select two person nodes → Union).
 - Beats are typically on **different lanes** (same-lane connectors are allowed but uncommon).
-- Action creates a **crossing connector** hub with edges to both beats — **purely additive**; neither beat moves lanes or changes order.
+- Action creates a **crossing connector** record with a line drawn to both beats — **purely additive**; neither beat moves lanes or changes order.
+- **Toggle:** Re-selecting the same two already-connected beats and activating the **Crossing** control again **removes** that connector (toggle off), rather than creating a duplicate.
 - **Primary control:** Same **toolbar slot and flow as Union** in family tree (§1.1): user selects **beat A** and **beat B**, then activates **Union / Create crossing connector** (timeline label + tooltip as needed).
 
 ### 3.3 Delete behaviors
@@ -116,12 +117,12 @@ Section **§1.1** defines the **toolbar mapping** (new person → lane, new chil
 - Delete **this beat only**
 - Delete **this beat and all following** on that lane’s ordered sequence
 
-**Crossing connector delete:** Mirrors family tree union delete — removing the connector deletes only the connector node and its edges; **both beats remain** on their lanes. Deleting a beat that is an endpoint removes that connector (and its edges) as well.
+**Crossing connector delete:** Mirrors family tree union delete — removing the connector deletes only the connector record and its line; **both beats remain** on their lanes. Deleting a beat that is an endpoint removes that connector (and its line) as well. The **toggle-off** flow in §3.2 (re-select the same two beats and activate **Crossing** again) is a faster alternative to selecting the connector line/marker and deleting it via the Inspector.
 
 ### 3.4 Reorder
 
 - **Beats:** Drag-and-drop a beat block to reorder it within its own lane's stack, **or** drop it into a different lane's stack (an explicit, deliberate move — see §1's "Rendering model"). Order is renormalized on both the source and destination lane.
-- **Lanes:** Lane reorder (dragging lane columns themselves) is deferred to Phase 4.
+- **Lanes:** Drag a lane's **starting gate** label to reorder lanes (see Phase 1); beats and connector lines follow the new column order.
 - **Crossing connectors:** No special reorder rules — the connector line redraws between wherever the two linked beats currently sit, including immediately during a drag (same spirit as family tree edges reflowing when a person node moves).
 
 ---
@@ -182,6 +183,7 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 - [x] **Create lane** — new lane appears at the **accumulation edge** (rightmost column); triggered from the **new lane** control.
 - [x] **Create beat** — add beat to selected lane (or default lane); triggered from the **new beat** control; titles on blocks.
 - [x] **Drag-and-drop:** a beat block can be reordered within its own lane **or** dropped into a different lane (explicit manual action — see §1's relaxed drag rule); dnd-kit multi-container drag (`DndContext` + per-lane `SortableContext`).
+- [x] **Lane reorder:** drag a lane's **starting gate** label to reorder lanes horizontally; beats stay on their lane and connector lines reflow with the new column order.
 - [x] **Inspector:** **Lane** — label, **lane type** (preset + custom). **Beat** — title, description, date.
 - [x] **Entities panel (timeline mode):** tree **Lanes → Beats**; click to select.
 - [x] **Script v1:** serializable **declarations** for lanes and beats + `@timeline` body; **round-trip** lane/beat create/rename/order.
@@ -227,7 +229,6 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 
 **Goal:** Production-grade editing.
 
-- [ ] **Lane reorder** by dragging **lane columns** (lanes move independently; connector lines reflow).
 - [ ] **Lane delete** with **warning** and cascade delete beats.  
 - [ ] **Beat delete modes:** this node only vs this + **all following** on lane.  
 - [ ] **Undo/redo** (if app-wide pattern exists, hook timeline store).

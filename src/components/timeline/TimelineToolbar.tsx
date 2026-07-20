@@ -8,7 +8,8 @@ export default function TimelineToolbar() {
   const zoomLaneCount = useTimelineStore((s) => s.zoomLaneCount);
   const addLane = useTimelineStore((s) => s.addLane);
   const addBeat = useTimelineStore((s) => s.addBeat);
-  const addConnection = useTimelineStore((s) => s.addConnection);
+  const connections = useTimelineStore((s) => s.connections);
+  const toggleConnection = useTimelineStore((s) => s.toggleConnection);
   const setZoomLaneCount = useTimelineStore((s) => s.setZoomLaneCount);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -22,6 +23,13 @@ export default function TimelineToolbar() {
   const canAddBeat = lanes.length > 0;
   const selectedBeats = selection.filter((s) => s.type === "beat");
   const canConnect = selectedBeats.length === 2 && selectedBeats[0].id !== selectedBeats[1].id;
+  const pairAlreadyConnected =
+    canConnect &&
+    connections.some(
+      (c) =>
+        (c.beatIdA === selectedBeats[0].id && c.beatIdB === selectedBeats[1].id) ||
+        (c.beatIdA === selectedBeats[1].id && c.beatIdB === selectedBeats[0].id)
+    );
 
   const handleAddBeat = () => {
     const id = addBeat();
@@ -34,8 +42,12 @@ export default function TimelineToolbar() {
 
   const handleConnect = () => {
     if (!canConnect) return;
-    const id = addConnection(selectedBeats[0].id, selectedBeats[1].id);
-    setMessage(id ? "Crossing connected." : "Could not connect those beats.");
+    const result = toggleConnection(selectedBeats[0].id, selectedBeats[1].id);
+    if (!result.connectionId) {
+      setMessage("Could not connect those beats.");
+      return;
+    }
+    setMessage(result.created ? "Crossing connected." : "Crossing removed.");
   };
 
   const zoomIndex = ZOOM_LANE_COUNT_STEPS.indexOf(
@@ -76,12 +88,14 @@ export default function TimelineToolbar() {
         disabled={!canConnect}
         title={
           canConnect
-            ? "Connect the two selected beats"
+            ? pairAlreadyConnected
+              ? "Remove the crossing between the two selected beats"
+              : "Connect the two selected beats"
             : "Select exactly two beats (shift-click the second) to connect them"
         }
         className={!canConnect ? "opacity-50 cursor-not-allowed" : ""}
       >
-        Crossing
+        {canConnect && pairAlreadyConnected ? "Uncross" : "Crossing"}
       </Button>
 
       <div className="h-4 w-px bg-dark-accent/60 mx-1" />

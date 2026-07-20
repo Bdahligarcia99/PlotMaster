@@ -1,3 +1,4 @@
+import { arrayMove } from "@dnd-kit/sortable";
 import { create } from "zustand";
 import {
   getStorageDriver,
@@ -107,6 +108,11 @@ interface TimelineStore {
     patch: Partial<Pick<TimelineConnection, "title" | "description" | "date">>
   ) => void;
   removeConnection: (connectionId: string) => void;
+  toggleConnection: (
+    beatIdA: string,
+    beatIdB: string
+  ) => { created: boolean; connectionId: string | null };
+  reorderLane: (laneId: string, newIndex: number) => void;
   applyScriptText: (text: string) => { ok: boolean; errors: string[] };
   syncScriptDraftFromModel: () => string;
 }
@@ -407,6 +413,65 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     set({
       connections: s.connections.filter((c) => c.id !== connectionId),
       selection: s.selection.filter((item) => !(item.type === "connection" && item.id === connectionId)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
+  toggleConnection: (beatIdA, beatIdB) => {
+    if (beatIdA === beatIdB) return { created: false, connectionId: null };
+    const s = get();
+    const existing = s.connections.find(
+      (c) =>
+        (c.beatIdA === beatIdA && c.beatIdB === beatIdB) ||
+        (c.beatIdA === beatIdB && c.beatIdB === beatIdA)
+    );
+    if (existing) {
+      set({
+        connections: s.connections.filter((c) => c.id !== existing.id),
+        selection: s.selection.filter(
+          (item) => !(item.type === "connection" && item.id === existing.id)
+        ),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+        scriptDraft: null,
+      });
+      return { created: false, connectionId: existing.id };
+    }
+    const aExists = s.beats.some((b) => b.id === beatIdA);
+    const bExists = s.beats.some((b) => b.id === beatIdB);
+    if (!aExists || !bExists) return { created: false, connectionId: null };
+    const id = generateTimelineId();
+    const connection: TimelineConnection = {
+      id,
+      beatIdA,
+      beatIdB,
+      title: "",
+      description: "",
+      date: "",
+    };
+    set({
+      connections: [...s.connections, connection],
+      selection: [{ type: "connection", id }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return { created: true, connectionId: id };
+  },
+
+  reorderLane: (laneId, newIndex) => {
+    const s = get();
+    const sorted = [...s.lanes].sort((a, b) => a.sortOrder - b.sortOrder);
+    const oldIndex = sorted.findIndex((lane) => lane.id === laneId);
+    if (oldIndex < 0) return;
+    const clampedIndex = Math.max(0, Math.min(newIndex, sorted.length - 1));
+    if (oldIndex === clampedIndex) return;
+    const reordered = arrayMove(sorted, oldIndex, clampedIndex);
+    const lanes = reordered.map((lane, index) => ({ ...lane, sortOrder: index }));
+    set({
+      lanes,
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
