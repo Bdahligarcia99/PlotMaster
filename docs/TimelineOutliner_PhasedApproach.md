@@ -157,12 +157,14 @@ Phases are **sequential recommendations**; some overlap is possible with clear i
 
 **Goal:** Stable boundaries so the outliner does not fork the app structure.
 
-- [ ] Decide project schema: **per-project orientation** storage location (alongside family tree project model).
-- [ ] Stub **route / screen**: `TimelineScreen` (or equivalent) and entry from workspace shell.
-- [ ] **Empty state** + “coming soon” acceptable until Phase 1 delivers canvas.
-- [ ] Document **IDs**: beat id, lane id, crossing connector id format (UUID strings recommended).
+- [x] Decide project schema: **per-project orientation** storage location (alongside family tree project model).
+- [x] Stub **route / screen**: `TimelineScreen` (or equivalent) and entry from workspace shell.
+- [x] **Empty state** + “coming soon” acceptable until Phase 1 delivers canvas.
+- [x] Document **IDs**: beat id, lane id, crossing connector id format (UUID strings recommended).
 
 **Deliverable:** Placeholder screen + saved project fields for `timelineOrientation`.
+
+**Implemented in:** `StorageDriver` (`TimelineProjectPayload`), `timelineStore`, `/timeline/:projectId` → `TimelineScreen`, `src/storage/timelineIds.ts`.
 
 ---
 

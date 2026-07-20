@@ -6,6 +6,7 @@ import Select from "./ui/Select";
 import Button from "./ui/Button";
 import { useAppStore } from "../store/appStore";
 import { MODULE_TYPES } from "../constants";
+import { createTimelineProject } from "../home/createProject";
 
 interface NewStandaloneProjectModalProps {
   isOpen: boolean;
@@ -23,15 +24,27 @@ export default function NewStandaloneProjectModal({
 
   const [name, setName] = useState("");
   const [moduleType, setModuleType] = useState(defaultModuleType);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedName = name.trim();
-    if (!trimmedName) return;
+    if (!trimmedName || submitting) return;
 
-    const id = createStandaloneProject(trimmedName, moduleType);
-    onClose();
-    navigate(`/project/${id}`);
+    setSubmitting(true);
+    try {
+      if (moduleType === "Timeline") {
+        const id = await createTimelineProject(trimmedName);
+        onClose();
+        navigate(`/timeline/${id}`);
+        return;
+      }
+      const id = createStandaloneProject(trimmedName, moduleType);
+      onClose();
+      navigate(`/project/${id}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleClose = () => {
@@ -65,7 +78,7 @@ export default function NewStandaloneProjectModal({
             type="submit"
             variant="primary"
             className="flex-1"
-            disabled={!name.trim()}
+            disabled={!name.trim() || submitting}
           >
             Create Project
           </Button>

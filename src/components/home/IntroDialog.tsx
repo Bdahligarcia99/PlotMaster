@@ -6,7 +6,7 @@ import Modal from "../ui/Modal";
 import ProjectScopeBox from "./ProjectScopeBox";
 import { getStorageDriver } from "../../storage/StorageDriver";
 import type { ProjectIndexItem } from "../../storage/StorageDriver";
-import { createProject } from "../../home/createProject";
+import { createProject, createTimelineProject } from "../../home/createProject";
 import { MODULE_ID_TO_TYPE } from "../../home/moduleRegistry";
 import { useAppStore } from "../../store/appStore";
 import {
@@ -138,8 +138,8 @@ export default function IntroDialog({
         const id = createStandaloneProject(name, "Profiles");
         openInNewWindow(`/project/${id}`);
       } else if (enabledModules[0] === "timeline") {
-        const id = createStandaloneProject(name, "Timeline");
-        openInNewWindow(`/project/${id}`);
+        const id = await createTimelineProject(name);
+        openInNewWindow(`/timeline/${id}`);
       } else if (enabledModules[0] === "ideaPlayground") {
         const id = createStandaloneProject(name, "Ideas");
         openInNewWindow(`/project/${id}`);
@@ -158,6 +158,9 @@ export default function IntroDialog({
   ): string => {
     if (p.moduleType === "familyTree") {
       return `/family-tree/${p.id}`;
+    }
+    if (p.moduleType === "timeline" || p.moduleType === "Timeline") {
+      return `/timeline/${p.id}`;
     }
     return `/project/${p.id}`;
   };
@@ -181,7 +184,7 @@ export default function IntroDialog({
       removeStandaloneProject(id);
       await getStorageDriver().deleteProject(id);
     }
-    if (location.pathname === `/project/${id}` || location.pathname === `/family-tree/${id}`) {
+    if (location.pathname === `/project/${id}` || location.pathname === `/family-tree/${id}` || location.pathname === `/timeline/${id}`) {
       navigate("/");
     }
   };

@@ -3427,7 +3427,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
 
   loadTree: async (projectId) => {
     const driver = getStorageDriver();
-    const payload = await driver.loadProjectData(projectId);
+    const raw = await driver.loadProjectData(projectId);
+    const payload = raw?.moduleType === "familyTree" ? raw : null;
     const rawNodes = (payload?.nodes ?? []) as Node<FamilyTreeNodeData>[];
     const nodes = normalizeUnknownNames(rawNodes);
     const edges = (payload?.edges ?? []) as Edge[];

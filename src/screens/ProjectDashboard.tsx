@@ -5,6 +5,7 @@ import TopBar from "../components/ui/TopBar";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { useWindowTitle } from "../hooks/useWindowTitle";
+import { createTimelineProject } from "../home/createProject";
 
 const MODULE_STATS: Record<string, { stat1: string; stat2: string; stat3?: string }> = {
   Timeline: { stat1: "0 lanes", stat2: "0 anchors", stat3: "0 nodes" },
@@ -24,7 +25,12 @@ export default function ProjectDashboard() {
 
   useWindowTitle(project ? `${project.name} - Synapse IWE` : "Synapse IWE");
 
-  const handleOpenModule = (moduleName: string) => {
+  const handleOpenModule = async (moduleName: string) => {
+    if (moduleName === "Timeline") {
+      const pid = await createTimelineProject(`${project!.name} - ${moduleName}`);
+      navigate(`/timeline/${pid}`);
+      return;
+    }
     const pid = createStandaloneProject(`${project!.name} - ${moduleName}`, moduleName);
     navigate(`/project/${pid}`);
   };

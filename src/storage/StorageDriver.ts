@@ -62,6 +62,24 @@ export interface ProjectPayload {
   ui?: FamilyTreeUIFlags;
 }
 
+/** Timeline axis orientation (per project). */
+export type TimelineOrientation = "vertical" | "horizontal";
+
+/** Project payload (timeline outliner). Phase 0: orientation only; lanes/beats land in Phase 1+. */
+export interface TimelineProjectPayload {
+  version: 1;
+  moduleType: "timeline";
+  timelineOrientation: TimelineOrientation;
+}
+
+export type ProjectData = ProjectPayload | TimelineProjectPayload;
+
+export function isTimelineProjectPayload(
+  payload: ProjectData | null | undefined
+): payload is TimelineProjectPayload {
+  return payload?.moduleType === "timeline";
+}
+
 /** Storage driver interface - web/localStorage now, Tauri-ready later. */
 export interface StorageDriver {
   listProjects(): Promise<ProjectIndexItem[]>;
@@ -70,8 +88,8 @@ export interface StorageDriver {
     projectId: string,
     patch: Partial<Pick<ProjectIndexItem, "name" | "updatedAt">>
   ): Promise<void>;
-  saveProjectData(projectId: string, payload: ProjectPayload): Promise<void>;
-  loadProjectData(projectId: string): Promise<ProjectPayload | null>;
+  saveProjectData(projectId: string, payload: ProjectData): Promise<void>;
+  loadProjectData(projectId: string): Promise<ProjectData | null>;
   deleteProject(projectId: string): Promise<void>;
 }
 
@@ -114,7 +132,7 @@ class LocalStorageDriver implements StorageDriver {
     }
   }
 
-  async saveProjectData(projectId: string, payload: ProjectPayload): Promise<void> {
+  async saveProjectData(projectId: string, payload: ProjectData): Promise<void> {
     try {
       localStorage.setItem(DATA_KEY(projectId), JSON.stringify(payload));
     } catch (e) {
@@ -123,7 +141,7 @@ class LocalStorageDriver implements StorageDriver {
     }
   }
 
-  async loadProjectData(projectId: string): Promise<ProjectPayload | null> {
+  async loadProjectData(projectId: string): Promise<ProjectData | null> {
     try {
       const raw = localStorage.getItem(DATA_KEY(projectId)) ?? localStorage.getItem(LEGACY_DATA_KEY(projectId));
       return raw ? JSON.parse(raw) : null;
