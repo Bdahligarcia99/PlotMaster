@@ -413,6 +413,8 @@ export default function FamilyTreeCanvas({
     anchorId: string;
     startPositions: Record<string, { x: number; y: number }>;
   } | null>(null);
+  /** When true, a double-clicked union is selected without family member highlight. */
+  const [unionSoleSelection, setUnionSoleSelection] = useState(false);
 
   const onNodeDragStart = useCallback(
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
@@ -532,6 +534,7 @@ export default function FamilyTreeCanvas({
     if (!soleNode) return new Set<string>();
 
     if (soleNode.type === "union" && (soleNode.data as UnionNodeData).kind === "union") {
+      if (unionSoleSelection) return new Set<string>();
       return new Set(getUnionFamilyMemberIds(soleId, nodes, edges));
     }
 
@@ -543,7 +546,7 @@ export default function FamilyTreeCanvas({
     );
     if (!lockedUnion) return new Set<string>();
     return new Set(getUnionFamilyMemberIds(lockedUnion.id, nodes, edges));
-  }, [selectedNodeIds, nodes, edges]);
+  }, [selectedNodeIds, nodes, edges, unionSoleSelection]);
 
   const nodesWithSelection = nodes.map((n) => ({
     ...n,
@@ -586,6 +589,7 @@ export default function FamilyTreeCanvas({
   const onSelectionChange: OnSelectionChangeFunc = useCallback(
     ({ nodes: selectedNodes }) => {
       if (selectedNodes.length === 0 && doubleClickIgnoreClearRef.current) return;
+      setUnionSoleSelection(false);
       setSelectedNodeIds(selectedNodes.map((n) => n.id));
     },
     [setSelectedNodeIds]
@@ -596,6 +600,7 @@ export default function FamilyTreeCanvas({
       if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
         evt.preventDefault();
         evt.stopPropagation();
+        setUnionSoleSelection(false);
         setSelectedNodeIds((prev) => {
           const next = prev.includes(node.id)
             ? prev.filter((id) => id !== node.id)
@@ -603,6 +608,7 @@ export default function FamilyTreeCanvas({
           return next;
         });
       } else {
+        setUnionSoleSelection(false);
         setSelectedNodeIds([node.id]);
       }
     },
@@ -614,6 +620,7 @@ export default function FamilyTreeCanvas({
       evt.preventDefault();
       evt.stopPropagation();
       doubleClickIgnoreClearRef.current = true;
+      setUnionSoleSelection(node.data?.kind === "union");
       setSelectedNodeIds([node.id]);
       onNodeSelectForEdit?.();
       // Reset flag after React Flow's onSelectionChange may have fired
@@ -623,7 +630,10 @@ export default function FamilyTreeCanvas({
     },
     [setSelectedNodeIds, onNodeSelectForEdit]
   );
-  const onPaneClick = useCallback(() => setSelectedNodeIds([]), [setSelectedNodeIds]);
+  const onPaneClick = useCallback(() => {
+    setUnionSoleSelection(false);
+    setSelectedNodeIds([]);
+  }, [setSelectedNodeIds]);
 
   const showSpacePanCursor = marqueeToolActive && isSpacePanning;
 
