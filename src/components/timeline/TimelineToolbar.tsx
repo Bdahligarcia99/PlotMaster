@@ -15,7 +15,11 @@ import {
   EXPANDED_BEAT_HEIGHT_MIN,
 } from "../../store/timelineTypes";
 
-export default function TimelineToolbar() {
+interface TimelineToolbarProps {
+  onSelectForEdit?: () => void;
+}
+
+export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProps) {
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
   const selection = useTimelineStore((s) => s.selection);
@@ -96,6 +100,7 @@ export default function TimelineToolbar() {
     if (selectedBeat && selectedBeat.kind === "empty") {
       const ok = convertBeatToStory(selectedBeat.id);
       setMessage(ok ? "Ghost beat promoted to a real beat." : "Could not convert that beat.");
+      if (ok) onSelectForEdit?.();
       return;
     }
     const id = addStoryBeatBeforeFirstAnchor();
@@ -104,6 +109,7 @@ export default function TimelineToolbar() {
       return;
     }
     setMessage("Beat added.");
+    onSelectForEdit?.();
   };
 
   const handleAddBeatFromMenu = (kind: "story" | "empty") => {
@@ -114,6 +120,7 @@ export default function TimelineToolbar() {
     }
     setMessage(kind === "empty" ? "Empty beat added." : "Beat added.");
     setBeatMenuOpen(false);
+    onSelectForEdit?.();
   };
 
   const handleAddAnchorBeat = () => {
@@ -124,6 +131,7 @@ export default function TimelineToolbar() {
     }
     setMessage("Anchor beat added.");
     setBeatMenuOpen(false);
+    onSelectForEdit?.();
   };
 
   const selectedBeat = getSelectedBeat(beats, selection);

@@ -241,7 +241,7 @@ export default function TimelineScreen() {
       />
 
       <div className="flex-1 flex min-h-0 flex-col">
-        <TimelineToolbar />
+        <TimelineToolbar onSelectForEdit={() => setInspectorOpen(true)} />
         <div className="flex-1 flex min-h-0">
           {leftSidebarOpen && (
             <>
