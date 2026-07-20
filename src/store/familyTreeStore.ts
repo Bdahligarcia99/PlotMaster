@@ -16,7 +16,8 @@ export const CHILD_DY = 208;
 export const CHILD_MAX_GAP = 224;
 export const CHILD_MIN_GAP = 8;
 /** Uniform horizontal step for same-generation siblings (e.g. 0, 224, 448, 672). */
-const UNIFORM_SPACING = 224;
+export const DEFAULT_CHILD_ROW_SPACING = 224;
+const UNIFORM_SPACING = DEFAULT_CHILD_ROW_SPACING;
 
 /** Default node dimensions when measured size unavailable (from component min-w). */
 export const DEFAULT_PERSON_W = 120;
@@ -221,7 +222,18 @@ export interface UnionNodeData {
   connectionStyleOverride?: ConnectionVisualStyle;
   /** When true, dragging any partner/child of this union moves the whole family group together. */
   familyLocked?: boolean;
+  /** Per-union arrange overrides: horizontal/vertical spacing and parent alignment relative to child row. */
+  arrangeSpacing?: UnionArrangeSpacing;
 }
+
+export type UnionArrangeSpacing = {
+  parentSpacing?: number;
+  childSpacing?: number;
+  verticalSpacing?: number;
+  parentAlignment?: "left" | "center" | "right";
+};
+
+export type UnionArrangeSpacingPatch = Partial<UnionArrangeSpacing>;
 
 export type FamilyTreeNodeData = PersonNodeData | UnionNodeData;
 
@@ -443,6 +455,126 @@ export function getUnionFamilyMemberIds(
   );
   const childIds = edges.filter((e) => e.source === unionId && isChildEdge(e)).map((e) => e.target);
   return Array.from(new Set([...partnerIds, ...childIds]));
+}
+
+export function resolveUnionPartners(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[]
+): {
+  leftId: string;
+  rightId: string;
+  leftNode: Node<PersonNodeData>;
+  rightNode: Node<PersonNodeData>;
+  unionData: UnionNodeData;
+} | null {
+  const unionNode = nodes.find(
+    (n) => n.id === unionId && (n.data as { kind?: string }).kind === "union"
+  );
+  if (!unionNode) return null;
+  const unionData = unionNode.data as UnionNodeData;
+  const partnerIds = unionData.partnerIds;
+  if (!partnerIds || partnerIds.length !== 2) return null;
+
+  const personById = new Map(
+    nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n])
+  );
+  const parents = partnerIds
+    .map((id) => (id != null ? personById.get(id) : undefined))
+    .filter((n): n is Node<PersonNodeData> => n != null);
+  if (parents.length !== 2) return null;
+  const [p0, p1] = parents;
+
+  let leftId: string;
+  let rightId: string;
+  if (unionData.leftPartnerId && unionData.rightPartnerId) {
+    leftId = unionData.leftPartnerId;
+    rightId = unionData.rightPartnerId;
+  } else if (p0.position.x <= p1.position.x) {
+    leftId = p0.id;
+    rightId = p1.id;
+  } else {
+    leftId = p1.id;
+    rightId = p0.id;
+  }
+  const leftNode = personById.get(leftId);
+  const rightNode = personById.get(rightId);
+  if (!leftNode || !rightNode) return null;
+  return {
+    leftId,
+    rightId,
+    leftNode: leftNode as Node<PersonNodeData>,
+    rightNode: rightNode as Node<PersonNodeData>,
+    unionData,
+  };
+}
+
+/** Direct children of a union, sorted left-to-right by current X. */
+export function getUnionDirectChildren(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): Node<PersonNodeData>[] {
+  const personById = new Map(
+    nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n])
+  );
+  return edges
+    .filter((e) => e.source === unionId && isChildEdge(e))
+    .map((e) => e.target)
+    .filter((id) => personById.has(id))
+    .map((id) => personById.get(id)! as Node<PersonNodeData>)
+    .sort((a, b) => a.position.x - b.position.x);
+}
+
+export function getUnionParentGap(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[]
+): number | null {
+  const resolved = resolveUnionPartners(unionId, nodes);
+  if (!resolved) return null;
+  return Math.abs(resolved.rightNode.position.x - resolved.leftNode.position.x);
+}
+
+export function getUnionChildrenAvgGap(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): number | null {
+  const children = getUnionDirectChildren(unionId, nodes, edges);
+  if (children.length < 2) return null;
+  let total = 0;
+  for (let i = 1; i < children.length; i++) {
+    total += children[i].position.x - children[i - 1]!.position.x;
+  }
+  return total / (children.length - 1);
+}
+
+export function getUnionVerticalGap(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): number | null {
+  const resolved = resolveUnionPartners(unionId, nodes);
+  if (!resolved) return null;
+  const children = getUnionDirectChildren(unionId, nodes, edges);
+  if (children.length === 0) return null;
+  const avgParentY =
+    (resolved.leftNode.position.y + resolved.rightNode.position.y) / 2;
+  const avgChildY = children.reduce((s, c) => s + c.position.y, 0) / children.length;
+  return avgChildY - avgParentY;
+}
+
+export function getUnionChildRowSpan(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[],
+  nodeSizesById: Record<string, { width: number; height: number }>
+): { left: number; right: number } | null {
+  const children = getUnionDirectChildren(unionId, nodes, edges);
+  if (children.length === 0) return null;
+  const getW = (id: string) => nodeSizesById[id]?.width ?? DEFAULT_PERSON_W;
+  const left = Math.min(...children.map((c) => c.position.x));
+  const right = Math.max(...children.map((c) => c.position.x + getW(c.id)));
+  return { left, right };
 }
 
 /** True if person is target of any child edge (i.e. has parents / is already a child). */
@@ -924,7 +1056,22 @@ export function generateFamilyTreeScript(
       ? connectionStyles.find((s) => s.id === data.connectionStyleId)
       : undefined;
     const styleTag = libraryStyle ? ` [style: "${libraryStyle.name}"]` : "";
-    const headerLine = `@${union.id}: ${leftPart} <=> ${rightPart}${rootGenTag}${styleTag}`;
+    const arrangeParts: string[] = [];
+    if (data.arrangeSpacing?.parentSpacing != null) {
+      arrangeParts.push(`parents=${data.arrangeSpacing.parentSpacing}`);
+    }
+    if (data.arrangeSpacing?.childSpacing != null) {
+      arrangeParts.push(`children=${data.arrangeSpacing.childSpacing}`);
+    }
+    if (data.arrangeSpacing?.verticalSpacing != null) {
+      arrangeParts.push(`vertical=${data.arrangeSpacing.verticalSpacing}`);
+    }
+    if (data.arrangeSpacing?.parentAlignment) {
+      arrangeParts.push(`align=${data.arrangeSpacing.parentAlignment}`);
+    }
+    const arrangeTag =
+      arrangeParts.length > 0 ? ` [arrange: ${arrangeParts.join(", ")}]` : "";
+    const headerLine = `@${union.id}: ${leftPart} <=> ${rightPart}${rootGenTag}${styleTag}${arrangeTag}`;
     if (childTokens.length > 0) {
       lines.push(`${headerLine} {`);
       lines.push(`  children: ${childTokens.join(", ")}`);
@@ -1294,6 +1441,11 @@ interface FamilyTreeStore {
   runLayout: () => boolean;
   /** Scoped Sort: repositions only the given union's partners + direct children. */
   sortUnion: (unionId: string) => boolean;
+  setUnionArrangeSpacing: (unionId: string, patch: UnionArrangeSpacingPatch) => void;
+  applyAverageParentSpacing: (unionId: string) => boolean;
+  applyAverageChildSpacing: (unionId: string) => boolean;
+  applyAverageVerticalSpacing: (unionId: string) => boolean;
+  applyParentAlignment: (unionId: string, alignment: "left" | "center" | "right") => boolean;
 }
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
@@ -1316,6 +1468,204 @@ let prevShowGenInheritIndicator: boolean | null = null;
 let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
 let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
+
+function applyNodePositionUpdates(
+  get: () => FamilyTreeStore,
+  updateMap: Record<string, { x: number; y: number }>,
+  unionId?: string,
+  backfill?: { leftPartnerId: string; rightPartnerId: string } | null
+) {
+  const { setNodes } = get();
+  setNodes((prev) =>
+    prev.map((node) => {
+      const posUpdate = node.id in updateMap ? updateMap[node.id] : undefined;
+      const dataUpdate = unionId && node.id === unionId && backfill ? backfill : undefined;
+      if (posUpdate || dataUpdate) {
+        return {
+          ...node,
+          ...(posUpdate && { position: posUpdate }),
+          ...(dataUpdate && {
+            data: { ...(node.data as UnionNodeData), ...dataUpdate },
+          }),
+        };
+      }
+      return node;
+    })
+  );
+}
+
+function snapGenAnchorsInScope(
+  get: () => FamilyTreeStore,
+  updateMap: Record<string, { x: number; y: number }>,
+  scopeIds: string[],
+  personById: Map<string, Node<PersonNodeData>>,
+  snap: (x: number, y: number) => { x: number; y: number }
+) {
+  const { generationAnchors } = get();
+  for (const id of scopeIds) {
+    const data = personById.get(id)?.data as { genAnchorId?: string | null } | undefined;
+    if (data?.genAnchorId) {
+      const genAnchor = generationAnchors.find((a) => a.id === data.genAnchorId);
+      if (genAnchor) {
+        const pos = updateMap[id];
+        if (pos) {
+          updateMap[id] = { x: pos.x, y: snap(pos.x, genAnchor.yTop + GEN_BASELINE_OFFSET).y };
+        }
+      }
+    }
+  }
+}
+
+/** Place parent pair as a rigid unit aligned to the current child row span; children X/Y untouched. */
+function computeParentAlignmentPositions(
+  get: () => FamilyTreeStore,
+  unionId: string,
+  alignment: "left" | "center" | "right"
+): Record<string, { x: number; y: number }> | null {
+  const s = get();
+  const resolved = resolveUnionPartners(unionId, s.nodes);
+  const childSpan = getUnionChildRowSpan(unionId, s.nodes, s.edges, s.nodeSizesById);
+  if (!resolved || !childSpan) return null;
+
+  const { leftId, rightId, leftNode, rightNode, unionData } = resolved;
+  const parentSpacing = unionData.arrangeSpacing?.parentSpacing ?? PARTNER_DX;
+  const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
+  const getW = (id: string) => s.nodeSizesById[id]?.width ?? DEFAULT_PERSON_W;
+
+  const wR = getW(rightId);
+  const parentSpanWidth = parentSpacing + wR;
+  const childCenter = (childSpan.left + childSpan.right) / 2;
+
+  let targetLeftX: number;
+  if (alignment === "left") {
+    targetLeftX = childSpan.left;
+  } else if (alignment === "center") {
+    targetLeftX = childCenter - parentSpanWidth / 2;
+  } else {
+    targetLeftX = childSpan.right - parentSpanWidth;
+  }
+
+  const partnerY = (leftNode.position.y + rightNode.position.y) / 2;
+  const leftPos = snap(targetLeftX, partnerY);
+  const rightPos = snap(targetLeftX + parentSpacing, partnerY);
+
+  const wL = getW(leftId);
+  const wU = s.nodeSizesById[unionId]?.width ?? DEFAULT_UNION_W;
+  const parentCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+  const unionY = partnerY + UNION_DY;
+
+  const updateMap: Record<string, { x: number; y: number }> = {
+    [leftId]: leftPos,
+    [rightId]: rightPos,
+    [unionId]: snap(parentCenterX - wU / 2, unionY),
+  };
+  return updateMap;
+}
+
+function applyParentAlignmentImpl(
+  get: () => FamilyTreeStore,
+  unionId: string,
+  alignment: "left" | "center" | "right"
+): boolean {
+  const updateMap = computeParentAlignmentPositions(get, unionId, alignment);
+  if (!updateMap) return false;
+  const s = get();
+  const resolved = resolveUnionPartners(unionId, s.nodes);
+  if (!resolved) return false;
+
+  const personById = new Map(
+    s.nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n as Node<PersonNodeData>])
+  );
+  const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
+  const childIds = getUnionDirectChildren(unionId, s.nodes, s.edges).map((c) => c.id);
+  snapGenAnchorsInScope(get, updateMap, [resolved.leftId, resolved.rightId, ...childIds], personById, snap);
+
+  const unionData = resolved.unionData;
+  const backfillNeeded = !unionData.leftPartnerId || !unionData.rightPartnerId;
+  const backfill = backfillNeeded
+    ? { leftPartnerId: resolved.leftId, rightPartnerId: resolved.rightId }
+    : null;
+
+  applyNodePositionUpdates(get, updateMap, unionId, backfill);
+  return true;
+}
+
+function applyAverageParentSpacingImpl(get: () => FamilyTreeStore, unionId: string): boolean {
+  const s = get();
+  const gap = getUnionParentGap(unionId, s.nodes);
+  const resolved = resolveUnionPartners(unionId, s.nodes);
+  if (gap == null || !resolved) return false;
+
+  const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
+  const { leftId, rightId, leftNode, rightNode } = resolved;
+  const updateMap: Record<string, { x: number; y: number }> = {
+    [leftId]: snap(leftNode.position.x, leftNode.position.y),
+    [rightId]: snap(leftNode.position.x + gap, rightNode.position.y),
+  };
+  applyNodePositionUpdates(get, updateMap);
+  return true;
+}
+
+function applyAverageChildSpacingImpl(get: () => FamilyTreeStore, unionId: string): boolean {
+  const s = get();
+  const children = getUnionDirectChildren(unionId, s.nodes, s.edges);
+  if (children.length < 2) return false;
+  const gap = getUnionChildrenAvgGap(unionId, s.nodes, s.edges);
+  if (gap == null) return false;
+
+  const resolved = resolveUnionPartners(unionId, s.nodes);
+  if (!resolved) return false;
+
+  const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
+  const getW = (id: string) => s.nodeSizesById[id]?.width ?? DEFAULT_PERSON_W;
+  const { leftId, rightId, leftNode, rightNode } = resolved;
+  const wL = getW(leftId);
+  const wR = getW(rightId);
+  const leftPos = leftNode.position;
+  const rightPos = rightNode.position;
+  const parentCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+
+  const n = children.length;
+  const childWidths = children.map((c) => getW(c.id));
+  const totalSpan = (n - 1) * gap;
+  let rowStartX: number;
+  if (s.childrenRowAlignment3Plus === "left") {
+    rowStartX = leftPos.x;
+  } else if (s.childrenRowAlignment3Plus === "right") {
+    rowStartX = rightPos.x + wR - totalSpan - childWidths[n - 1]!;
+  } else {
+    rowStartX = parentCenterX - totalSpan / 2 - childWidths[0]! / 2;
+  }
+
+  const updateMap: Record<string, { x: number; y: number }> = {};
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]!;
+    updateMap[child.id] = snap(rowStartX + i * gap, child.position.y);
+  }
+  applyNodePositionUpdates(get, updateMap);
+  return true;
+}
+
+function applyAverageVerticalSpacingImpl(get: () => FamilyTreeStore, unionId: string): boolean {
+  const s = get();
+  const resolved = resolveUnionPartners(unionId, s.nodes);
+  const children = getUnionDirectChildren(unionId, s.nodes, s.edges);
+  if (!resolved || children.length === 0) return false;
+
+  const avgParentY = (resolved.leftNode.position.y + resolved.rightNode.position.y) / 2;
+  const avgChildY = children.reduce((sum, c) => sum + c.position.y, 0) / children.length;
+  const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
+
+  const updateMap: Record<string, { x: number; y: number }> = {
+    [resolved.leftId]: snap(resolved.leftNode.position.x, avgParentY),
+    [resolved.rightId]: snap(resolved.rightNode.position.x, avgParentY),
+  };
+  for (const child of children) {
+    updateMap[child.id] = snap(child.position.x, avgChildY);
+  }
+  applyNodePositionUpdates(get, updateMap);
+  return true;
+}
 
 /** Performs sort/layout logic. Returns true if layout was applied, false if no valid unions. */
 /**
@@ -1376,20 +1726,44 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
 
   const backfillNeeded = !unionData.leftPartnerId || !unionData.rightPartnerId;
 
+  const parentSpacing = unionData.arrangeSpacing?.parentSpacing ?? PARTNER_DX;
+  const childSpacing = unionData.arrangeSpacing?.childSpacing ?? UNIFORM_SPACING;
+  const verticalSpacing = unionData.arrangeSpacing?.verticalSpacing ?? CHILD_DY;
+
   const snap = (x: number, y: number) => (snapToGrid ? snapPosition(x, y, true) : { x, y });
   const getW = (id: string) =>
     nodeSizesById[id]?.width ?? (personById.has(id) ? DEFAULT_PERSON_W : DEFAULT_UNION_W);
 
+  if (unionData.arrangeSpacing?.parentAlignment) {
+    const alignMap = computeParentAlignmentPositions(
+      get,
+      unionId,
+      unionData.arrangeSpacing.parentAlignment
+    );
+    if (!alignMap) return false;
+    const childIds = getUnionDirectChildren(unionId, nodes, edges).map((c) => c.id);
+    snapGenAnchorsInScope(
+      get,
+      alignMap,
+      [leftId, rightId, ...childIds],
+      personById as Map<string, Node<PersonNodeData>>,
+      snap
+    );
+    const backfill = backfillNeeded ? { leftPartnerId: leftId, rightPartnerId: rightId } : null;
+    applyNodePositionUpdates(get, alignMap, unionId, backfill);
+    return true;
+  }
+
   const updateMap: Record<string, { x: number; y: number }> = {};
 
-  // Anchor the geometrically left-most partner in place; place the other PARTNER_DX away.
+  // Anchor the geometrically left-most partner in place; place the other parentSpacing away.
   const anchorId = leftNode.position.x <= rightNode.position.x ? leftId : rightId;
   const otherId = anchorId === leftId ? rightId : leftId;
   const anchorNode = personById.get(anchorId)!;
   const partnerY = anchorNode.position.y;
 
   updateMap[anchorId] = snap(anchorNode.position.x, partnerY);
-  updateMap[otherId] = snap(updateMap[anchorId]!.x + PARTNER_DX, partnerY);
+  updateMap[otherId] = snap(updateMap[anchorId]!.x + parentSpacing, partnerY);
 
   const leftPos = updateMap[leftId]!;
   const rightPos = updateMap[rightId]!;
@@ -1456,7 +1830,7 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
   const childNodes = sortedChildIds
     .map((id) => personById.get(id))
     .filter((n): n is NonNullable<typeof n> => n != null);
-  const baselineY = partnerY + CHILD_DY;
+  const baselineY = partnerY + verticalSpacing;
   const n = childNodes.length;
 
   if (n === 1) {
@@ -1477,7 +1851,7 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
     updateMap[childNodes[1].id] = snap(rightPos.x + wR / 2 - cw1 / 2, baselineY);
   } else if (n >= 3) {
     const childWidths = childNodes.map((c) => getW(c.id));
-    const totalSpan = (n - 1) * UNIFORM_SPACING;
+    const totalSpan = (n - 1) * childSpacing;
     let rowStartX: number;
     if (childrenRowAlignment3Plus === "left") {
       rowStartX = leftPos.x;
@@ -1487,7 +1861,7 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
       rowStartX = parentCenterX - totalSpan / 2 - childWidths[0] / 2;
     }
     for (let i = 0; i < childNodes.length; i++) {
-      updateMap[childNodes[i].id] = snap(rowStartX + i * UNIFORM_SPACING, baselineY);
+      updateMap[childNodes[i].id] = snap(rowStartX + i * childSpacing, baselineY);
     }
   }
 
@@ -2128,6 +2502,47 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       hasUnsavedChanges: true,
       lastSaveError: null,
     })),
+  setUnionArrangeSpacing: (unionId, patch) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        if (n.id !== unionId || (n.data as UnionNodeData).kind !== "union") return n;
+        const d = n.data as UnionNodeData;
+        return {
+          ...n,
+          data: {
+            ...d,
+            arrangeSpacing: { ...(d.arrangeSpacing ?? {}), ...patch },
+          },
+        };
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  applyAverageParentSpacing: (unionId) => {
+    const gap = getUnionParentGap(unionId, get().nodes);
+    const resolved = resolveUnionPartners(unionId, get().nodes);
+    if (gap == null || !resolved) return false;
+    get().setUnionArrangeSpacing(unionId, { parentSpacing: gap });
+    return applyAverageParentSpacingImpl(get, unionId);
+  },
+  applyAverageChildSpacing: (unionId) => {
+    const children = getUnionDirectChildren(unionId, get().nodes, get().edges);
+    if (children.length < 2) return false;
+    const gap = getUnionChildrenAvgGap(unionId, get().nodes, get().edges);
+    if (gap == null) return false;
+    get().setUnionArrangeSpacing(unionId, { childSpacing: gap });
+    return applyAverageChildSpacingImpl(get, unionId);
+  },
+  applyAverageVerticalSpacing: (unionId) => {
+    const gap = getUnionVerticalGap(unionId, get().nodes, get().edges);
+    if (gap == null) return false;
+    get().setUnionArrangeSpacing(unionId, { verticalSpacing: gap });
+    return applyAverageVerticalSpacingImpl(get, unionId);
+  },
+  applyParentAlignment: (unionId, alignment) => {
+    get().setUnionArrangeSpacing(unionId, { parentAlignment: alignment });
+    return applyParentAlignmentImpl(get, unionId, alignment);
+  },
   setGenLabelMode: (v) =>
     set({ genLabelMode: v, hasUnsavedChanges: true, lastSaveError: null }),
   setNodeGenArmed: (nodeId) =>

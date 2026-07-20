@@ -1,10 +1,24 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Button from "../ui/Button";
+import NumberSlider from "../ui/NumberSlider";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import FamilyTreeExportDialog from "./FamilyTreeExportDialog";
 import FamilyTreeReviewSuggestionsModal from "./FamilyTreeReviewSuggestionsModal";
-import { formatGenerationAnchorLabel, getPersonDisplayName, getPersonNameParts, type GenerationAnchor } from "../../store/familyTreeStore";
+import {
+  formatGenerationAnchorLabel,
+  getPersonDisplayName,
+  getPersonNameParts,
+  getUnionParentGap,
+  getUnionChildrenAvgGap,
+  getUnionVerticalGap,
+  getUnionDirectChildren,
+  PARTNER_DX,
+  CHILD_DY,
+  DEFAULT_CHILD_ROW_SPACING,
+  type GenerationAnchor,
+  type UnionNodeData,
+} from "../../store/familyTreeStore";
 
 export default function FamilyTreeToolbar() {
   const {
@@ -50,6 +64,11 @@ export default function FamilyTreeToolbar() {
     showLegend,
     setShowLegend,
     sortUnion,
+    setUnionArrangeSpacing,
+    applyAverageParentSpacing,
+    applyAverageChildSpacing,
+    applyAverageVerticalSpacing,
+    applyParentAlignment,
     nameRoleSuggestions,
     runNameRoleAnalysis,
     updatePersonNameParts,
@@ -76,6 +95,9 @@ export default function FamilyTreeToolbar() {
   const [unionMenuOpen, setUnionMenuOpen] = useState(false);
   const unionContainerRef = useRef<HTMLDivElement>(null);
   const unionDropdownRef = useRef<HTMLDivElement>(null);
+  const [arrangeMenuOpen, setArrangeMenuOpen] = useState(false);
+  const arrangeContainerRef = useRef<HTMLDivElement>(null);
+  const arrangeDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (message) {
@@ -201,6 +223,24 @@ export default function FamilyTreeToolbar() {
     };
   }, [unionMenuOpen]);
 
+  useEffect(() => {
+    if (!arrangeMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inContainer = arrangeContainerRef.current?.contains(target);
+      const inDropdown = arrangeDropdownRef.current?.contains(target);
+      if (!inContainer && !inDropdown) setArrangeMenuOpen(false);
+    };
+    const t = setTimeout(
+      () => document.addEventListener("click", handleClickOutside, { once: true }),
+      0
+    );
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [arrangeMenuOpen]);
+
   const handleAutosaveChange = (enabled: boolean) => {
     setAutosaveEnabled(enabled);
     setAutosaveLabelOverride(enabled ? "All changes saved" : "Autosave off");
@@ -228,9 +268,28 @@ export default function FamilyTreeToolbar() {
   const canUnionAction = canCreateUnion || canLinkPerson;
 
   const canAddChild = selectedNodeIds.length === 1 && selectedUnions.length === 1;
-  const canSort = selectedNodeIds.length === 1 && selectedUnions.length === 1;
+  const canArrange = selectedNodeIds.length === 1 && selectedUnions.length === 1;
   const selectedUnion = selectedUnions[0];
-  const selectedUnionData = selectedUnion?.data as { kind?: string; unionType?: string; partnerIds?: [string | null, string | null] } | undefined;
+  const selectedUnionData = selectedUnion?.data as UnionNodeData | undefined;
+  const selectedUnionId = selectedUnion?.id;
+  const directChildren =
+    selectedUnionId != null ? getUnionDirectChildren(selectedUnionId, nodes, edges) : [];
+  const hasBothPartners = selectedUnionId != null && getUnionParentGap(selectedUnionId, nodes) != null;
+  const hasTwoOrMoreChildren = directChildren.length >= 2;
+  const hasAnyChildren = directChildren.length >= 1;
+  const arrangeSpacing = selectedUnionData?.arrangeSpacing;
+  const parentSpacingValue =
+    arrangeSpacing?.parentSpacing ??
+    (selectedUnionId != null ? getUnionParentGap(selectedUnionId, nodes) : null) ??
+    PARTNER_DX;
+  const childSpacingValue =
+    arrangeSpacing?.childSpacing ??
+    (selectedUnionId != null ? getUnionChildrenAvgGap(selectedUnionId, nodes, edges) : null) ??
+    DEFAULT_CHILD_ROW_SPACING;
+  const verticalSpacingValue =
+    arrangeSpacing?.verticalSpacing ??
+    (selectedUnionId != null ? getUnionVerticalGap(selectedUnionId, nodes, edges) : null) ??
+    CHILD_DY;
   const canAddParent =
     selectedUnion &&
     selectedUnionData?.unionType === "backward" &&
@@ -260,11 +319,11 @@ export default function FamilyTreeToolbar() {
     return "Select exactly one union.";
   }
 
-  function getSortTooltip(): string {
-    if (canSort) return "Sort selected union's partners and direct children";
-    if (selectedNodeIds.length === 0) return "Select a union to sort.";
-    if (selectedNodeIds.length === 1) return "Select a union to sort.";
-    return "Select exactly one union to sort.";
+  function getArrangeTooltip(): string {
+    if (canArrange) return "Arrange selected union's partners and direct children";
+    if (selectedNodeIds.length === 0) return "Select a union to arrange.";
+    if (selectedNodeIds.length === 1) return "Select a union to arrange.";
+    return "Select exactly one union to arrange.";
   }
 
   const handleCreateUnion = () => {
@@ -308,13 +367,13 @@ export default function FamilyTreeToolbar() {
     }
   };
 
-  const handleSort = () => {
-    if (!canSort) {
-      setMessage("Select a union to sort.");
+  const handleArrange = () => {
+    if (!canArrange) {
+      setMessage("Select a union to arrange.");
       return;
     }
     const ok = sortUnion(selectedUnion!.id);
-    setMessage(ok ? null : "Nothing to sort for this union.");
+    setMessage(ok ? null : "Nothing to arrange for this union.");
   };
 
   const handleApplySuggestions = (
@@ -678,15 +737,150 @@ export default function FamilyTreeToolbar() {
             document.body
           )}
       </div>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={handleSort}
-        disabled={!canSort}
-        title={getSortTooltip()}
-      >
-        Sort
-      </Button>
+      <div ref={arrangeContainerRef} className="relative flex rounded-lg border border-dark-accent/50 group/arrange">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleArrange}
+          disabled={!canArrange}
+          title={getArrangeTooltip()}
+          className="rounded-none border-0 rounded-l-lg"
+        >
+          Arrange
+        </Button>
+        <button
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (canArrange) setArrangeMenuOpen((o) => !o);
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          disabled={!canArrange}
+          className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center disabled:opacity-50"
+          title="Arrange spacing options"
+          aria-expanded={arrangeMenuOpen}
+          aria-haspopup="true"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {!canArrange && (
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-2 py-1 bg-dark-accent border border-dark-bg/50 text-dark-text text-xs rounded opacity-0 group-hover/arrange:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
+            {getArrangeTooltip()}
+          </div>
+        )}
+        {arrangeMenuOpen && canArrange && selectedUnionId &&
+          createPortal(
+            <div
+              ref={arrangeDropdownRef}
+              className="fixed py-2 px-3 min-w-[260px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
+              style={{
+                top: arrangeContainerRef.current
+                  ? arrangeContainerRef.current.getBoundingClientRect().bottom + 4
+                  : 0,
+                left: arrangeContainerRef.current
+                  ? arrangeContainerRef.current.getBoundingClientRect().left
+                  : 0,
+              }}
+            >
+              <div className="text-[10px] font-medium text-dark-muted uppercase tracking-wide mb-2">
+                Horizontal spacing
+              </div>
+              <div className={hasBothPartners ? "" : "opacity-50 pointer-events-none"}>
+                <button
+                  type="button"
+                  onClick={() => applyAverageParentSpacing(selectedUnionId)}
+                  className="block text-left text-sm text-dark-text hover:text-blue-400 mb-1 underline-offset-2 hover:underline"
+                  title="Apply averaged parent spacing to all nodes"
+                  disabled={!hasBothPartners}
+                >
+                  Parents
+                </button>
+                <NumberSlider
+                  value={parentSpacingValue}
+                  min={40}
+                  max={600}
+                  step={8}
+                  onChange={(v) => setUnionArrangeSpacing(selectedUnionId, { parentSpacing: v })}
+                  className="mb-3 !mb-3"
+                />
+              </div>
+              <div className={hasTwoOrMoreChildren ? "" : "opacity-50 pointer-events-none"}>
+                <button
+                  type="button"
+                  onClick={() => applyAverageChildSpacing(selectedUnionId)}
+                  className="block text-left text-sm text-dark-text hover:text-blue-400 mb-1 underline-offset-2 hover:underline"
+                  title="Apply averaged children spacing to all nodes"
+                  disabled={!hasTwoOrMoreChildren}
+                >
+                  Children
+                </button>
+                <NumberSlider
+                  value={childSpacingValue}
+                  min={40}
+                  max={600}
+                  step={8}
+                  onChange={(v) => setUnionArrangeSpacing(selectedUnionId, { childSpacing: v })}
+                  className="mb-3 !mb-3"
+                />
+              </div>
+              <div className={`mb-3 ${hasAnyChildren ? "" : "opacity-50 pointer-events-none"}`}>
+                <div className="text-xs text-dark-muted mb-1.5">Parent alignment</div>
+                <div className="flex gap-1">
+                  {(["left", "center", "right"] as const).map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      disabled={!hasAnyChildren}
+                      onClick={() => {
+                        applyParentAlignment(selectedUnionId, opt);
+                        setArrangeMenuOpen(false);
+                      }}
+                      className={`flex-1 px-2 py-1 text-xs rounded border capitalize ${
+                        arrangeSpacing?.parentAlignment === opt
+                          ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                          : "border-dark-accent text-dark-text hover:bg-dark-accent/50"
+                      } disabled:opacity-50`}
+                      title={`Align parents ${opt} relative to child row`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="border-t border-dark-accent/50 pt-2 mt-1">
+                <div className="text-[10px] font-medium text-dark-muted uppercase tracking-wide mb-2">
+                  Vertical spacing
+                </div>
+                <div className={hasAnyChildren ? "" : "opacity-50 pointer-events-none"}>
+                  <button
+                    type="button"
+                    onClick={() => applyAverageVerticalSpacing(selectedUnionId)}
+                    className="block text-left text-sm text-dark-text hover:text-blue-400 mb-1 underline-offset-2 hover:underline"
+                    title="Apply averaged vertical spacing to all nodes"
+                    disabled={!hasAnyChildren}
+                  >
+                    Vertical
+                  </button>
+                  <NumberSlider
+                    value={verticalSpacingValue}
+                    min={40}
+                    max={500}
+                    step={8}
+                    onChange={(v) => setUnionArrangeSpacing(selectedUnionId, { verticalSpacing: v })}
+                    className="mb-0 !mb-0"
+                  />
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+      </div>
       <Button
         variant="secondary"
         size="sm"
