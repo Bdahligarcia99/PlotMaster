@@ -43,6 +43,11 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
     } else {
       selectOnly(item);
     }
+  };
+
+  const handleDoubleClick = (item: TimelineSelectionItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    selectOnly(item);
     onSelectForEdit?.();
   };
 
@@ -130,6 +135,7 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                       type="button"
                       className="flex-1 text-left min-w-0"
                       onClick={(e) => handleClick(laneItem, e)}
+                      onDoubleClick={(e) => handleDoubleClick(laneItem, e)}
                     >
                       <span className="text-dark-text text-sm font-medium truncate block">{lane.label}</span>
                       <span className="text-dark-muted text-[10px] uppercase">{lane.laneType}</span>
@@ -148,6 +154,7 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                               key={beat.id}
                               type="button"
                               onClick={(e) => handleClick(beatItem, e)}
+                              onDoubleClick={(e) => handleDoubleClick(beatItem, e)}
                               className={`w-full text-left px-4 py-1.5 text-sm truncate hover:bg-dark-accent/20 ${
                                 beatSelected ? "bg-blue-500/15 text-dark-text" : "text-dark-muted"
                               }`}
@@ -195,6 +202,7 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                       key={connection.id}
                       type="button"
                       onClick={(e) => handleClick(item, e)}
+                      onDoubleClick={(e) => handleDoubleClick(item, e)}
                       className={`w-full text-left px-4 py-1.5 text-sm truncate hover:bg-dark-accent/20 ${
                         selected ? "bg-amber-500/15 text-dark-text" : "text-dark-muted"
                       }`}

@@ -141,9 +141,17 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       } else {
         selectOnly({ type: "beat", id: beatId });
       }
+    },
+    [toggleSelection, selectOnly]
+  );
+
+  const handleBeatDoubleClick = useCallback(
+    (beatId: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      selectOnly({ type: "beat", id: beatId });
       onSelectForEdit?.();
     },
-    [toggleSelection, selectOnly, onSelectForEdit]
+    [selectOnly, onSelectForEdit]
   );
 
   const handleLaneLabelClick = useCallback(
@@ -154,12 +162,28 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       } else {
         selectOnly({ type: "lane", id: laneId });
       }
+    },
+    [toggleSelection, selectOnly]
+  );
+
+  const handleLaneLabelDoubleClick = useCallback(
+    (laneId: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      selectOnly({ type: "lane", id: laneId });
       onSelectForEdit?.();
     },
-    [toggleSelection, selectOnly, onSelectForEdit]
+    [selectOnly, onSelectForEdit]
   );
 
   const handleSelectConnection = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      selectOnly({ type: "connection", id });
+    },
+    [selectOnly]
+  );
+
+  const handleOpenConnection = useCallback(
     (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
       selectOnly({ type: "connection", id });
@@ -263,6 +287,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
                   beatsExpanded={beatsExpanded}
                   expandedBeatHeightPx={expandedBeatHeightPx}
                   onBeatClick={handleBeatClick}
+                  onBeatDoubleClick={handleBeatDoubleClick}
                   registerBeatRef={registerBeatRef}
                 />
               ))}
@@ -272,6 +297,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
                 connections={connections}
                 selectedConnectionId={selectedConnectionId}
                 onSelectConnection={handleSelectConnection}
+                onOpenConnection={handleOpenConnection}
                 recomputeToken={layoutTick}
               />
             </div>
@@ -292,6 +318,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
                   width={laneWidthPx}
                   selected={selectedLaneIds.has(lane.id)}
                   onClick={(e) => handleLaneLabelClick(lane.id, e)}
+                  onDoubleClick={(e) => handleLaneLabelDoubleClick(lane.id, e)}
                 />
               ))}
             </div>

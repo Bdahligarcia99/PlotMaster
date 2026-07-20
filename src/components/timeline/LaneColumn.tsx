@@ -13,6 +13,7 @@ interface LaneColumnProps {
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
   onBeatClick: (beatId: string, e: React.MouseEvent) => void;
+  onBeatDoubleClick: (beatId: string, e: React.MouseEvent) => void;
   registerBeatRef: (beatId: string, el: HTMLElement | null) => void;
 }
 
@@ -27,6 +28,7 @@ export default function LaneColumn({
   beatsExpanded,
   expandedBeatHeightPx,
   onBeatClick,
+  onBeatDoubleClick,
   registerBeatRef,
 }: LaneColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: laneId, data: { type: "lane", laneId } });
@@ -52,6 +54,7 @@ export default function LaneColumn({
             beatsExpanded={beatsExpanded}
             expandedBeatHeightPx={expandedBeatHeightPx}
             onClick={(e) => onBeatClick(beat.id, e)}
+            onDoubleClick={(e) => onBeatDoubleClick(beat.id, e)}
             registerRef={registerBeatRef}
           />
         ))}

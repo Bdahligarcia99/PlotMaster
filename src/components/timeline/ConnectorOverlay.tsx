@@ -17,6 +17,7 @@ interface ConnectorOverlayProps {
   connections: TimelineConnection[];
   selectedConnectionId: string | null;
   onSelectConnection: (id: string, e: React.MouseEvent) => void;
+  onOpenConnection: (id: string, e: React.MouseEvent) => void;
   recomputeToken: number;
 }
 
@@ -32,6 +33,7 @@ export default function ConnectorOverlay({
   connections,
   selectedConnectionId,
   onSelectConnection,
+  onOpenConnection,
   recomputeToken,
 }: ConnectorOverlayProps) {
   const [lines, setLines] = useState<ConnectorLine[]>([]);
@@ -98,6 +100,7 @@ export default function ConnectorOverlay({
               strokeWidth={1.5}
               className="pointer-events-auto cursor-pointer"
               onClick={(e) => onSelectConnection(line.id, e)}
+              onDoubleClick={(e) => onOpenConnection(line.id, e)}
             />
           </g>
         );

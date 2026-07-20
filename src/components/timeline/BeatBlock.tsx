@@ -11,6 +11,7 @@ interface BeatBlockProps {
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
   onClick: (e: React.MouseEvent) => void;
+  onDoubleClick: (e: React.MouseEvent) => void;
   registerRef: (beatId: string, el: HTMLElement | null) => void;
 }
 
@@ -22,6 +23,7 @@ export default function BeatBlock({
   beatsExpanded,
   expandedBeatHeightPx,
   onClick,
+  onDoubleClick,
   registerRef,
 }: BeatBlockProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -52,6 +54,7 @@ export default function BeatBlock({
       {...attributes}
       {...listeners}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       data-beat-id={beat.id}
       className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left text-sm cursor-grab active:cursor-grabbing select-none transition-colors ${
         selected

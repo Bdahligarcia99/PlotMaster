@@ -11,9 +11,10 @@ interface LaneGateCellProps {
   width: number;
   selected: boolean;
   onClick: (e: React.MouseEvent) => void;
+  onDoubleClick: (e: React.MouseEvent) => void;
 }
 
-export default function LaneGateCell({ lane, width, selected, onClick }: LaneGateCellProps) {
+export default function LaneGateCell({ lane, width, selected, onClick, onDoubleClick }: LaneGateCellProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: laneGateSortableId(lane.id),
     data: { type: "laneReorder", laneId: lane.id },
@@ -35,6 +36,7 @@ export default function LaneGateCell({ lane, width, selected, onClick }: LaneGat
       {...attributes}
       {...listeners}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       className={`flex flex-shrink-0 flex-col items-center justify-center gap-0.5 border-r border-dark-accent/30 px-2 text-center transition-colors cursor-grab active:cursor-grabbing select-none ${
         selected
           ? "bg-blue-500/20 text-dark-text"
