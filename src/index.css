@@ -42,9 +42,10 @@ body {
   background: #1a4a7a;
 }
 
-/* React Flow dark theme overrides */
+/* React Flow dark theme overrides. Not !important: per-edge inline styles
+   (connection style color/weight/dash) must be able to override this default. */
 .react-flow__edge-path {
-  stroke: #64748b !important;
+  stroke: #64748b;
 }
 .react-flow__connection-path {
   stroke: #64748b !important;
