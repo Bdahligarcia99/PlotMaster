@@ -1268,6 +1268,8 @@ interface FamilyTreeStore {
   exportCaptureFlags: { includeNotes: boolean } | null;
   setExportCaptureFlags: (f: { includeNotes: boolean } | null) => void;
   runLayout: () => boolean;
+  /** Scoped Sort: repositions only the given union's partners + direct children. */
+  sortUnion: (unionId: string) => boolean;
 }
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
@@ -1292,6 +1294,222 @@ let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
 
 /** Performs sort/layout logic. Returns true if layout was applied, false if no valid unions. */
+/**
+ * Sort v2: scoped to a single selected union. Repositions only that union's two
+ * partners, the union node itself, and its direct children — nothing else on the
+ * canvas is moved. Partners are anchored near their current position (the left-most
+ * partner stays put; the other is placed PARTNER_DX to its right); children are
+ * placed below using the same alignment rules as the whole-tree Sort.
+ */
+function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
+  const s = get();
+  const {
+    nodes,
+    edges,
+    nodeSizesById,
+    snapToGrid,
+    generationAnchors,
+    singleChildAlignment,
+    childrenRowAlignment3Plus,
+    setNodes,
+  } = s;
+
+  const unionNode = nodes.find(
+    (n) => n.id === unionId && (n.data as { kind?: string }).kind === "union"
+  );
+  if (!unionNode) return false;
+
+  const unionData = unionNode.data as UnionNodeData;
+  const partnerIds = unionData.partnerIds;
+  if (!partnerIds || partnerIds.length !== 2) return false;
+
+  const personById = new Map(
+    nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n])
+  );
+
+  const parents = partnerIds
+    .map((id) => (id != null ? personById.get(id) : undefined))
+    .filter((n): n is NonNullable<typeof n> => n != null);
+  if (parents.length !== 2) return false;
+  const [p0, p1] = parents;
+
+  // Resolve left/right: prefer stored order, else current X position, else id order.
+  let leftId: string;
+  let rightId: string;
+  if (unionData.leftPartnerId && unionData.rightPartnerId) {
+    leftId = unionData.leftPartnerId;
+    rightId = unionData.rightPartnerId;
+  } else if (p0.position.x <= p1.position.x) {
+    leftId = p0.id;
+    rightId = p1.id;
+  } else {
+    leftId = p1.id;
+    rightId = p0.id;
+  }
+  const leftNode = personById.get(leftId);
+  const rightNode = personById.get(rightId);
+  if (!leftNode || !rightNode) return false;
+
+  const backfillNeeded = !unionData.leftPartnerId || !unionData.rightPartnerId;
+
+  const snap = (x: number, y: number) => (snapToGrid ? snapPosition(x, y, true) : { x, y });
+  const getW = (id: string) =>
+    nodeSizesById[id]?.width ?? (personById.has(id) ? DEFAULT_PERSON_W : DEFAULT_UNION_W);
+
+  const updateMap: Record<string, { x: number; y: number }> = {};
+
+  // Anchor the geometrically left-most partner in place; place the other PARTNER_DX away.
+  const anchorId = leftNode.position.x <= rightNode.position.x ? leftId : rightId;
+  const otherId = anchorId === leftId ? rightId : leftId;
+  const anchorNode = personById.get(anchorId)!;
+  const partnerY = anchorNode.position.y;
+
+  updateMap[anchorId] = snap(anchorNode.position.x, partnerY);
+  updateMap[otherId] = snap(updateMap[anchorId]!.x + PARTNER_DX, partnerY);
+
+  const leftPos = updateMap[leftId]!;
+  const rightPos = updateMap[rightId]!;
+  const wL = getW(leftId);
+  const wR = getW(rightId);
+  const parentCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+  const unionY = partnerY + UNION_DY;
+  const wU = getW(unionId);
+  updateMap[unionId] = snap(parentCenterX - wU / 2, unionY);
+
+  // Direct children of this union only (no grandchildren).
+  const rawChildren = edges
+    .filter((e) => e.source === unionId && isChildEdge(e))
+    .map((e) => e.target)
+    .filter((id) => personById.has(id))
+    .sort((a, b) => a.localeCompare(b));
+
+  const unionNodesAll = nodes.filter((n) => (n.data as { kind?: string }).kind === "union");
+  const getEffectivePos = (nodeId: string) =>
+    nodeId in updateMap ? updateMap[nodeId]! : nodes.find((n) => n.id === nodeId)?.position;
+
+  /** Partner union ID for a child (parent in another union), or null. */
+  const getPartnerUnionId = (childId: string): string | null => {
+    const e = edges.find(
+      (edge) =>
+        isPartnerEdge(edge) &&
+        edge.source === childId &&
+        edge.target !== unionId &&
+        unionNodesAll.some((u) => u.id === edge.target)
+    );
+    return e ? (e.target as string) : null;
+  };
+
+  const sortedChildIds = [...rawChildren].sort((a, b) => {
+    const aPartner = getPartnerUnionId(a);
+    const bPartner = getPartnerUnionId(b);
+
+    const getPartnerCenterX = (uId: string): number | null => {
+      const pos = getEffectivePos(uId);
+      if (!pos) return null;
+      return pos.x + getW(uId) / 2;
+    };
+
+    const aCenter = aPartner ? getPartnerCenterX(aPartner) : null;
+    const bCenter = bPartner ? getPartnerCenterX(bPartner) : null;
+
+    if (aPartner && !bPartner) {
+      if (aCenter == null) return 1;
+      return aCenter < parentCenterX ? -1 : 1;
+    }
+    if (!aPartner && bPartner) {
+      if (bCenter == null) return -1;
+      return bCenter < parentCenterX ? 1 : -1;
+    }
+    if (aPartner && bPartner) {
+      if (aCenter == null && bCenter == null) return a.localeCompare(b);
+      if (aCenter == null) return 1;
+      if (bCenter == null) return -1;
+      return aCenter - bCenter;
+    }
+    return a.localeCompare(b);
+  });
+
+  const childNodes = sortedChildIds
+    .map((id) => personById.get(id))
+    .filter((n): n is NonNullable<typeof n> => n != null);
+  const baselineY = partnerY + CHILD_DY;
+  const n = childNodes.length;
+
+  if (n === 1) {
+    const childW = getW(childNodes[0].id);
+    let childX: number;
+    if (singleChildAlignment === "left") {
+      childX = leftPos.x;
+    } else if (singleChildAlignment === "center") {
+      childX = parentCenterX - childW / 2;
+    } else {
+      childX = rightPos.x;
+    }
+    updateMap[childNodes[0].id] = snap(childX, baselineY);
+  } else if (n === 2) {
+    const cw0 = getW(childNodes[0].id);
+    const cw1 = getW(childNodes[1].id);
+    updateMap[childNodes[0].id] = snap(leftPos.x + wL / 2 - cw0 / 2, baselineY);
+    updateMap[childNodes[1].id] = snap(rightPos.x + wR / 2 - cw1 / 2, baselineY);
+  } else if (n >= 3) {
+    const childWidths = childNodes.map((c) => getW(c.id));
+    const totalSpan = (n - 1) * UNIFORM_SPACING;
+    let rowStartX: number;
+    if (childrenRowAlignment3Plus === "left") {
+      rowStartX = leftPos.x;
+    } else if (childrenRowAlignment3Plus === "right") {
+      rowStartX = rightPos.x + wR - totalSpan - childWidths[n - 1];
+    } else {
+      rowStartX = parentCenterX - totalSpan / 2 - childWidths[0] / 2;
+    }
+    for (let i = 0; i < childNodes.length; i++) {
+      updateMap[childNodes[i].id] = snap(rowStartX + i * UNIFORM_SPACING, baselineY);
+    }
+  }
+
+  // Re-snap Y for any in-scope person pinned to a generation anchor.
+  const scopeIds = [leftId, rightId, ...sortedChildIds];
+  for (const id of scopeIds) {
+    const data = personById.get(id)?.data as { genAnchorId?: string | null } | undefined;
+    if (data?.genAnchorId) {
+      const genAnchor = generationAnchors.find((a) => a.id === data.genAnchorId);
+      if (genAnchor) {
+        const pos = updateMap[id];
+        if (pos) {
+          updateMap[id] = { x: pos.x, y: snap(pos.x, genAnchor.yTop + GEN_BASELINE_OFFSET).y };
+        }
+      }
+    }
+  }
+
+  const backfill = backfillNeeded ? { leftPartnerId: leftId, rightPartnerId: rightId } : null;
+
+  setNodes((prev) =>
+    prev.map((node) => {
+      const posUpdate = node.id in updateMap ? updateMap[node.id] : undefined;
+      const dataUpdate = node.id === unionId && backfill ? backfill : undefined;
+      if (posUpdate || dataUpdate) {
+        return {
+          ...node,
+          ...(posUpdate && { position: posUpdate }),
+          ...(dataUpdate && {
+            data: { ...(node.data as UnionNodeData), ...dataUpdate },
+          }),
+        };
+      }
+      return node;
+    })
+  );
+
+  return true;
+}
+
+/**
+ * TODO(revisit): This is the original whole-tree layout, kept only for the PDF export
+ * "Clean Layout" option. The toolbar Sort button now uses sortUnion (scoped to a single
+ * selected union) instead, so these two layout behaviors have diverged. Revisit whether
+ * export should keep this whole-tree behavior or be re-derived from sortUnion.
+ */
 function runLayoutImpl(get: () => FamilyTreeStore): boolean {
   const s = get();
   const {
@@ -1692,6 +1910,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setFitViewForExport: (fn) => set({ fitViewForExport: fn }),
   setExportCaptureFlags: (f) => set({ exportCaptureFlags: f }),
   runLayout: () => runLayoutImpl(get),
+  sortUnion: (unionId) => sortUnionImpl(get, unionId),
   runNameRoleAnalysis: () => {
     const s = get();
     set({ nameRoleSuggestions: analyzeNameAndRoleSuggestions(s.nodes, s.edges) });

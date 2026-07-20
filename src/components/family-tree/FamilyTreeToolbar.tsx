@@ -51,7 +51,7 @@ export default function FamilyTreeToolbar() {
     setGenLabelMode,
     marqueeToolActive,
     setMarqueeToolActive,
-    runLayout,
+    sortUnion,
     nameRoleSuggestions,
     runNameRoleAnalysis,
     updatePersonNameParts,
@@ -250,6 +250,7 @@ export default function FamilyTreeToolbar() {
   const canUnionAction = canCreateUnion || canLinkPerson;
 
   const canAddChild = selectedNodeIds.length === 1 && selectedUnions.length === 1;
+  const canSort = selectedNodeIds.length === 1 && selectedUnions.length === 1;
   const selectedUnion = selectedUnions[0];
   const selectedUnionData = selectedUnion?.data as { kind?: string; unionType?: string; partnerIds?: [string | null, string | null] } | undefined;
   const canAddParent =
@@ -279,6 +280,13 @@ export default function FamilyTreeToolbar() {
     if (selectedNodeIds.length === 0) return "Select a union.";
     if (selectedNodeIds.length === 1) return "Select a union.";
     return "Select exactly one union.";
+  }
+
+  function getSortTooltip(): string {
+    if (canSort) return "Sort selected union's partners and direct children";
+    if (selectedNodeIds.length === 0) return "Select a union to sort.";
+    if (selectedNodeIds.length === 1) return "Select a union to sort.";
+    return "Select exactly one union to sort.";
   }
 
   const handleCreateUnion = () => {
@@ -323,9 +331,12 @@ export default function FamilyTreeToolbar() {
   };
 
   const handleSort = () => {
-    const ok = runLayout();
-    if (!ok) setMessage("No valid unions to sort.");
-    else setMessage(null);
+    if (!canSort) {
+      setMessage("Select a union to sort.");
+      return;
+    }
+    const ok = sortUnion(selectedUnion!.id);
+    setMessage(ok ? null : "Nothing to sort for this union.");
   };
 
   const handleApplySuggestions = (
@@ -686,7 +697,8 @@ export default function FamilyTreeToolbar() {
           variant="secondary"
           size="sm"
           onClick={handleSort}
-          title="Sort family units (v1)"
+          disabled={!canSort}
+          title={getSortTooltip()}
           className="rounded-none border-0 rounded-l-lg"
         >
           Sort

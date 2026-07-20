@@ -147,7 +147,7 @@ function getSwapPartnersState(
   nodes: { id: string; type?: string }[]
 ): { canSwap: boolean; tooltip: string } {
   if (!unionData.leftPartnerId || !unionData.rightPartnerId) {
-    return { canSwap: false, tooltip: "Partner order not yet set. Run Sort first." };
+    return { canSwap: false, tooltip: "Partner order not yet set. Select this union and run Sort first." };
   }
   if (!unionData.partnerIds || unionData.partnerIds.length !== 2) {
     return { canSwap: false, tooltip: "Invalid union data." };
@@ -617,7 +617,7 @@ function SwapPartnersButton({
   nodes: { id: string; type?: string }[];
 }) {
   const { canSwap, tooltip } = getSwapPartnersState(unionData, nodes);
-  const fullTooltip = canSwap ? "Swap left and right partner. Run Sort to reflow layout." : tooltip;
+  const fullTooltip = canSwap ? "Swap left and right partner. Select this union and run Sort to reflow layout." : tooltip;
   return (
     <button
       type="button"
