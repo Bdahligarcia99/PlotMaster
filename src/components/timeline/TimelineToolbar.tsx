@@ -5,6 +5,7 @@ import {
   canFormCrossing,
   connectionMatchesBeatSet,
   getSelectedBeat,
+  resolveLaneIdFromSelection,
   useTimelineStore,
   ZOOM_LANE_COUNT_STEPS,
 } from "../../store/timelineStore";
@@ -27,10 +28,14 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const beatWidthPercent = useTimelineStore((s) => s.beatWidthPercent);
   const beatsExpanded = useTimelineStore((s) => s.beatsExpanded);
   const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
+  const beatPlacementMode = useTimelineStore((s) => s.beatPlacementMode);
+  const requireAnchorSelection = useTimelineStore((s) => s.requireAnchorSelection);
   const addLane = useTimelineStore((s) => s.addLane);
   const addBeat = useTimelineStore((s) => s.addBeat);
   const addAnchorBeat = useTimelineStore((s) => s.addAnchorBeat);
   const addStoryBeatBeforeFirstAnchor = useTimelineStore((s) => s.addStoryBeatBeforeFirstAnchor);
+  const addStoryBeatBeforeAnchor = useTimelineStore((s) => s.addStoryBeatBeforeAnchor);
+  const insertStoryBeatRelativeToBeat = useTimelineStore((s) => s.insertStoryBeatRelativeToBeat);
   const convertBeatToStory = useTimelineStore((s) => s.convertBeatToStory);
   const connections = useTimelineStore((s) => s.connections);
   const toggleConnection = useTimelineStore((s) => s.toggleConnection);
@@ -38,6 +43,8 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
   const setBeatsExpanded = useTimelineStore((s) => s.setBeatsExpanded);
   const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
+  const setBeatPlacementMode = useTimelineStore((s) => s.setBeatPlacementMode);
+  const setRequireAnchorSelection = useTimelineStore((s) => s.setRequireAnchorSelection);
   const [message, setMessage] = useState<string | null>(null);
   const [beatMenuOpen, setBeatMenuOpen] = useState(false);
   const beatContainerRef = useRef<HTMLDivElement>(null);
@@ -68,7 +75,34 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
     };
   }, [beatMenuOpen]);
 
-  const canAddBeat = lanes.length > 0;
+  // Beat creation now requires an explicitly active lane or beat selection — no silent fallback
+  // to "the first lane." The new beat always lands in that selection's corresponding lane.
+  const primarySelection = selection[0] ?? null;
+  const hasActiveTarget =
+    primarySelection !== null && (primarySelection.type === "lane" || primarySelection.type === "beat");
+  const targetLaneId = hasActiveTarget ? resolveLaneIdFromSelection(lanes, beats, selection) : null;
+  const canCreateBeats = hasActiveTarget && targetLaneId !== null;
+
+  const selectedBeat = getSelectedBeat(beats, selection);
+
+  const laneAnchors = targetLaneId
+    ? beats.filter((b) => b.laneId === targetLaneId && b.kind === "anchor")
+    : [];
+  const anchorSpecified = Boolean(
+    selectedBeat && selectedBeat.kind === "anchor" && selectedBeat.laneId === targetLaneId
+  );
+  // Only the default "auto" smart placement is genuinely ambiguous when 2+ anchors exist in the
+  // lane — explicit Above/Below placement and the Empty Beat/Anchor Beat dropdown items are never
+  // gated by this checkbox (each already has an unambiguous target).
+  const multiAnchorBlockActive =
+    requireAnchorSelection &&
+    beatPlacementMode === "auto" &&
+    selectedBeat?.kind !== "empty" &&
+    laneAnchors.length >= 2 &&
+    !anchorSpecified;
+
+  const canAddBeat = canCreateBeats && !multiAnchorBlockActive;
+
   const selectedBeats = selection.filter((s) => s.type === "beat");
   const selectedBeatIds = selectedBeats.map((s) => s.id);
   const crossingCheck = canFormCrossing(selectedBeatIds, beats);
@@ -96,16 +130,53 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   };
 
   const handleAddBeat = () => {
-    const selectedBeat = getSelectedBeat(beats, selection);
+    if (!canCreateBeats) {
+      setMessage("Select a lane or beat first.");
+      return;
+    }
+
+    // Promoting an already-selected ghost always wins, regardless of placement mode.
     if (selectedBeat && selectedBeat.kind === "empty") {
       const ok = convertBeatToStory(selectedBeat.id);
       setMessage(ok ? "Ghost beat promoted to a real beat." : "Could not convert that beat.");
       if (ok) onSelectForEdit?.();
       return;
     }
+
+    if (beatPlacementMode !== "auto") {
+      if (!selectedBeat) {
+        setMessage(`Select a beat to place a new one ${beatPlacementMode} it.`);
+        return;
+      }
+      const id = insertStoryBeatRelativeToBeat(selectedBeat.id, beatPlacementMode);
+      if (!id) {
+        setMessage("Could not place that beat.");
+        return;
+      }
+      setMessage(`Beat placed ${beatPlacementMode} the selected beat.`);
+      onSelectForEdit?.();
+      return;
+    }
+
+    if (multiAnchorBlockActive) {
+      setMessage("This lane has multiple anchors — select the anchor to insert before.");
+      return;
+    }
+
+    if (anchorSpecified && selectedBeat) {
+      const id = addStoryBeatBeforeAnchor(selectedBeat.id);
+      if (!id) {
+        setMessage("Could not add that beat.");
+        return;
+      }
+      setMessage("Beat added.");
+      onSelectForEdit?.();
+      return;
+    }
+
     const id = addStoryBeatBeforeFirstAnchor();
     if (!id) {
-      setMessage("Create a lane first.");
+      setMessage("Select a lane or beat first.");
       return;
     }
     setMessage("Beat added.");
@@ -113,9 +184,13 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   };
 
   const handleAddBeatFromMenu = (kind: "story" | "empty") => {
+    if (!canCreateBeats) {
+      setMessage("Select a lane or beat first.");
+      return;
+    }
     const id = addBeat(undefined, kind);
     if (!id) {
-      setMessage("Create a lane first.");
+      setMessage("Select a lane or beat first.");
       return;
     }
     setMessage(kind === "empty" ? "Empty beat added." : "Beat added.");
@@ -124,9 +199,13 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   };
 
   const handleAddAnchorBeat = () => {
+    if (!canCreateBeats) {
+      setMessage("Select a lane or beat first.");
+      return;
+    }
     const id = addAnchorBeat();
     if (!id) {
-      setMessage("Create a lane first.");
+      setMessage("Select a lane or beat first.");
       return;
     }
     setMessage("Anchor beat added.");
@@ -134,13 +213,20 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
     onSelectForEdit?.();
   };
 
-  const selectedBeat = getSelectedBeat(beats, selection);
-  const primaryAddBeatTitle =
-    selectedBeat?.kind === "empty"
-      ? "Convert the selected ghost beat into a real beat"
-      : canAddBeat
-        ? "New beat (inserts before the lane's oldest anchor beat, if any)"
-        : "Select a lane or create one first";
+  const primaryAddBeatTitle = (): string => {
+    if (!canCreateBeats) return "Select a lane or beat first — the new beat goes in that lane";
+    if (selectedBeat?.kind === "empty") return "Convert the selected ghost beat into a real beat";
+    if (beatPlacementMode !== "auto") {
+      return selectedBeat
+        ? `New beat, placed directly ${beatPlacementMode} the selected beat`
+        : `Select a beat to place a new beat ${beatPlacementMode} it`;
+    }
+    if (multiAnchorBlockActive) {
+      return "This lane has multiple anchors — select the anchor to insert before";
+    }
+    if (anchorSpecified) return "New beat, inserted before the selected anchor";
+    return "New beat (inserts before the lane's oldest anchor beat, if any)";
+  };
 
   const handleConnect = () => {
     if (!canConnect) return;
@@ -179,7 +265,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
           size="sm"
           onClick={handleAddBeat}
           disabled={!canAddBeat}
-          title={primaryAddBeatTitle}
+          title={primaryAddBeatTitle()}
           className="rounded-none border-0 rounded-l-lg"
         >
           + Beat
@@ -189,15 +275,15 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (canAddBeat) setBeatMenuOpen((o) => !o);
+            if (canCreateBeats) setBeatMenuOpen((o) => !o);
           }}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
           }}
-          disabled={!canAddBeat}
+          disabled={!canCreateBeats}
           className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center disabled:opacity-50"
-          title="Beat type options"
+          title="Beat type and placement options"
           aria-expanded={beatMenuOpen}
           aria-haspopup="true"
         >
@@ -209,7 +295,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
           createPortal(
             <div
               ref={beatDropdownRef}
-              className="fixed py-1 min-w-[160px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
+              className="fixed py-1 min-w-[220px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
               style={{
                 top: beatContainerRef.current
                   ? beatContainerRef.current.getBoundingClientRect().bottom + 4
@@ -240,6 +326,57 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
               >
                 Anchor Beat
               </button>
+
+              <div className="my-1 border-t border-dark-accent/40" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  setBeatPlacementMode("auto");
+                  setBeatMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+                title="Default smart placement: promotes a selected ghost, inserts before the relevant anchor, or appends"
+              >
+                <span className="w-4">{beatPlacementMode === "auto" ? "✓" : ""}</span>
+                Auto placement
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBeatPlacementMode("above");
+                  setBeatMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+                title="New beats go directly above the selected beat, pushing anything already there out of the way"
+              >
+                <span className="w-4">{beatPlacementMode === "above" ? "✓" : ""}</span>
+                Place above selected beat
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBeatPlacementMode("below");
+                  setBeatMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+                title="New beats go directly below the selected beat, pushing anything already there out of the way"
+              >
+                <span className="w-4">{beatPlacementMode === "below" ? "✓" : ""}</span>
+                Place below selected beat
+              </button>
+
+              <div className="my-1 border-t border-dark-accent/40" />
+
+              <label className="flex items-center gap-2 px-3 py-2 text-sm text-dark-text cursor-pointer hover:bg-dark-accent/50">
+                <input
+                  type="checkbox"
+                  checked={requireAnchorSelection}
+                  onChange={(e) => setRequireAnchorSelection(e.target.checked)}
+                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                />
+                <span>Require anchor pick when 2+ exist</span>
+              </label>
             </div>,
             document.body
           )}

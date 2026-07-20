@@ -68,7 +68,7 @@ export function createDefaultTimelinePayload(): TimelineProjectPayload {
   };
 }
 
-function resolveLaneIdFromSelection(
+export function resolveLaneIdFromSelection(
   lanes: TimelineLane[],
   beats: TimelineBeat[],
   selection: TimelineSelectionItem[]
@@ -92,11 +92,15 @@ function renormalizeLaneOrders(beats: TimelineBeat[], laneId: string): TimelineB
   return [...beats.filter((b) => !laneBeatIds.has(b.id)), ...laneBeats];
 }
 
-/** Replace laneId's beats with `sequence` (must contain every beat currently in that lane, in the desired bottom-to-top order), renumbering order 0..n-1. Beats in other lanes are untouched. */
+/**
+ * Replace laneId's entire beat set with `sequence` (the complete desired bottom-to-top order —
+ * omit any beat that should be deleted), renumbering order 0..n-1. Beats in other lanes are untouched.
+ * IMPORTANT: this drops ALL of the lane's existing beats unconditionally, not just the ones present
+ * in `sequence` — that's what makes deletions (e.g. shrinking a ghost run) actually take effect.
+ */
 function applyLaneSequence(beats: TimelineBeat[], laneId: string, sequence: TimelineBeat[]): TimelineBeat[] {
   const renumbered = sequence.map((b, i) => ({ ...b, order: i }));
-  const renumberedIds = new Set(renumbered.map((b) => b.id));
-  return [...beats.filter((b) => !(b.laneId === laneId && renumberedIds.has(b.id))), ...renumbered];
+  return [...beats.filter((b) => b.laneId !== laneId), ...renumbered];
 }
 
 function createGhostBeat(laneId: string, anchorId: string, ghostSide: "above" | "below"): TimelineBeat {
@@ -125,6 +129,31 @@ function findAnchorGroupStartIndex(seq: TimelineBeat[], anchorIndex: number): nu
     }
   }
   return start;
+}
+
+/** Build a new story beat and splice it into `seq` immediately before `anchorId`'s whole protected
+ * group (its below-ghosts too), or append it to the end of `seq` if `anchorId` is null/not found. */
+function spliceStoryBeatBeforeAnchor(
+  seq: TimelineBeat[],
+  laneId: string,
+  anchorId: string | null
+): TimelineBeat {
+  const beat: TimelineBeat = {
+    id: generateTimelineId(),
+    laneId,
+    order: 0,
+    kind: "story",
+    title: getDefaultBeatTitle(seq),
+    description: "",
+    date: "",
+  };
+  const anchorIndex = anchorId ? seq.findIndex((b) => b.id === anchorId) : -1;
+  if (anchorIndex < 0) {
+    seq.push(beat);
+  } else {
+    seq.splice(findAnchorGroupStartIndex(seq, anchorIndex), 0, beat);
+  }
+  return beat;
 }
 
 type StoredConnection = TimelineConnectionRecord & {
@@ -214,6 +243,8 @@ interface TimelineStore {
   beatWidthPercent: number;
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
+  beatPlacementMode: "auto" | "above" | "below";
+  requireAnchorSelection: boolean;
   scriptPanelLayout: "split" | "codeOnly" | "viewOnly";
   scriptDraft: string | null;
   hasUnsavedChanges: boolean;
@@ -229,6 +260,8 @@ interface TimelineStore {
   setBeatWidthPercent: (percent: number) => void;
   setBeatsExpanded: (expanded: boolean) => void;
   setExpandedBeatHeightPx: (px: number) => void;
+  setBeatPlacementMode: (mode: "auto" | "above" | "below") => void;
+  setRequireAnchorSelection: (enabled: boolean) => void;
   setSelection: (
     items: TimelineSelectionItem[] | ((prev: TimelineSelectionItem[]) => TimelineSelectionItem[])
   ) => void;
@@ -242,6 +275,8 @@ interface TimelineStore {
     ghostsBelow?: number
   ) => string | null;
   addStoryBeatBeforeFirstAnchor: (laneId?: string) => string | null;
+  addStoryBeatBeforeAnchor: (anchorId: string) => string | null;
+  insertStoryBeatRelativeToBeat: (beatId: string, position: "above" | "below") => string | null;
   convertBeatToStory: (beatId: string) => boolean;
   setAnchorGhostCount: (anchorId: string, side: "above" | "below", count: number) => void;
   updateLane: (laneId: string, patch: Partial<Pick<TimelineLane, "label" | "laneType" | "sortOrder">>) => void;
@@ -275,6 +310,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   beatWidthPercent: DEFAULT_BEAT_WIDTH_PERCENT,
   beatsExpanded: false,
   expandedBeatHeightPx: DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
+  beatPlacementMode: "auto",
+  requireAnchorSelection: false,
   scriptPanelLayout: "split",
   scriptDraft: null,
   hasUnsavedChanges: false,
@@ -368,6 +405,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     set({
       expandedBeatHeightPx: Math.min(EXPANDED_BEAT_HEIGHT_MAX, Math.max(EXPANDED_BEAT_HEIGHT_MIN, px)),
     }),
+
+  setBeatPlacementMode: (mode) => set({ beatPlacementMode: mode }),
+
+  setRequireAnchorSelection: (enabled) => set({ requireAnchorSelection: enabled }),
 
   setSelection: (itemsOrFn) => {
     set((state) => ({
@@ -496,33 +537,77 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       .filter((b) => b.laneId === targetLaneId)
       .sort((a, b) => a.order - b.order);
 
-    const id = generateTimelineId();
+    const firstAnchor = seq.find((b) => b.kind === "anchor") ?? null;
+    const beat = spliceStoryBeatBeforeAnchor(seq, targetLaneId, firstAnchor?.id ?? null);
+
+    set({
+      beats: applyLaneSequence(s.beats, targetLaneId, seq),
+      selection: [{ type: "beat", id: beat.id }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return beat.id;
+  },
+
+  addStoryBeatBeforeAnchor: (anchorId) => {
+    const s = get();
+    const anchor = s.beats.find((b) => b.id === anchorId);
+    if (!anchor || anchor.kind !== "anchor") return null;
+    const laneId = anchor.laneId;
+
+    const seq = s.beats
+      .filter((b) => b.laneId === laneId)
+      .sort((a, b) => a.order - b.order);
+
+    const beat = spliceStoryBeatBeforeAnchor(seq, laneId, anchorId);
+
+    set({
+      beats: applyLaneSequence(s.beats, laneId, seq),
+      selection: [{ type: "beat", id: beat.id }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return beat.id;
+  },
+
+  insertStoryBeatRelativeToBeat: (beatId, position) => {
+    const s = get();
+    const reference = s.beats.find((b) => b.id === beatId);
+    if (!reference) return null;
+    const laneId = reference.laneId;
+
+    const seq = s.beats
+      .filter((b) => b.laneId === laneId)
+      .sort((a, b) => a.order - b.order);
+
+    const idx = seq.findIndex((b) => b.id === beatId);
+    if (idx < 0) return null;
+
     const beat: TimelineBeat = {
-      id,
-      laneId: targetLaneId,
+      id: generateTimelineId(),
+      laneId,
       order: 0,
       kind: "story",
       title: getDefaultBeatTitle(seq),
       description: "",
       date: "",
     };
-
-    const firstAnchorIndex = seq.findIndex((b) => b.kind === "anchor");
-    if (firstAnchorIndex < 0) {
-      seq.push(beat);
-    } else {
-      const insertAt = findAnchorGroupStartIndex(seq, firstAnchorIndex);
-      seq.splice(insertAt, 0, beat);
-    }
+    // Insert directly adjacent to the reference beat. If a ghost currently occupies that slot
+    // (e.g. the reference beat sits right next to an anchor's protected zone), the splice simply
+    // pushes it one position farther out — deliberate manual placement is never blocked by anchors.
+    const insertAt = position === "above" ? idx + 1 : idx;
+    seq.splice(insertAt, 0, beat);
 
     set({
-      beats: applyLaneSequence(s.beats, targetLaneId, seq),
-      selection: [{ type: "beat", id }],
+      beats: applyLaneSequence(s.beats, laneId, seq),
+      selection: [{ type: "beat", id: beat.id }],
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
     });
-    return id;
+    return beat.id;
   },
 
   convertBeatToStory: (beatId) => {
