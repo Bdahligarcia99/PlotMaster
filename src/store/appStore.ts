@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { getStorageDriver } from "../storage/StorageDriver";
 
-const APP_STORAGE_KEY = "plotmaster:app";
+const APP_STORAGE_KEY = "synapse-iwe:app";
+const LEGACY_APP_STORAGE_KEY = "plotmaster:app";
 
 export interface Project {
   id: string;
@@ -44,7 +45,7 @@ const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
 
 function loadFromStorage(): { modularProjects: Project[]; standaloneProjects: StandaloneProject[] } {
   try {
-    const raw = localStorage.getItem(APP_STORAGE_KEY);
+    const raw = localStorage.getItem(APP_STORAGE_KEY) ?? localStorage.getItem(LEGACY_APP_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       const legacy = parsed.workspaces ?? [];

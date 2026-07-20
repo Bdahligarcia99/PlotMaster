@@ -5,7 +5,8 @@ const INTRO_SIZE = { width: 480, height: 580 };
 const MAIN_SIZE = { width: 1280, height: 800 };
 const INTRO_SIZE_MIN = { width: 400, height: 400 };
 const INTRO_SIZE_MAX = { width: 1920, height: 1200 };
-const INTRO_SIZE_STORAGE_KEY = "plotmaster:intro-window-size";
+const INTRO_SIZE_STORAGE_KEY = "synapse-iwe:intro-window-size";
+const LEGACY_INTRO_SIZE_STORAGE_KEY = "plotmaster:intro-window-size";
 
 function isTauri() {
   return typeof window !== "undefined" && "__TAURI__" in window;
@@ -13,7 +14,7 @@ function isTauri() {
 
 function loadSavedIntroSize(): { width: number; height: number } | null {
   try {
-    const raw = localStorage.getItem(INTRO_SIZE_STORAGE_KEY);
+    const raw = localStorage.getItem(INTRO_SIZE_STORAGE_KEY) ?? localStorage.getItem(LEGACY_INTRO_SIZE_STORAGE_KEY);
     if (raw) {
       const { width, height } = JSON.parse(raw);
       if (

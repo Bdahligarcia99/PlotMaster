@@ -215,4 +215,4 @@ A comprehensive inventory of all UI elements (buttons, dropdowns, inputs, etc.) 
 
 ---
 
-*Generated from PlotMaster Family Tree codebase*
+*Generated from Synapse IWE Family Tree codebase*

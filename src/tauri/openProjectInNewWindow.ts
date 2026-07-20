@@ -4,7 +4,7 @@
  */
 
 const PROJECT_WINDOW_SIZE = { width: 1280, height: 800 };
-const INTRO_WINDOW_LABEL = "plotmaster-intro";
+const INTRO_WINDOW_LABEL = "synapse-iwe-intro";
 
 export function isTauri(): boolean {
   if (typeof window === "undefined") return false;
@@ -36,11 +36,11 @@ export async function openProjectInNewWindow(
 
   const webview = new WebviewWindow(label, {
     url,
-    title: "PlotMaster",
+    title: "Synapse IWE",
     width: PROJECT_WINDOW_SIZE.width,
     height: PROJECT_WINDOW_SIZE.height,
     resizable: true,
-    tabbingIdentifier: "plotmaster",
+    tabbingIdentifier: "synapse-iwe",
   });
 
   webview.once("tauri://error", () => {});
@@ -87,7 +87,7 @@ export async function openOrFocusIntroWindow(): Promise<void> {
   let width = 480;
   let height = 580;
   try {
-    const raw = localStorage.getItem("plotmaster:intro-window-size");
+    const raw = localStorage.getItem("synapse-iwe:intro-window-size");
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed.width === "number" && typeof parsed.height === "number") {
@@ -98,11 +98,11 @@ export async function openOrFocusIntroWindow(): Promise<void> {
   } catch {}
   const webview = new WebviewWindow(INTRO_WINDOW_LABEL, {
     url,
-    title: "PlotMaster",
+    title: "Synapse IWE",
     width,
     height,
     resizable: true,
-    tabbingIdentifier: "plotmaster",
+    tabbingIdentifier: "synapse-iwe",
   });
   webview.once("tauri://error", () => {});
 }

@@ -1,6 +1,6 @@
 # Universal UI
 
-A reference for recurring UI elements and panel patterns in PlotMaster. Use this when building new modules to ensure consistency.
+A reference for recurring UI elements and panel patterns in Synapse IWE. Use this when building new modules to ensure consistency.
 
 ---
 

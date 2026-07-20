@@ -202,11 +202,11 @@ export default function IntroDialog({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 id="intro-dialog-title" className="text-2xl font-bold text-dark-text tracking-wider">
-                PLOT MASTER
+                SYNAPSE IWE
               </h1>
               <span
                 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300/95 bg-amber-500/15 border border-amber-400/45 px-2 py-0.5 rounded-md"
-                title="PlotMaster is in early development."
+                title="Synapse IWE is in early development."
               >
                 {APP_RELEASE_CHANNEL}
               </span>
@@ -216,7 +216,7 @@ export default function IntroDialog({
               <span className="text-dark-accent/60" aria-hidden>
                 ·
               </span>
-              <span className="tabular-nums text-dark-muted/90" title={`PlotMaster ${APP_VERSION}`}>
+              <span className="tabular-nums text-dark-muted/90" title={`Synapse IWE ${APP_VERSION}`}>
                 v{APP_VERSION}
               </span>
             </p>

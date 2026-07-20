@@ -3,7 +3,7 @@
 **Status:** Planning document (not yet implemented).  
 **Last updated:** Consolidates product and technical decisions from design discussions.
 
-This document describes a **timeline / story outliner** module for PlotMaster. It is modeled after the **family tree node editor** (canvas + script + entities + inspector) but optimized for **long-form story planning**: parallel arcs (character, subplot, act, theme, etc.), **beats** along a time axis, and **crossing beats** where two arcs intersect in the narrative.
+This document describes a **timeline / story outliner** module for Synapse IWE. It is modeled after the **family tree node editor** (canvas + script + entities + inspector) but optimized for **long-form story planning**: parallel arcs (character, subplot, act, theme, etc.), **beats** along a time axis, and **crossing beats** where two arcs intersect in the narrative.
 
 ---
 

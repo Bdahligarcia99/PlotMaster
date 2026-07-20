@@ -19,7 +19,7 @@ export async function setupWindowMenu() {
   try {
     const menu = await Menu.default();
     const consolidateItem = await MenuItem.new({
-      id: "plotmaster-consolidate-windows",
+      id: "synapse-iwe-consolidate-windows",
       text: "Consolidate Windows",
       action: async () => {
         try {

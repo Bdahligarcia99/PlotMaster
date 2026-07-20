@@ -44,7 +44,7 @@ export default function FamilyTreeScreen() {
     if (!primarySelectedNodeId) setInspectorOpen(false);
   }, [primarySelectedNodeId]);
 
-  useWindowTitle(projectName ? `${projectName} - PlotMaster` : "PlotMaster");
+  useWindowTitle(projectName ? `${projectName} - Synapse IWE` : "Synapse IWE");
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

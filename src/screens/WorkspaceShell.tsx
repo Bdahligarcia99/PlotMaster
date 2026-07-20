@@ -74,7 +74,7 @@ export default function WorkspaceShell() {
   const isProfiles = project?.moduleType === "Profiles";
   const hasPanelLayout = isFamilyTree || isTimeline || isIdeas || isProfiles;
 
-  useWindowTitle(project ? `${project.name} - PlotMaster` : "PlotMaster");
+  useWindowTitle(project ? `${project.name} - Synapse IWE` : "Synapse IWE");
 
   if (!project) {
     return (

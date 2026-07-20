@@ -73,14 +73,16 @@ export interface StorageDriver {
   deleteProject(projectId: string): Promise<void>;
 }
 
-const INDEX_KEY = "plotmaster:projects:index";
-const DATA_KEY = (projectId: string) => `plotmaster:project:data:${projectId}`;
+const INDEX_KEY = "synapse-iwe:projects:index";
+const DATA_KEY = (projectId: string) => `synapse-iwe:project:data:${projectId}`;
+const LEGACY_INDEX_KEY = "plotmaster:projects:index";
+const LEGACY_DATA_KEY = (projectId: string) => `plotmaster:project:data:${projectId}`;
 
 /** LocalStorage implementation. */
 class LocalStorageDriver implements StorageDriver {
   async listProjects(): Promise<ProjectIndexItem[]> {
     try {
-      const raw = localStorage.getItem(INDEX_KEY);
+      const raw = localStorage.getItem(INDEX_KEY) ?? localStorage.getItem(LEGACY_INDEX_KEY);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -121,7 +123,7 @@ class LocalStorageDriver implements StorageDriver {
 
   async loadProjectData(projectId: string): Promise<ProjectPayload | null> {
     try {
-      const raw = localStorage.getItem(DATA_KEY(projectId));
+      const raw = localStorage.getItem(DATA_KEY(projectId)) ?? localStorage.getItem(LEGACY_DATA_KEY(projectId));
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -134,6 +136,7 @@ class LocalStorageDriver implements StorageDriver {
     localStorage.setItem(INDEX_KEY, JSON.stringify(next));
     try {
       localStorage.removeItem(DATA_KEY(projectId));
+      localStorage.removeItem(LEGACY_DATA_KEY(projectId));
     } catch {}
   }
 }

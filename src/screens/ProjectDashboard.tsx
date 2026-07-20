@@ -22,7 +22,7 @@ export default function ProjectDashboard() {
   const project = modularProjects.find((p) => p.id === id);
   const createStandaloneProject = useAppStore((s) => s.createStandaloneProject);
 
-  useWindowTitle(project ? `${project.name} - PlotMaster` : "PlotMaster");
+  useWindowTitle(project ? `${project.name} - Synapse IWE` : "Synapse IWE");
 
   const handleOpenModule = (moduleName: string) => {
     const pid = createStandaloneProject(`${project!.name} - ${moduleName}`, moduleName);

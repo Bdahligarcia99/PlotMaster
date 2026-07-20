@@ -1,12 +1,18 @@
 import { create } from "zustand";
 
 const PROFILES_STORAGE_KEY = (projectId: string) =>
+  `synapse-iwe:profiles:${projectId}`;
+const LEGACY_PROFILES_STORAGE_KEY = (projectId: string) =>
   `plotmaster:profiles:${projectId}`;
 
 const TEMPLATES_STORAGE_KEY = (projectId: string) =>
+  `synapse-iwe:profiles:templates:${projectId}`;
+const LEGACY_TEMPLATES_STORAGE_KEY = (projectId: string) =>
   `plotmaster:profiles:templates:${projectId}`;
 
 const CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
+  `synapse-iwe:profiles:chartSectionLayout:${projectId}`;
+const LEGACY_CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
   `plotmaster:profiles:chartSectionLayout:${projectId}`;
 
 export type SectionHeadingLevel = "h1" | "h2" | "h3" | "h4";
@@ -288,7 +294,7 @@ function migrateCharacter(c: {
 
 function loadFromStorage(projectId: string): CharacterEntity[] {
   try {
-    const raw = localStorage.getItem(PROFILES_STORAGE_KEY(projectId));
+    const raw = localStorage.getItem(PROFILES_STORAGE_KEY(projectId)) ?? localStorage.getItem(LEGACY_PROFILES_STORAGE_KEY(projectId));
     const parsed = raw ? JSON.parse(raw) : [];
     return parsed.map(migrateCharacter);
   } catch {
@@ -309,7 +315,7 @@ function saveToStorage(projectId: string, characters: CharacterEntity[]) {
 
 function loadChartSectionLayoutMode(projectId: string): ChartSectionLayoutMode {
   try {
-    const raw = localStorage.getItem(CHART_SECTION_LAYOUT_KEY(projectId));
+    const raw = localStorage.getItem(CHART_SECTION_LAYOUT_KEY(projectId)) ?? localStorage.getItem(LEGACY_CHART_SECTION_LAYOUT_KEY(projectId));
     if (raw === "grid") return "grid";
   } catch {
     /* ignore */
@@ -327,7 +333,7 @@ function saveChartSectionLayoutMode(projectId: string, mode: ChartSectionLayoutM
 
 function loadTemplatesFromStorage(projectId: string): ChartLayoutTemplate[] {
   try {
-    const raw = localStorage.getItem(TEMPLATES_STORAGE_KEY(projectId));
+    const raw = localStorage.getItem(TEMPLATES_STORAGE_KEY(projectId)) ?? localStorage.getItem(LEGACY_TEMPLATES_STORAGE_KEY(projectId));
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
