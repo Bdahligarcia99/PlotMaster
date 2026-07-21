@@ -1,6 +1,9 @@
 import {
   DndContext,
+  type DragCancelEvent,
   type DragEndEvent,
+  type DragMoveEvent,
+  type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
@@ -17,10 +20,57 @@ import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import { useTimelineStore } from "../../store/timelineStore";
-import { BEAT_HEIGHT_TRANSITION_MS, LANE_GATE_HEIGHT_PX, LANE_MIN_WIDTH_PX } from "../../store/timelineTypes";
+import {
+  BEAT_HEIGHT_TRANSITION_MS,
+  LANE_GATE_HEIGHT_PX,
+  LANE_MIN_WIDTH_PX,
+  type TimelineBeat,
+} from "../../store/timelineTypes";
 
 interface TimelineBoardProps {
   onSelectForEdit?: () => void;
+}
+
+interface DragPreview {
+  beatId: string;
+  laneId: string;
+  /** Index (within the destination lane's beats, sorted bottom-to-top, dragged beat excluded)
+   * where the dragged beat would land if dropped right now. */
+  index: number;
+}
+
+/**
+ * Figure out where a dragged beat would land in `laneId` if dropped at `pointerY` (a viewport Y
+ * coordinate). Compares against the *rendered* midpoints of the lane's other beats so that
+ * dropping on open track space and dropping directly on a neighboring beat produce the same,
+ * position-based result.
+ */
+function computeBeatDropIndex(
+  pointerY: number,
+  laneId: string,
+  beats: TimelineBeat[],
+  excludeBeatId: string,
+  getBeatElement: (beatId: string) => HTMLElement | null
+): number {
+  const laneBeats = beats
+    .filter((b) => b.laneId === laneId && b.id !== excludeBeatId)
+    .sort((a, b) => a.order - b.order);
+
+  let index = 0;
+  for (let i = 0; i < laneBeats.length; i++) {
+    const rect = getBeatElement(laneBeats[i].id)?.getBoundingClientRect();
+    if (!rect) continue;
+    const midY = rect.top + rect.height / 2;
+    if (pointerY > midY) {
+      // Pointer sits below this beat's midpoint — land here, pushing this beat (and everything
+      // above it) up by one.
+      index = i;
+      break;
+    }
+    // Pointer sits above this beat's midpoint — keep looking further up the stack.
+    index = i + 1;
+  }
+  return index;
 }
 
 export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
@@ -47,6 +97,11 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const [viewportHeight, setViewportHeight] = useState(0);
   const [layoutTick, setLayoutTick] = useState(0);
   const dragRafRef = useRef<number | null>(null);
+  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const latestDragEventRef = useRef<{
+    active: DragMoveEvent["active"];
+    over: DragMoveEvent["over"];
+  } | null>(null);
 
   // A callback ref (rather than a plain ref + mount-only effect) so the ResizeObserver gets
   // (re)attached whenever this node actually mounts — including when it first appears after the
@@ -137,20 +192,57 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
     return () => cancelAnimationFrame(rafId);
   }, [beatsExpanded, expandedBeatHeightPx]);
 
-  const bumpDragTick = useCallback(() => {
-    if (dragRafRef.current != null) return;
-    dragRafRef.current = requestAnimationFrame(() => {
-      dragRafRef.current = null;
-      setLayoutTick((t) => t + 1);
-    });
-  }, []);
-
   const registerBeatRef = useCallback((beatId: string, el: HTMLElement | null) => {
     if (el) beatRefs.current.set(beatId, el);
     else beatRefs.current.delete(beatId);
   }, []);
 
   const getBeatElement = useCallback((beatId: string) => beatRefs.current.get(beatId) ?? null, []);
+
+  const recomputeDragPreview = useCallback(() => {
+    const evt = latestDragEventRef.current;
+    if (!evt) return;
+    const { active, over } = evt;
+    const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
+    if (activeData?.type !== "beat") {
+      setDragPreview(null);
+      return;
+    }
+    const overData = over?.data.current as { type?: string; laneId?: string } | undefined;
+    const targetLaneId = overData?.laneId ?? (overData?.type === "lane" && over ? String(over.id) : null);
+    const translated = active.rect.current.translated;
+    if (!targetLaneId || !translated) {
+      setDragPreview(null);
+      return;
+    }
+    const pointerY = translated.top + translated.height / 2;
+    const beatId = String(active.id);
+    const index = computeBeatDropIndex(pointerY, targetLaneId, beats, beatId, getBeatElement);
+    setDragPreview({ beatId, laneId: targetLaneId, index });
+  }, [beats, getBeatElement]);
+
+  const handleDragStart = useCallback((_event: DragStartEvent) => {
+    latestDragEventRef.current = null;
+    setDragPreview(null);
+  }, []);
+
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      latestDragEventRef.current = { active: event.active, over: event.over };
+      if (dragRafRef.current != null) return;
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null;
+        setLayoutTick((t) => t + 1);
+        recomputeDragPreview();
+      });
+    },
+    [recomputeDragPreview]
+  );
+
+  const handleDragCancel = useCallback((_event: DragCancelEvent) => {
+    latestDragEventRef.current = null;
+    setDragPreview(null);
+  }, []);
 
   const handleBeatClick = useCallback(
     (beatId: string, e: React.MouseEvent) => {
@@ -223,6 +315,8 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
+      latestDragEventRef.current = null;
+      setDragPreview(null);
       if (!over) return;
 
       const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
@@ -240,31 +334,20 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       }
 
       const beatId = String(active.id);
-
-      let targetLaneId: string | null = null;
-      let targetIndex = 0;
-
-      if (overData?.type === "lane") {
-        targetLaneId = overData.laneId ?? String(over.id);
-        const laneBeats = beats
-          .filter((b) => b.laneId === targetLaneId && b.id !== beatId)
-          .sort((a, b) => a.order - b.order);
-        targetIndex = laneBeats.length;
-      } else if (overData?.type === "beat") {
-        targetLaneId = overData.laneId ?? null;
-        if (targetLaneId) {
-          const laneBeats = beats
-            .filter((b) => b.laneId === targetLaneId && b.id !== beatId)
-            .sort((a, b) => a.order - b.order);
-          const overIndex = laneBeats.findIndex((b) => b.id === over.id);
-          targetIndex = overIndex >= 0 ? overIndex : laneBeats.length;
-        }
-      }
-
+      const targetLaneId = overData?.laneId ?? (overData?.type === "lane" ? String(over.id) : null);
       if (!targetLaneId) return;
+
+      // Same geometric index computation as the live drag preview, so dropping on open track
+      // space and dropping directly on a neighboring beat resolve to the identical slot.
+      const translated = active.rect.current.translated;
+      const targetIndex =
+        translated != null
+          ? computeBeatDropIndex(translated.top + translated.height / 2, targetLaneId, beats, beatId, getBeatElement)
+          : beats.filter((b) => b.laneId === targetLaneId && b.id !== beatId).length;
+
       moveBeat(beatId, targetLaneId, targetIndex);
     },
-    [beats, moveBeat, reorderLane, sortedLanes]
+    [beats, moveBeat, reorderLane, sortedLanes, getBeatElement]
   );
 
   if (sortedLanes.length === 0) {
@@ -279,8 +362,10 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      onDragMove={bumpDragTick}
+      onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
       <div
         ref={setViewportRef}
@@ -309,6 +394,8 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
                   onBeatClick={handleBeatClick}
                   onBeatDoubleClick={handleBeatDoubleClick}
                   registerBeatRef={registerBeatRef}
+                  draggedBeatId={dragPreview?.beatId ?? null}
+                  dropIndicatorIndex={dragPreview?.laneId === lane.id ? dragPreview.index : null}
                 />
               ))}
               <ConnectorOverlay
