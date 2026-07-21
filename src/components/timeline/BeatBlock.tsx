@@ -1,4 +1,4 @@
-import { useSortable } from "@dnd-kit/sortable";
+import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { BEAT_COLLAPSED_HEIGHT_PX, BEAT_HEIGHT_TRANSITION_MS } from "../../store/timelineTypes";
 import type { TimelineBeat } from "../../store/timelineTypes";
@@ -7,6 +7,9 @@ interface BeatBlockProps {
   beat: TimelineBeat;
   selected: boolean;
   connected: boolean;
+  /** True while another beat is being dragged and would land on (swap with) this beat if dropped
+   * right now. */
+  highlightAsDropTarget?: boolean;
   beatWidthPercent: number;
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
@@ -19,6 +22,7 @@ export default function BeatBlock({
   beat,
   selected,
   connected,
+  highlightAsDropTarget = false,
   beatWidthPercent,
   beatsExpanded,
   expandedBeatHeightPx,
@@ -26,19 +30,17 @@ export default function BeatBlock({
   onDoubleClick,
   registerRef,
 }: BeatBlockProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: beat.id,
     data: { type: "beat", laneId: beat.laneId },
   });
 
   const heightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
-  const heightTransition = `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`;
-  const isEmpty = beat.kind === "empty";
   const isAnchor = beat.kind === "anchor";
 
   const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition: transition ? `${transition}, ${heightTransition}` : heightTransition,
+    transform: CSS.Translate.toString(transform),
+    transition: `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`,
     opacity: isDragging ? 0.4 : 1,
     width: `${beatWidthPercent}%`,
     height: heightPx,
@@ -59,44 +61,34 @@ export default function BeatBlock({
       onDoubleClick={onDoubleClick}
       data-beat-id={beat.id}
       className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left text-sm cursor-grab active:cursor-grabbing select-none transition-colors ${
-        isEmpty
+        isAnchor
           ? selected
-            ? "border-dashed border-2 border-blue-500 bg-transparent text-dark-muted ring-1 ring-blue-500/60"
-            : "border-dashed border-2 border-dark-accent/70 bg-transparent text-dark-muted hover:border-dark-accent"
-          : isAnchor
-            ? selected
-              ? "border-blue-500 bg-violet-500/15 text-dark-text ring-1 ring-blue-500/60"
-              : "border-violet-500/70 bg-violet-500/10 text-dark-text hover:border-violet-500/90 hover:bg-violet-500/15"
-            : selected
-              ? "border-blue-500 bg-blue-500/20 text-dark-text ring-1 ring-blue-500/60"
-              : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent/80 hover:bg-dark-accent/20"
-      }`}
+            ? "border-blue-500 bg-violet-500/15 text-dark-text ring-1 ring-blue-500/60"
+            : "border-violet-500/70 bg-violet-500/10 text-dark-text hover:border-violet-500/90 hover:bg-violet-500/15"
+          : selected
+            ? "border-blue-500 bg-blue-500/20 text-dark-text ring-1 ring-blue-500/60"
+            : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent/80 hover:bg-dark-accent/20"
+      } ${highlightAsDropTarget ? "ring-2 ring-blue-400 shadow-[0_0_10px_2px_rgba(96,165,250,0.5)]" : ""}`}
     >
-      {isEmpty ? (
-        <span className="flex h-full items-center justify-center text-xs italic text-dark-muted">Empty</span>
-      ) : (
+      <span className="block truncate font-medium">
+        {isAnchor && <span className="mr-1 text-[10px] opacity-80">⚓</span>}
+        {beat.title || (isAnchor ? "Anchor" : "Beat")}
+      </span>
+      {beatsExpanded ? (
         <>
-          <span className="block truncate font-medium">
-            {isAnchor && <span className="mr-1 text-[10px] opacity-80">⚓</span>}
-            {beat.title || (isAnchor ? "Anchor" : "Beat")}
-          </span>
-          {beatsExpanded ? (
-            <>
-              {beat.date.trim() && (
-                <span className="block text-[10px] text-dark-muted mt-1">{beat.date}</span>
-              )}
-              {beat.description.trim() && (
-                <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
-                  {beat.description}
-                </span>
-              )}
-            </>
-          ) : (
-            beat.date.trim() && (
-              <span className="block truncate text-[10px] text-dark-muted mt-0.5">{beat.date}</span>
-            )
+          {beat.date.trim() && (
+            <span className="block text-[10px] text-dark-muted mt-1">{beat.date}</span>
+          )}
+          {beat.description.trim() && (
+            <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
+              {beat.description}
+            </span>
           )}
         </>
+      ) : (
+        beat.date.trim() && (
+          <span className="block truncate text-[10px] text-dark-muted mt-0.5">{beat.date}</span>
+        )
       )}
       {connected && (
         <span

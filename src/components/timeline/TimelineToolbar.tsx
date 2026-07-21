@@ -29,14 +29,9 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const beatsExpanded = useTimelineStore((s) => s.beatsExpanded);
   const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
   const beatPlacementMode = useTimelineStore((s) => s.beatPlacementMode);
-  const requireAnchorSelection = useTimelineStore((s) => s.requireAnchorSelection);
   const addLane = useTimelineStore((s) => s.addLane);
   const addBeat = useTimelineStore((s) => s.addBeat);
-  const addAnchorBeat = useTimelineStore((s) => s.addAnchorBeat);
-  const addStoryBeatBeforeFirstAnchor = useTimelineStore((s) => s.addStoryBeatBeforeFirstAnchor);
-  const addStoryBeatBeforeAnchor = useTimelineStore((s) => s.addStoryBeatBeforeAnchor);
   const insertStoryBeatRelativeToBeat = useTimelineStore((s) => s.insertStoryBeatRelativeToBeat);
-  const convertBeatToStory = useTimelineStore((s) => s.convertBeatToStory);
   const connections = useTimelineStore((s) => s.connections);
   const toggleConnection = useTimelineStore((s) => s.toggleConnection);
   const setZoomLaneCount = useTimelineStore((s) => s.setZoomLaneCount);
@@ -44,7 +39,6 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const setBeatsExpanded = useTimelineStore((s) => s.setBeatsExpanded);
   const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
   const setBeatPlacementMode = useTimelineStore((s) => s.setBeatPlacementMode);
-  const setRequireAnchorSelection = useTimelineStore((s) => s.setRequireAnchorSelection);
   const [message, setMessage] = useState<string | null>(null);
   const [beatMenuOpen, setBeatMenuOpen] = useState(false);
   const beatContainerRef = useRef<HTMLDivElement>(null);
@@ -84,24 +78,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const canCreateBeats = hasActiveTarget && targetLaneId !== null;
 
   const selectedBeat = getSelectedBeat(beats, selection);
-
-  const laneAnchors = targetLaneId
-    ? beats.filter((b) => b.laneId === targetLaneId && b.kind === "anchor")
-    : [];
-  const anchorSpecified = Boolean(
-    selectedBeat && selectedBeat.kind === "anchor" && selectedBeat.laneId === targetLaneId
-  );
-  // Only the default "auto" smart placement is genuinely ambiguous when 2+ anchors exist in the
-  // lane — explicit Above/Below placement and the Empty Beat/Anchor Beat dropdown items are never
-  // gated by this checkbox (each already has an unambiguous target).
-  const multiAnchorBlockActive =
-    requireAnchorSelection &&
-    beatPlacementMode === "auto" &&
-    selectedBeat?.kind !== "empty" &&
-    laneAnchors.length >= 2 &&
-    !anchorSpecified;
-
-  const canAddBeat = canCreateBeats && !multiAnchorBlockActive;
+  const canAddBeat = canCreateBeats;
 
   const selectedBeats = selection.filter((s) => s.type === "beat");
   const selectedBeatIds = selectedBeats.map((s) => s.id);
@@ -117,9 +94,6 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
     if (crossingCheck.reason === "same-lane") {
       return "Each beat in a crossing must be on a different lane — you have two selected beats in the same lane";
     }
-    if (crossingCheck.reason === "empty-beat") {
-      return "Empty beats can't be part of a crossing — deselect them first";
-    }
     if (canConnect && setAlreadyConnected) {
       return "Remove the crossing between the selected beats";
     }
@@ -132,14 +106,6 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const handleAddBeat = () => {
     if (!canCreateBeats) {
       setMessage("Select a lane or beat first.");
-      return;
-    }
-
-    // Promoting an already-selected ghost always wins, regardless of placement mode.
-    if (selectedBeat && selectedBeat.kind === "empty") {
-      const ok = convertBeatToStory(selectedBeat.id);
-      setMessage(ok ? "Ghost beat promoted to a real beat." : "Could not convert that beat.");
-      if (ok) onSelectForEdit?.();
       return;
     }
 
@@ -158,23 +124,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
       return;
     }
 
-    if (multiAnchorBlockActive) {
-      setMessage("This lane has multiple anchors — select the anchor to insert before.");
-      return;
-    }
-
-    if (anchorSpecified && selectedBeat) {
-      const id = addStoryBeatBeforeAnchor(selectedBeat.id);
-      if (!id) {
-        setMessage("Could not add that beat.");
-        return;
-      }
-      setMessage("Beat added.");
-      onSelectForEdit?.();
-      return;
-    }
-
-    const id = addStoryBeatBeforeFirstAnchor();
+    const id = addBeat(targetLaneId ?? undefined, "story");
     if (!id) {
       setMessage("Select a lane or beat first.");
       return;
@@ -183,17 +133,17 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
     onSelectForEdit?.();
   };
 
-  const handleAddBeatFromMenu = (kind: "story" | "empty") => {
+  const handleAddBeatFromMenu = () => {
     if (!canCreateBeats) {
       setMessage("Select a lane or beat first.");
       return;
     }
-    const id = addBeat(undefined, kind);
+    const id = addBeat(undefined, "story");
     if (!id) {
       setMessage("Select a lane or beat first.");
       return;
     }
-    setMessage(kind === "empty" ? "Empty beat added." : "Beat added.");
+    setMessage("Beat added.");
     setBeatMenuOpen(false);
     onSelectForEdit?.();
   };
@@ -203,7 +153,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
       setMessage("Select a lane or beat first.");
       return;
     }
-    const id = addAnchorBeat();
+    const id = addBeat(undefined, "anchor");
     if (!id) {
       setMessage("Select a lane or beat first.");
       return;
@@ -215,17 +165,12 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
 
   const primaryAddBeatTitle = (): string => {
     if (!canCreateBeats) return "Select a lane or beat first — the new beat goes in that lane";
-    if (selectedBeat?.kind === "empty") return "Convert the selected ghost beat into a real beat";
     if (beatPlacementMode !== "auto") {
       return selectedBeat
         ? `New beat, placed directly ${beatPlacementMode} the selected beat`
         : `Select a beat to place a new beat ${beatPlacementMode} it`;
     }
-    if (multiAnchorBlockActive) {
-      return "This lane has multiple anchors — select the anchor to insert before";
-    }
-    if (anchorSpecified) return "New beat, inserted before the selected anchor";
-    return "New beat (inserts before the lane's oldest anchor beat, if any)";
+    return "New beat, added to the top of the selected lane";
   };
 
   const handleConnect = () => {
@@ -307,17 +252,10 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
             >
               <button
                 type="button"
-                onClick={() => handleAddBeatFromMenu("story")}
+                onClick={handleAddBeatFromMenu}
                 className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
               >
                 Beat
-              </button>
-              <button
-                type="button"
-                onClick={() => handleAddBeatFromMenu("empty")}
-                className="w-full px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
-              >
-                Empty Beat
               </button>
               <button
                 type="button"
@@ -336,7 +274,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
                   setBeatMenuOpen(false);
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
-                title="Default smart placement: promotes a selected ghost, inserts before the relevant anchor, or appends"
+                title="Default placement: adds the new beat to the top of the active lane"
               >
                 <span className="w-4">{beatPlacementMode === "auto" ? "✓" : ""}</span>
                 Auto placement
@@ -348,7 +286,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
                   setBeatMenuOpen(false);
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
-                title="New beats go directly above the selected beat, pushing anything already there out of the way"
+                title="New beats go directly above the selected beat, shifting anything already there out of the way"
               >
                 <span className="w-4">{beatPlacementMode === "above" ? "✓" : ""}</span>
                 Place above selected beat
@@ -360,23 +298,11 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
                   setBeatMenuOpen(false);
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
-                title="New beats go directly below the selected beat, pushing anything already there out of the way"
+                title="New beats go directly below the selected beat, shifting anything already there out of the way"
               >
                 <span className="w-4">{beatPlacementMode === "below" ? "✓" : ""}</span>
                 Place below selected beat
               </button>
-
-              <div className="my-1 border-t border-dark-accent/40" />
-
-              <label className="flex items-center gap-2 px-3 py-2 text-sm text-dark-text cursor-pointer hover:bg-dark-accent/50">
-                <input
-                  type="checkbox"
-                  checked={requireAnchorSelection}
-                  onChange={(e) => setRequireAnchorSelection(e.target.checked)}
-                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
-                />
-                <span>Require anchor pick when 2+ exist</span>
-              </label>
             </div>,
             document.body
           )}

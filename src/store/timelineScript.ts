@@ -34,6 +34,19 @@ function parseKeyValueRest(line: string): Record<string, string> {
   return out;
 }
 
+/** Reads an unquoted token field like `lane: abc123` or `type: character`. `parseKeyValueRest`
+ * only matches quoted string values, so bare (unquoted) fields need their own lookup. */
+function parseBareField(line: string, key: string): string | undefined {
+  const match = new RegExp(`(?:^|\\s)${key}:\\s*(\\S+)`).exec(line);
+  return match ? match[1] : undefined;
+}
+
+/** Reads an unquoted numeric field like `slot: 3` or `sort: -1`. */
+function parseNumericField(line: string, key: string): number | undefined {
+  const match = new RegExp(`(?:^|\\s)${key}:\\s*(-?\\d+)`).exec(line);
+  return match ? Number.parseInt(match[1], 10) : undefined;
+}
+
 export function generateTimelineScript(
   lanes: TimelineLane[],
   beats: TimelineBeat[],
@@ -52,20 +65,13 @@ export function generateTimelineScript(
 
   const sortedBeats = [...beats].sort((a, b) => {
     if (a.laneId !== b.laneId) return a.laneId.localeCompare(b.laneId);
-    return a.order - b.order;
+    return a.slot - b.slot;
   });
 
   for (const beat of sortedBeats) {
-    if (beat.kind === "empty") {
-      const parts = [`Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order}`, "kind: empty"];
-      if (beat.anchorId) parts.push(`anchor: ${beat.anchorId}`);
-      if (beat.ghostSide) parts.push(`side: ${beat.ghostSide}`);
-      lines.push(parts.join(" "));
-      continue;
-    }
     if (beat.kind === "anchor") {
       const parts = [
-        `Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order}`,
+        `Beat ${beat.id} lane: ${beat.laneId} slot: ${beat.slot}`,
         "kind: anchor",
         `title: "${escapeQuoted(beat.title)}"`,
       ];
@@ -79,7 +85,7 @@ export function generateTimelineScript(
       continue;
     }
     const parts = [
-      `Beat ${beat.id} lane: ${beat.laneId} order: ${beat.order}`,
+      `Beat ${beat.id} lane: ${beat.laneId} slot: ${beat.slot}`,
       `title: "${escapeQuoted(beat.title)}"`,
     ];
     if (beat.description.trim()) {
@@ -142,9 +148,8 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
       const afterId = line.slice(idMatch[0].length);
       const labelMatch = parseQuotedString(afterId, afterId.indexOf('"'));
       const label = labelMatch?.value ?? "Lane";
-      const kv = parseKeyValueRest(line);
-      const sortOrder = Number.parseInt(kv.sort ?? String(lanes.length), 10);
-      const laneType = kv.type ?? "character";
+      const sortOrder = parseNumericField(line, "sort") ?? lanes.length;
+      const laneType = parseBareField(line, "type") ?? "character";
       lanes.push({
         id,
         label,
@@ -163,12 +168,13 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
       }
       const id = idMatch[1];
       const kv = parseKeyValueRest(line);
-      const laneId = kv.lane;
+      const laneId = parseBareField(line, "lane");
       if (!laneId) {
         errors.push(`Beat ${id} missing lane:`);
         continue;
       }
-      const order = Number.parseInt(kv.order ?? "0", 10);
+      // Accept the legacy `order:` key too, so scripts saved before the slot-grid rewrite still parse.
+      const slot = parseNumericField(line, "slot") ?? parseNumericField(line, "order") ?? 0;
       if (/kind:\s*anchor/i.test(line)) {
         const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(line);
         const title = titleMatch
@@ -177,7 +183,7 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         beats.push({
           id,
           laneId,
-          order: Number.isFinite(order) ? order : 0,
+          slot: Number.isFinite(slot) ? slot : 0,
           kind: "anchor",
           title,
           description: kv.description ?? "",
@@ -186,24 +192,9 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         beatIds.add(id);
         continue;
       }
+      // Legacy "kind: empty" spacer beats are silently dropped — the slot grid represents gaps
+      // natively now, so a line like this simply no longer produces a beat.
       if (/kind:\s*empty/i.test(line) || /empty:\s*true/.test(line)) {
-        const anchorMatch = /anchor:\s*(\S+)/.exec(line);
-        const sideMatch = /side:\s*(above|below)/i.exec(line);
-        const ghostSide = sideMatch?.[1]?.toLowerCase();
-        beats.push({
-          id,
-          laneId,
-          order: Number.isFinite(order) ? order : 0,
-          kind: "empty",
-          title: "",
-          description: "",
-          date: "",
-          ...(anchorMatch ? { anchorId: anchorMatch[1] } : {}),
-          ...(ghostSide === "above" || ghostSide === "below"
-            ? { ghostSide: ghostSide as "above" | "below" }
-            : {}),
-        });
-        beatIds.add(id);
         continue;
       }
       const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(line);
@@ -213,7 +204,7 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
       beats.push({
         id,
         laneId,
-        order: Number.isFinite(order) ? order : 0,
+        slot: Number.isFinite(slot) ? slot : 0,
         kind: "story",
         title,
         description: kv.description ?? "",
@@ -254,9 +245,6 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
   for (const beat of beats) {
     if (!laneIds.has(beat.laneId)) {
       errors.push(`Beat ${beat.id} references unknown lane ${beat.laneId}`);
-    }
-    if (beat.anchorId && !beatIds.has(beat.anchorId)) {
-      errors.push(`Beat ${beat.id} references unknown anchor ${beat.anchorId}`);
     }
   }
 

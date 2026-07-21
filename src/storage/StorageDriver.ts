@@ -76,11 +76,16 @@ export interface TimelineLaneRecord {
 export interface TimelineBeatRecord {
   id: string;
   laneId: string;
-  order: number;
+  /** Absolute slot on the shared slot grid (current format). */
+  slot?: number;
+  /** Legacy field name from the pre-slot-grid format — read as a fallback when `slot` is absent. */
+  order?: number;
+  /** "empty" only ever appears in legacy data; the slot grid replaced spacer beats entirely. */
   kind?: "story" | "empty" | "anchor";
   title: string;
   description: string;
   date: string;
+  /** Legacy anchor-ghost fields, read (and discarded) for backward compatibility only. */
   anchorId?: string;
   ghostSide?: "above" | "below";
 }

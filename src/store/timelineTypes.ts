@@ -20,6 +20,15 @@ export const EXPANDED_BEAT_HEIGHT_MIN = 80;
 export const EXPANDED_BEAT_HEIGHT_MAX = 400;
 export const BEAT_HEIGHT_TRANSITION_MS = 200;
 
+/** Vertical gap between stacked beats (matches the `gap-2` Tailwind class in LaneColumn). Used to
+ * convert between beat "slots" and pixels for the invisible slot grid. */
+export const BEAT_GAP_PX = 8;
+/** Padding at the top/bottom of a lane's track (matches the `py-2` Tailwind class in LaneColumn). */
+export const LANE_TRACK_PADDING_PX = 8;
+/** Extra empty slots always reserved above the highest occupied slot on the board, so there's
+ * always a bit of headroom to drag a beat higher than anything that currently exists. */
+export const SLOT_HEADROOM = 6;
+
 export function getZoomLaneCountSteps(): readonly number[] {
   return ZOOM_LANE_COUNT_STEPS;
 }
@@ -40,23 +49,18 @@ export interface TimelineLane {
   sortOrder: number;
 }
 
-export const ANCHOR_GHOST_COUNT_MIN = 0;
-export const ANCHOR_GHOST_COUNT_MAX = 8;
-export const DEFAULT_ANCHOR_GHOSTS_ABOVE = 1;
-export const DEFAULT_ANCHOR_GHOSTS_BELOW = 1;
-
 export interface TimelineBeat {
   id: string;
   laneId: string;
-  order: number;
-  kind: "story" | "empty" | "anchor";
+  /** Absolute row on the board's invisible slot grid — shared across every lane, so two beats on
+   * the same slot (in different lanes) always line up at the same height. Slot 0 sits at the
+   * bottom, nearest the starting gate. Gaps between slots are just unused rows; they don't need a
+   * beat object to "reserve" the space. */
+  slot: number;
+  kind: "story" | "anchor";
   title: string;
   description: string;
   date: string;
-  /** Set on anchor-spawned ghost beats only — references the owning anchor beat id. */
-  anchorId?: string;
-  /** Set on anchor-spawned ghost beats only — which side of the anchor this ghost reserves. */
-  ghostSide?: "above" | "below";
 }
 
 /** Crossing connector: an additive visual link between N beats (N ≥ 2), at most one beat per lane. Never a graph node/hub. */

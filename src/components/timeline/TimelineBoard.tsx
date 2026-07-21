@@ -19,12 +19,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
-import { useTimelineStore } from "../../store/timelineStore";
+import { computeSlotTrackContentHeightPx, useTimelineStore } from "../../store/timelineStore";
 import {
+  BEAT_COLLAPSED_HEIGHT_PX,
+  BEAT_GAP_PX,
   BEAT_HEIGHT_TRANSITION_MS,
   LANE_GATE_HEIGHT_PX,
   LANE_MIN_WIDTH_PX,
-  type TimelineBeat,
+  LANE_TRACK_PADDING_PX,
 } from "../../store/timelineTypes";
 
 interface TimelineBoardProps {
@@ -34,43 +36,8 @@ interface TimelineBoardProps {
 interface DragPreview {
   beatId: string;
   laneId: string;
-  /** Index (within the destination lane's beats, sorted bottom-to-top, dragged beat excluded)
-   * where the dragged beat would land if dropped right now. */
-  index: number;
-}
-
-/**
- * Figure out where a dragged beat would land in `laneId` if dropped at `pointerY` (a viewport Y
- * coordinate). Compares against the *rendered* midpoints of the lane's other beats so that
- * dropping on open track space and dropping directly on a neighboring beat produce the same,
- * position-based result.
- */
-function computeBeatDropIndex(
-  pointerY: number,
-  laneId: string,
-  beats: TimelineBeat[],
-  excludeBeatId: string,
-  getBeatElement: (beatId: string) => HTMLElement | null
-): number {
-  const laneBeats = beats
-    .filter((b) => b.laneId === laneId && b.id !== excludeBeatId)
-    .sort((a, b) => a.order - b.order);
-
-  let index = 0;
-  for (let i = 0; i < laneBeats.length; i++) {
-    const rect = getBeatElement(laneBeats[i].id)?.getBoundingClientRect();
-    if (!rect) continue;
-    const midY = rect.top + rect.height / 2;
-    if (pointerY > midY) {
-      // Pointer sits below this beat's midpoint — land here, pushing this beat (and everything
-      // above it) up by one.
-      index = i;
-      break;
-    }
-    // Pointer sits above this beat's midpoint — keep looking further up the stack.
-    index = i + 1;
-  }
-  return index;
+  /** Absolute slot on the shared slot grid the dragged beat would land on if dropped right now. */
+  slot: number;
 }
 
 /**
@@ -86,6 +53,25 @@ function resolveLaneIndexFromX(pointerX: number, trackLeft: number, laneCount: n
   if (laneCount <= 0 || laneWidthPx <= 0) return 0;
   const relativeX = pointerX - trackLeft;
   return Math.max(0, Math.min(laneCount - 1, Math.floor(relativeX / laneWidthPx)));
+}
+
+/**
+ * The board's slot grid is pure arithmetic, not neighbor geometry: slot 0 sits flush against the
+ * bottom of the track (`containerBottomInner`), and every slot above it is exactly one
+ * beat-height-plus-gap higher. That makes every lane's grid line up with every other lane's at
+ * the same slot number, and means dropping into empty track space resolves exactly the same way
+ * as dropping next to an existing beat — there's no "nearest neighbor" ambiguity to flicker on.
+ */
+function computeSlotFromY(
+  pointerY: number,
+  containerBottomInner: number,
+  beatHeightPx: number,
+  gapPx: number
+): number {
+  const slotStepPx = beatHeightPx + gapPx;
+  if (slotStepPx <= 0) return 0;
+  const raw = (containerBottomInner - beatHeightPx / 2 - pointerY) / slotStepPx;
+  return Math.max(0, Math.round(raw));
 }
 
 export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
@@ -164,10 +150,18 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
 
   const totalContentWidth = Math.max(viewportWidth, laneWidthPx * lanes.length);
 
-  // How tall each lane's track should be at minimum — the scrollable lanes area's height (the
-  // outer viewport minus the fixed-height gate row). Using min-height (not a hard height/stretch)
-  // lets a lane's content still grow taller than the viewport and stay properly scrollable.
-  const laneTrackMinHeightPx = Math.max(0, viewportHeight - LANE_GATE_HEIGHT_PX);
+  const beatHeightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
+
+  // How tall each lane's track should be at minimum: at least the viewport's own height (the
+  // outer viewport minus the fixed-height gate row), and always tall enough to show every
+  // occupied slot on the board (not just this lane's own beats — slots are shared/global, so a
+  // lane with nothing in it still needs to reach as high as the tallest beat elsewhere) plus a
+  // little headroom. Using min-height (not a hard height/stretch) lets a lane's content still
+  // grow taller than the viewport and stay properly scrollable.
+  const laneTrackMinHeightPx = Math.max(
+    viewportHeight - LANE_GATE_HEIGHT_PX,
+    computeSlotTrackContentHeightPx(beats, beatHeightPx)
+  );
 
   const beatsByLane = useMemo(() => {
     const map = new Map<string, typeof beats>();
@@ -229,25 +223,43 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
 
   const getBeatElement = useCallback((beatId: string) => beatRefs.current.get(beatId) ?? null, []);
 
+  /** Resolve the target lane + slot for a beat drag purely from the dragged item's own rendered
+   * rect — shared by the live preview and the final drop so they always agree. */
+  const resolveDragTarget = useCallback(
+    (
+      active: DragMoveEvent["active"]
+    ): { beatId: string; targetLaneId: string; targetSlot: number } | null => {
+      const translated = active.rect.current.translated;
+      if (!translated || sortedLanes.length === 0) return null;
+      const pointerX = translated.left + translated.width / 2;
+      const pointerY = translated.top + translated.height / 2;
+      const trackRect = trackContentRef.current?.getBoundingClientRect();
+      const trackLeft = trackRect?.left ?? 0;
+      const containerBottomInner = (trackRect?.bottom ?? 0) - LANE_TRACK_PADDING_PX;
+      const laneIndex = resolveLaneIndexFromX(pointerX, trackLeft, sortedLanes.length, laneWidthPx);
+      const targetLaneId = sortedLanes[laneIndex].id;
+      const targetSlot = computeSlotFromY(pointerY, containerBottomInner, beatHeightPx, BEAT_GAP_PX);
+      return { beatId: String(active.id), targetLaneId, targetSlot };
+    },
+    [sortedLanes, laneWidthPx, beatHeightPx]
+  );
+
   const recomputeDragPreview = useCallback(() => {
     const evt = latestDragEventRef.current;
     if (!evt) return;
     const { active } = evt;
     const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
-    const translated = active.rect.current.translated;
-    if (activeData?.type !== "beat" || !translated || sortedLanes.length === 0) {
+    if (activeData?.type !== "beat") {
       setDragPreview(null);
       return;
     }
-    const pointerX = translated.left + translated.width / 2;
-    const pointerY = translated.top + translated.height / 2;
-    const trackLeft = trackContentRef.current?.getBoundingClientRect().left ?? 0;
-    const laneIndex = resolveLaneIndexFromX(pointerX, trackLeft, sortedLanes.length, laneWidthPx);
-    const targetLaneId = sortedLanes[laneIndex].id;
-    const beatId = String(active.id);
-    const index = computeBeatDropIndex(pointerY, targetLaneId, beats, beatId, getBeatElement);
-    setDragPreview({ beatId, laneId: targetLaneId, index });
-  }, [beats, getBeatElement, sortedLanes, laneWidthPx]);
+    const target = resolveDragTarget(active);
+    if (!target) {
+      setDragPreview(null);
+      return;
+    }
+    setDragPreview({ beatId: target.beatId, laneId: target.targetLaneId, slot: target.targetSlot });
+  }, [resolveDragTarget]);
 
   const handleDragStart = useCallback((_event: DragStartEvent) => {
     latestDragEventRef.current = null;
@@ -362,34 +374,28 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       }
 
       if (sortedLanes.length === 0) return;
-      const beatId = String(active.id);
 
-      // Resolve both the target lane and the in-lane index from the dragged item's own rendered
+      // Resolve both the target lane and the target slot from the dragged item's own rendered
       // position (same approach as the live preview) instead of dnd-kit's collision-based `over`
-      // — see resolveLaneIndexFromX for why that's more reliable, especially over open track space.
-      // `over` is only consulted as a fallback in the rare case the active rect isn't available.
-      const translated = active.rect.current.translated;
-      let targetLaneId: string;
-      let targetIndex: number;
-      if (translated) {
-        const pointerX = translated.left + translated.width / 2;
-        const pointerY = translated.top + translated.height / 2;
-        const trackLeft = trackContentRef.current?.getBoundingClientRect().left ?? 0;
-        const laneIndex = resolveLaneIndexFromX(pointerX, trackLeft, sortedLanes.length, laneWidthPx);
-        targetLaneId = sortedLanes[laneIndex].id;
-        targetIndex = computeBeatDropIndex(pointerY, targetLaneId, beats, beatId, getBeatElement);
-      } else {
-        if (!over) return;
-        const overData = over.data.current as { type?: string; laneId?: string } | undefined;
-        const fallbackLaneId = overData?.laneId ?? (overData?.type === "lane" ? String(over.id) : null);
-        if (!fallbackLaneId) return;
-        targetLaneId = fallbackLaneId;
-        targetIndex = beats.filter((b) => b.laneId === targetLaneId && b.id !== beatId).length;
+      // — see resolveLaneIndexFromX for why that's more reliable, especially over open track
+      // space. `over` is only consulted as a fallback in the rare case the active rect isn't
+      // available.
+      const target = resolveDragTarget(active);
+      if (target) {
+        moveBeat(target.beatId, target.targetLaneId, target.targetSlot);
+        return;
       }
 
-      moveBeat(beatId, targetLaneId, targetIndex);
+      if (!over) return;
+      const overData = over.data.current as { type?: string; laneId?: string } | undefined;
+      const fallbackLaneId = overData?.laneId ?? (overData?.type === "lane" ? String(over.id) : null);
+      if (!fallbackLaneId) return;
+      const beatId = String(active.id);
+      const laneBeats = beats.filter((b) => b.laneId === fallbackLaneId && b.id !== beatId);
+      const fallbackSlot = laneBeats.length === 0 ? 0 : Math.max(...laneBeats.map((b) => b.slot)) + 1;
+      moveBeat(beatId, fallbackLaneId, fallbackSlot);
     },
-    [beats, moveBeat, reorderLane, sortedLanes, getBeatElement, laneWidthPx]
+    [beats, moveBeat, reorderLane, sortedLanes, resolveDragTarget]
   );
 
   if (sortedLanes.length === 0) {
@@ -437,7 +443,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
                   onBeatDoubleClick={handleBeatDoubleClick}
                   registerBeatRef={registerBeatRef}
                   draggedBeatId={dragPreview?.beatId ?? null}
-                  dropIndicatorIndex={dragPreview?.laneId === lane.id ? dragPreview.index : null}
+                  dropTargetSlot={dragPreview?.laneId === lane.id ? dragPreview.slot : null}
                 />
               ))}
               <ConnectorOverlay

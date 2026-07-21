@@ -1,9 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  ANCHOR_GHOST_COUNT_MAX,
-  ANCHOR_GHOST_COUNT_MIN,
-} from "../../store/timelineTypes";
-import {
   getSelectedBeat,
   getSelectedConnection,
   getSelectedLane,
@@ -22,7 +18,6 @@ export default function TimelineInspector() {
   const removeConnection = useTimelineStore((s) => s.removeConnection);
   const removeLane = useTimelineStore((s) => s.removeLane);
   const removeBeat = useTimelineStore((s) => s.removeBeat);
-  const setAnchorGhostCount = useTimelineStore((s) => s.setAnchorGhostCount);
 
   const editingLane = getSelectedLane(lanes, selection);
   const editingBeat = getSelectedBeat(beats, selection);
@@ -166,119 +161,49 @@ export default function TimelineInspector() {
               Delete
             </button>
           </div>
-          {editingBeat.kind === "empty" ? (
-            <p className="text-xs text-dark-muted italic">
-              Empty beat — spacer only, no properties.
-            </p>
-          ) : (
-            <>
-              <label className="block space-y-1">
-                <span className="text-xs text-dark-muted">Title</span>
-                <input
-                  type="text"
-                  value={beatTitle}
-                  onChange={(e) => setBeatTitle(e.target.value)}
-                  onBlur={() => {
-                    if (beatTitle !== editingBeat.title) {
-                      updateBeat(editingBeat.id, { title: beatTitle });
-                    }
-                  }}
-                  className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-dark-muted">Description</span>
-                <textarea
-                  value={beatDescription}
-                  onChange={(e) => setBeatDescription(e.target.value)}
-                  onBlur={() => {
-                    if (beatDescription !== editingBeat.description) {
-                      updateBeat(editingBeat.id, { description: beatDescription });
-                    }
-                  }}
-                  rows={3}
-                  className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-none focus:outline-none focus:border-blue-500"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-dark-muted">Date</span>
-                <input
-                  type="text"
-                  value={beatDate}
-                  onChange={(e) => setBeatDate(e.target.value)}
-                  onBlur={() => {
-                    if (beatDate !== editingBeat.date) {
-                      updateBeat(editingBeat.id, { date: beatDate });
-                    }
-                  }}
-                  placeholder="Story date or label"
-                  className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
-                />
-              </label>
-              {editingBeat.kind === "anchor" && (
-                <>
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-dark-muted">Ghosts above</span>
-                      <span className="text-xs text-dark-muted">
-                        {beats.filter(
-                          (b) =>
-                            b.anchorId === editingBeat.id &&
-                            b.ghostSide === "above" &&
-                            b.kind === "empty"
-                        ).length}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={ANCHOR_GHOST_COUNT_MIN}
-                      max={ANCHOR_GHOST_COUNT_MAX}
-                      step={1}
-                      value={beats.filter(
-                        (b) =>
-                          b.anchorId === editingBeat.id &&
-                          b.ghostSide === "above" &&
-                          b.kind === "empty"
-                      ).length}
-                      onChange={(e) =>
-                        setAnchorGhostCount(editingBeat.id, "above", Number(e.target.value))
-                      }
-                      className="w-full h-1 accent-blue-500 cursor-pointer"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-dark-muted">Ghosts below</span>
-                      <span className="text-xs text-dark-muted">
-                        {beats.filter(
-                          (b) =>
-                            b.anchorId === editingBeat.id &&
-                            b.ghostSide === "below" &&
-                            b.kind === "empty"
-                        ).length}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={ANCHOR_GHOST_COUNT_MIN}
-                      max={ANCHOR_GHOST_COUNT_MAX}
-                      step={1}
-                      value={beats.filter(
-                        (b) =>
-                          b.anchorId === editingBeat.id &&
-                          b.ghostSide === "below" &&
-                          b.kind === "empty"
-                      ).length}
-                      onChange={(e) =>
-                        setAnchorGhostCount(editingBeat.id, "below", Number(e.target.value))
-                      }
-                      className="w-full h-1 accent-blue-500 cursor-pointer"
-                    />
-                  </div>
-                </>
-              )}
-            </>
-          )}
+          <label className="block space-y-1">
+            <span className="text-xs text-dark-muted">Title</span>
+            <input
+              type="text"
+              value={beatTitle}
+              onChange={(e) => setBeatTitle(e.target.value)}
+              onBlur={() => {
+                if (beatTitle !== editingBeat.title) {
+                  updateBeat(editingBeat.id, { title: beatTitle });
+                }
+              }}
+              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-dark-muted">Description</span>
+            <textarea
+              value={beatDescription}
+              onChange={(e) => setBeatDescription(e.target.value)}
+              onBlur={() => {
+                if (beatDescription !== editingBeat.description) {
+                  updateBeat(editingBeat.id, { description: beatDescription });
+                }
+              }}
+              rows={3}
+              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-none focus:outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-dark-muted">Date</span>
+            <input
+              type="text"
+              value={beatDate}
+              onChange={(e) => setBeatDate(e.target.value)}
+              onBlur={() => {
+                if (beatDate !== editingBeat.date) {
+                  updateBeat(editingBeat.id, { date: beatDate });
+                }
+              }}
+              placeholder="Story date or label"
+              className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
+            />
+          </label>
           <p className="text-[10px] text-dark-muted font-mono truncate" title={editingBeat.id}>
             id: {editingBeat.id}
           </p>
@@ -302,9 +227,7 @@ export default function TimelineInspector() {
             {editingConnection.beatIds
               .map((beatId) => {
                 const beat = beats.find((b) => b.id === beatId);
-                if (!beat) return "Beat";
-                if (beat.kind === "empty") return "(empty)";
-                return beat.title || "Beat";
+                return beat?.title || "Beat";
               })
               .join(" ↔ ")}
           </p>

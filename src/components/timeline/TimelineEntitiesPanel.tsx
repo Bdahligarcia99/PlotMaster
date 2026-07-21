@@ -101,7 +101,7 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
             {filteredLanes.map((lane) => {
               const laneBeats = beats
                 .filter((b) => b.laneId === lane.id)
-                .sort((a, b) => a.order - b.order);
+                .sort((a, b) => a.slot - b.slot);
               const laneItem: TimelineSelectionItem = { type: "lane", id: lane.id };
               const laneSelected = isSelected(selection, laneItem);
               const expanded = isExpanded(lane.id);
@@ -163,9 +163,7 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                                     : "text-dark-muted"
                               }`}
                             >
-                              {beat.kind === "empty" ? (
-                                <span className="italic">(empty)</span>
-                              ) : beat.kind === "anchor" ? (
+                              {beat.kind === "anchor" ? (
                                 <>
                                   <span className="text-[10px] opacity-80">⚓ </span>
                                   {beat.title || "Anchor"}
@@ -210,9 +208,7 @@ export default function TimelineEntitiesPanel({ onSelectForEdit }: TimelineEntit
                   const selected = isSelected(selection, item);
                   const beatLabels = connection.beatIds.map((beatId) => {
                     const beat = beatsById.get(beatId);
-                    if (!beat) return "Beat";
-                    if (beat.kind === "empty") return "(empty)";
-                    return beat.title || "Beat";
+                    return beat?.title || "Beat";
                   });
                   return (
                     <button
