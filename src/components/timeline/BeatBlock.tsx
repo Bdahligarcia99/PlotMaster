@@ -2,6 +2,8 @@ import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { BEAT_COLLAPSED_HEIGHT_PX, BEAT_HEIGHT_TRANSITION_MS } from "../../store/timelineTypes";
 import type { TimelineBeat } from "../../store/timelineTypes";
+import { resolveBeatDate } from "../../utils/beatDate";
+import { useTimelineStore } from "../../store/timelineStore";
 
 interface BeatBlockProps {
   beat: TimelineBeat;
@@ -10,6 +12,8 @@ interface BeatBlockProps {
   /** True while another beat is being dragged and would land on (swap with) this beat if dropped
    * right now. */
   highlightAsDropTarget?: boolean;
+  /** When true, beat stays in the slot grid but is invisible — the DragOverlay shows the moving copy. */
+  ghostInPlace?: boolean;
   beatWidthPercent: number;
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
@@ -23,6 +27,7 @@ export default function BeatBlock({
   selected,
   connected,
   highlightAsDropTarget = false,
+  ghostInPlace = false,
   beatWidthPercent,
   beatsExpanded,
   expandedBeatHeightPx,
@@ -30,18 +35,20 @@ export default function BeatBlock({
   onDoubleClick,
   registerRef,
 }: BeatBlockProps) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: beat.id,
     data: { type: "beat", laneId: beat.laneId },
   });
 
   const heightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
   const isAnchor = beat.kind === "anchor";
+  const allBeats = useTimelineStore((s) => s.beats);
+  const displayDate = resolveBeatDate(beat, allBeats);
 
   const style: React.CSSProperties = {
-    transform: CSS.Translate.toString(transform),
-    transition: `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`,
-    opacity: isDragging ? 0.4 : 1,
+    transform: ghostInPlace ? undefined : CSS.Translate.toString(transform),
+    transition: ghostInPlace ? undefined : `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`,
+    visibility: ghostInPlace ? "hidden" : undefined,
     width: `${beatWidthPercent}%`,
     height: heightPx,
     overflowX: "hidden",
@@ -60,14 +67,14 @@ export default function BeatBlock({
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       data-beat-id={beat.id}
-      className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left text-sm cursor-grab active:cursor-grabbing select-none transition-colors ${
+      className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left text-sm cursor-grab active:cursor-grabbing select-none ${
         isAnchor
           ? selected
-            ? "border-blue-500 bg-violet-500/15 text-dark-text ring-1 ring-blue-500/60"
-            : "border-violet-500/70 bg-violet-500/10 text-dark-text hover:border-violet-500/90 hover:bg-violet-500/15"
+            ? "border-blue-500 bg-[#2a1f3d] text-dark-text ring-1 ring-blue-500/60"
+            : "border-violet-500/70 bg-[#231a33] text-dark-text hover:border-violet-400 hover:bg-[#2a1f3d]"
           : selected
-            ? "border-blue-500 bg-blue-500/20 text-dark-text ring-1 ring-blue-500/60"
-            : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent/80 hover:bg-dark-accent/20"
+            ? "border-blue-500 bg-[#1e2a3a] text-dark-text ring-1 ring-blue-500/60"
+            : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent hover:bg-dark-accent"
       } ${highlightAsDropTarget ? "ring-2 ring-blue-400 shadow-[0_0_10px_2px_rgba(96,165,250,0.5)]" : ""}`}
     >
       <span className="block truncate font-medium">
@@ -76,18 +83,23 @@ export default function BeatBlock({
       </span>
       {beatsExpanded ? (
         <>
-          {beat.date.trim() && (
-            <span className="block text-[10px] text-dark-muted mt-1">{beat.date}</span>
+          {displayDate && (
+            <span className="block text-[10px] text-dark-muted mt-1">{displayDate}</span>
           )}
-          {beat.description.trim() && (
+          {beat.synopsis.trim() && (
             <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
-              {beat.description}
+              {beat.synopsis}
+            </span>
+          )}
+          {beat.detail.trim() && (
+            <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
+              {beat.detail}
             </span>
           )}
         </>
       ) : (
-        beat.date.trim() && (
-          <span className="block truncate text-[10px] text-dark-muted mt-0.5">{beat.date}</span>
+        displayDate && (
+          <span className="block truncate text-[10px] text-dark-muted mt-0.5">{displayDate}</span>
         )
       )}
       {connected && (

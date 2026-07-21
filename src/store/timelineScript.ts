@@ -1,4 +1,5 @@
-import type { TimelineBeat, TimelineConnection, TimelineLane } from "./timelineTypes";
+import type { BeatDateSpec, TimelineBeat, TimelineConnection, TimelineLane } from "./timelineTypes";
+import { emptyBeatDateSpec, migrateLegacyDateString } from "../utils/beatDate";
 
 function escapeQuoted(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -47,6 +48,56 @@ function parseNumericField(line: string, key: string): number | undefined {
   return match ? Number.parseInt(match[1], 10) : undefined;
 }
 
+function appendBeatDateParts(parts: string[], spec: BeatDateSpec): void {
+  if (spec.mode === "none") return;
+  parts.push(`dateMode: ${spec.mode}`);
+  if (spec.mode === "label" && spec.label?.trim()) {
+    parts.push(`dateLabel: "${escapeQuoted(spec.label.trim())}"`);
+  }
+  if (spec.mode === "absolute" && spec.absolute?.trim()) {
+    parts.push(`dateAbsolute: ${spec.absolute.trim()}`);
+  }
+  if (spec.mode === "relative" && spec.relative) {
+    const r = spec.relative;
+    parts.push(
+      `dateRelative: ${r.years}y ${r.months}m ${r.days}d origin: ${r.originBeatId}`
+    );
+  }
+}
+
+function parseBeatDateSpec(line: string, kv: Record<string, string>): BeatDateSpec {
+  const modeRaw = parseBareField(line, "dateMode");
+  if (modeRaw === "none") {
+    return emptyBeatDateSpec();
+  }
+  if (modeRaw === "absolute") {
+    const absolute = parseBareField(line, "dateAbsolute") ?? kv.dateAbsolute ?? "";
+    return absolute ? { mode: "absolute", absolute } : emptyBeatDateSpec();
+  }
+  if (modeRaw === "relative") {
+    const relMatch = /dateRelative:\s*(-?\d+)y\s*(-?\d+)m\s*(-?\d+)d\s+origin:\s*(\S+)/i.exec(line);
+    if (relMatch) {
+      return {
+        mode: "relative",
+        relative: {
+          years: Number.parseInt(relMatch[1], 10) || 0,
+          months: Number.parseInt(relMatch[2], 10) || 0,
+          days: Number.parseInt(relMatch[3], 10) || 0,
+          originBeatId: relMatch[4],
+        },
+      };
+    }
+    return emptyBeatDateSpec();
+  }
+  if (modeRaw === "label") {
+    return { mode: "label", label: kv.dateLabel ?? kv.date ?? "" };
+  }
+  if (kv.date?.trim()) {
+    return migrateLegacyDateString(kv.date);
+  }
+  return emptyBeatDateSpec();
+}
+
 export function generateTimelineScript(
   lanes: TimelineLane[],
   beats: TimelineBeat[],
@@ -75,12 +126,13 @@ export function generateTimelineScript(
         "kind: anchor",
         `title: "${escapeQuoted(beat.title)}"`,
       ];
-      if (beat.description.trim()) {
-        parts.push(`description: "${escapeQuoted(beat.description)}"`);
+      if (beat.synopsis.trim()) {
+        parts.push(`synopsis: "${escapeQuoted(beat.synopsis)}"`);
       }
-      if (beat.date.trim()) {
-        parts.push(`date: "${escapeQuoted(beat.date)}"`);
+      if (beat.detail.trim()) {
+        parts.push(`detail: "${escapeQuoted(beat.detail)}"`);
       }
+      appendBeatDateParts(parts, beat.dateSpec);
       lines.push(parts.join(" "));
       continue;
     }
@@ -88,12 +140,13 @@ export function generateTimelineScript(
       `Beat ${beat.id} lane: ${beat.laneId} slot: ${beat.slot}`,
       `title: "${escapeQuoted(beat.title)}"`,
     ];
-    if (beat.description.trim()) {
-      parts.push(`description: "${escapeQuoted(beat.description)}"`);
+    if (beat.synopsis.trim()) {
+      parts.push(`synopsis: "${escapeQuoted(beat.synopsis)}"`);
     }
-    if (beat.date.trim()) {
-      parts.push(`date: "${escapeQuoted(beat.date)}"`);
+    if (beat.detail.trim()) {
+      parts.push(`detail: "${escapeQuoted(beat.detail)}"`);
     }
+    appendBeatDateParts(parts, beat.dateSpec);
     lines.push(parts.join(" "));
   }
 
@@ -186,8 +239,9 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
           slot: Number.isFinite(slot) ? slot : 0,
           kind: "anchor",
           title,
-          description: kv.description ?? "",
-          date: kv.date ?? "",
+          synopsis: kv.synopsis ?? "",
+          detail: kv.detail ?? kv.description ?? "",
+          dateSpec: parseBeatDateSpec(line, kv),
         });
         beatIds.add(id);
         continue;
@@ -207,8 +261,9 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         slot: Number.isFinite(slot) ? slot : 0,
         kind: "story",
         title,
-        description: kv.description ?? "",
-        date: kv.date ?? "",
+        synopsis: kv.synopsis ?? "",
+        detail: kv.detail ?? kv.description ?? "",
+        dateSpec: parseBeatDateSpec(line, kv),
       });
       beatIds.add(id);
       continue;

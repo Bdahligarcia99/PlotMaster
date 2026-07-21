@@ -49,6 +49,22 @@ export interface TimelineLane {
   sortOrder: number;
 }
 
+export type BeatDateMode = "none" | "label" | "absolute" | "relative";
+
+export interface BeatDateRelative {
+  years: number;
+  months: number;
+  days: number;
+  originBeatId: string;
+}
+
+export interface BeatDateSpec {
+  mode: BeatDateMode;
+  label?: string;
+  absolute?: string;
+  relative?: BeatDateRelative;
+}
+
 export interface TimelineBeat {
   id: string;
   laneId: string;
@@ -59,8 +75,9 @@ export interface TimelineBeat {
   slot: number;
   kind: "story" | "anchor";
   title: string;
-  description: string;
-  date: string;
+  synopsis: string;
+  detail: string;
+  dateSpec: BeatDateSpec;
 }
 
 /** Crossing connector: an additive visual link between N beats (N ≥ 2), at most one beat per lane. Never a graph node/hub. */

@@ -83,8 +83,18 @@ export interface TimelineBeatRecord {
   /** "empty" only ever appears in legacy data; the slot grid replaced spacer beats entirely. */
   kind?: "story" | "empty" | "anchor";
   title: string;
-  description: string;
-  date: string;
+  /** Legacy field — migrated to detail on load. */
+  description?: string;
+  synopsis?: string;
+  detail?: string;
+  /** Legacy freeform date string — migrated to dateSpec on load. */
+  date?: string;
+  dateSpec?: {
+    mode: "none" | "label" | "absolute" | "relative";
+    label?: string;
+    absolute?: string;
+    relative?: { years: number; months: number; days: number; originBeatId: string };
+  };
   /** Legacy anchor-ghost fields, read (and discarded) for backward compatibility only. */
   anchorId?: string;
   ghostSide?: "above" | "below";
@@ -99,6 +109,14 @@ export interface TimelineConnectionRecord {
   date: string;
 }
 
+/** Saved beat text document (Beat Text Editor). */
+export interface TimelineDocumentRecord {
+  id: string;
+  name: string;
+  content: string;
+  updatedAt: number;
+}
+
 export interface TimelineProjectPayload {
   version: 1;
   moduleType: "timeline";
@@ -106,6 +124,8 @@ export interface TimelineProjectPayload {
   lanes?: TimelineLaneRecord[];
   beats?: TimelineBeatRecord[];
   connections?: TimelineConnectionRecord[];
+  importLabelPrefixes?: string[];
+  documents?: TimelineDocumentRecord[];
 }
 
 export type ProjectData = ProjectPayload | TimelineProjectPayload;

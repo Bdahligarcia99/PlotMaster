@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import Button from "../ui/Button";
 import {
@@ -15,12 +15,14 @@ import {
   EXPANDED_BEAT_HEIGHT_MAX,
   EXPANDED_BEAT_HEIGHT_MIN,
 } from "../../store/timelineTypes";
+import TimelineBulkRenameModal from "./TimelineBulkRenameModal";
 
 interface TimelineToolbarProps {
   onSelectForEdit?: () => void;
+  onOpenBeatEditor?: () => void;
 }
 
-export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProps) {
+export default function TimelineToolbar({ onSelectForEdit, onOpenBeatEditor }: TimelineToolbarProps) {
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
   const selection = useTimelineStore((s) => s.selection);
@@ -41,6 +43,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const setBeatPlacementMode = useTimelineStore((s) => s.setBeatPlacementMode);
   const [message, setMessage] = useState<string | null>(null);
   const [beatMenuOpen, setBeatMenuOpen] = useState(false);
+  const [renameModalOpen, setRenameModalOpen] = useState(false);
   const beatContainerRef = useRef<HTMLDivElement>(null);
   const beatDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -82,6 +85,17 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
 
   const selectedBeats = selection.filter((s) => s.type === "beat");
   const selectedBeatIds = selectedBeats.map((s) => s.id);
+  const bulkRenameBeatIds = useMemo(() => {
+    if (selectedBeatIds.length >= 2) return selectedBeatIds;
+    if (targetLaneId) {
+      return beats
+        .filter((b) => b.laneId === targetLaneId)
+        .sort((a, b) => a.slot - b.slot)
+        .map((b) => b.id);
+    }
+    return [];
+  }, [selectedBeatIds, targetLaneId, beats]);
+  const canBulkRename = bulkRenameBeatIds.length >= 1;
   const crossingCheck = canFormCrossing(selectedBeatIds, beats);
   const canConnect = crossingCheck.ok;
   const setAlreadyConnected =
@@ -319,6 +333,29 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         {canConnect && setAlreadyConnected ? "Uncross" : "Crossing"}
       </Button>
 
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => onOpenBeatEditor?.()}
+        title="Open Beat Text Editor to paste and structure beats"
+      >
+        Beat Text Editor
+      </Button>
+
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setRenameModalOpen(true)}
+        disabled={!canBulkRename}
+        title={
+          canBulkRename
+            ? "Rename beat titles sequentially (Beat 1, Beat 2, …)"
+            : "Select beats or a lane with beats to rename"
+        }
+      >
+        Rename titles
+      </Button>
+
       <div className="h-4 w-px bg-dark-accent/60 mx-1" />
 
       <div className="flex items-center gap-1" title="Visible lane count (zoom)">
@@ -383,6 +420,12 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
       )}
 
       {message && <span className="text-xs text-dark-muted ml-2">{message}</span>}
+
+      <TimelineBulkRenameModal
+        isOpen={renameModalOpen}
+        onClose={() => setRenameModalOpen(false)}
+        beatIds={bulkRenameBeatIds}
+      />
     </div>
   );
 }

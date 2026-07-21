@@ -60,7 +60,8 @@ export default function LaneColumn({
 }: LaneColumnProps) {
   const { setNodeRef } = useDroppable({ id: laneId, data: { type: "lane", laneId } });
   const beatHeightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
-  const sorted = [...beats].filter((b) => b.id !== draggedBeatId).sort((a, b) => a.slot - b.slot);
+  const sorted = [...beats].sort((a, b) => a.slot - b.slot);
+  const isDragging = draggedBeatId != null;
   const trackWidthPercent = beatWidthPercent / 2;
 
   const renderItems: RenderItem[] = [];
@@ -107,8 +108,8 @@ export default function LaneColumn({
     <div
       ref={setNodeRef}
       style={{ width, flexBasis: width, minHeight: minHeight > 0 ? minHeight : undefined }}
-      className={`relative flex flex-shrink-0 flex-col-reverse items-center gap-2 px-2 py-2 border-r border-dark-accent/20 transition-colors ${
-        dropTargetSlot != null ? "bg-blue-500/10" : ""
+      className={`relative flex flex-shrink-0 flex-col-reverse items-center gap-2 px-2 py-2 border-r border-dark-accent/20 ${
+        dropTargetSlot != null && isDragging ? "bg-blue-500/10" : ""
       }`}
     >
       {/* Lane track: a darker rail down the center so each lane reads as a distinct column, even
@@ -154,6 +155,7 @@ export default function LaneColumn({
             selected={selectedBeatIds.has(item.beat.id)}
             connected={connectedBeatIds.has(item.beat.id)}
             highlightAsDropTarget={item.isSwapTarget}
+            ghostInPlace={draggedBeatId === item.beat.id}
             beatWidthPercent={beatWidthPercent}
             beatsExpanded={beatsExpanded}
             expandedBeatHeightPx={expandedBeatHeightPx}

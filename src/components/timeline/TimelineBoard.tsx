@@ -1,5 +1,6 @@
 import {
   DndContext,
+  DragOverlay,
   type DragCancelEvent,
   type DragEndEvent,
   type DragMoveEvent,
@@ -19,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
+import BeatBlock from "./BeatBlock";
 import { computeSlotTrackContentHeightPx, useTimelineStore } from "../../store/timelineStore";
 import {
   BEAT_COLLAPSED_HEIGHT_PX,
@@ -31,6 +33,8 @@ import {
 
 interface TimelineBoardProps {
   onSelectForEdit?: () => void;
+  inspectorOpen?: boolean;
+  inspectorWidth?: number;
 }
 
 interface DragPreview {
@@ -74,7 +78,11 @@ function computeSlotFromY(
   return Math.max(0, Math.round(raw));
 }
 
-export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
+export default function TimelineBoard({
+  onSelectForEdit,
+  inspectorOpen = false,
+  inspectorWidth = 0,
+}: TimelineBoardProps) {
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
   const connections = useTimelineStore((s) => s.connections);
@@ -99,6 +107,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const [layoutTick, setLayoutTick] = useState(0);
   const dragRafRef = useRef<number | null>(null);
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const [activeDragBeatId, setActiveDragBeatId] = useState<string | null>(null);
   const latestDragEventRef = useRef<{
     active: DragMoveEvent["active"];
     over: DragMoveEvent["over"];
@@ -261,9 +270,13 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
     setDragPreview({ beatId: target.beatId, laneId: target.targetLaneId, slot: target.targetSlot });
   }, [resolveDragTarget]);
 
-  const handleDragStart = useCallback((_event: DragStartEvent) => {
+  const handleDragStart = useCallback((event: DragStartEvent) => {
     latestDragEventRef.current = null;
     setDragPreview(null);
+    const data = event.active.data.current as { type?: string } | undefined;
+    if (data?.type === "beat") {
+      setActiveDragBeatId(String(event.active.id));
+    }
   }, []);
 
   const handleDragMove = useCallback(
@@ -282,6 +295,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const handleDragCancel = useCallback((_event: DragCancelEvent) => {
     latestDragEventRef.current = null;
     setDragPreview(null);
+    setActiveDragBeatId(null);
   }, []);
 
   const handleBeatClick = useCallback(
@@ -347,6 +361,22 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
     selectOnly(null);
   }, [selectOnly]);
 
+  const handleViewportWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const absX = Math.abs(e.deltaX);
+    const absY = Math.abs(e.deltaY);
+    const horizontalIntent = absX > absY || e.shiftKey;
+    if (!horizontalIntent) return;
+    e.preventDefault();
+    el.scrollLeft += e.deltaX + (e.shiftKey ? e.deltaY : 0);
+  }, []);
+
+  const activeDragBeat = useMemo(
+    () => (activeDragBeatId ? beats.find((b) => b.id === activeDragBeatId) ?? null : null),
+    [activeDragBeatId, beats]
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -357,6 +387,7 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       const { active, over } = event;
       latestDragEventRef.current = null;
       setDragPreview(null);
+      setActiveDragBeatId(null);
 
       const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
 
@@ -418,10 +449,15 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       <div
         ref={setViewportRef}
         onClick={handleBackgroundClick}
+        onWheel={handleViewportWheel}
         className="flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden bg-dark-bg/50"
+        style={{
+          paddingRight: inspectorOpen ? inspectorWidth : undefined,
+          scrollPaddingRight: inspectorOpen ? inspectorWidth : undefined,
+        }}
       >
         <div className="flex h-full flex-col" style={{ width: totalContentWidth, minWidth: totalContentWidth }}>
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-x-contain">
             <div
               ref={trackContentRef}
               className="relative flex min-h-full items-end"
@@ -480,6 +516,21 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
           </SortableContext>
         </div>
       </div>
+      <DragOverlay dropAnimation={null}>
+        {activeDragBeat ? (
+          <BeatBlock
+            beat={activeDragBeat}
+            selected={selectedBeatIds.has(activeDragBeat.id)}
+            connected={connectedBeatIds.has(activeDragBeat.id)}
+            beatWidthPercent={beatWidthPercent}
+            beatsExpanded={beatsExpanded}
+            expandedBeatHeightPx={expandedBeatHeightPx}
+            onClick={() => {}}
+            onDoubleClick={() => {}}
+            registerRef={() => {}}
+          />
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }

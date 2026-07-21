@@ -5,15 +5,18 @@ import {
   isTimelineProjectPayload,
   type TimelineBeatRecord,
   type TimelineConnectionRecord,
+  type TimelineDocumentRecord,
   type TimelineOrientation,
   type TimelineProjectPayload,
 } from "../storage/StorageDriver";
 import { generateTimelineId } from "../storage/timelineIds";
+import { emptyBeatDateSpec, migrateLegacyDateString } from "../utils/beatDate";
 import { generateTimelineScript, parseTimelineScript } from "./timelineScript";
 import {
   BEAT_GAP_PX,
   BEAT_WIDTH_PERCENT_MAX,
   BEAT_WIDTH_PERCENT_MIN,
+  type BeatDateSpec,
   DEFAULT_BEAT_WIDTH_PERCENT,
   DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
   DEFAULT_ZOOM_LANE_COUNT,
@@ -32,7 +35,9 @@ import {
 
 const SAVE_DEBOUNCE_MS = 500;
 
-export type { TimelineOrientation, TimelineLane, TimelineBeat, TimelineConnection, TimelineSelectionItem };
+export type { TimelineLane, TimelineBeat, TimelineConnection, TimelineSelectionItem, BeatDateSpec, BeatDateMode, BeatDateRelative } from "./timelineTypes";
+export type { TimelineOrientation, TimelineDocumentRecord } from "../storage/StorageDriver";
+export { resolveBeatDate, resolveBeatAbsoluteIso, emptyBeatDateSpec, dateSpecFromImportText } from "../utils/beatDate";
 export { generateTimelineScript, parseTimelineScript, lineReferencesTimelineEntity } from "./timelineScript";
 export {
   LANE_TYPE_PRESETS,
@@ -99,6 +104,11 @@ type StoredConnection = TimelineConnectionRecord & {
  * directly as the new absolute `slot` preserves each surviving beat's original relative spacing
  * (any gaps that used to be filled by ghost beats become genuinely empty slots).
  */
+function normalizeDateSpec(beat: TimelineBeatRecord): BeatDateSpec {
+  if (beat.dateSpec) return beat.dateSpec;
+  return migrateLegacyDateString(beat.date);
+}
+
 function normalizeLoadedBeat(beat: TimelineBeatRecord): TimelineBeat | null {
   if (beat.kind === "empty") return null;
   const kind = beat.kind === "anchor" ? "anchor" : "story";
@@ -109,8 +119,9 @@ function normalizeLoadedBeat(beat: TimelineBeatRecord): TimelineBeat | null {
     slot,
     kind,
     title: beat.title,
-    description: beat.description,
-    date: beat.date,
+    synopsis: beat.synopsis ?? "",
+    detail: beat.detail ?? beat.description ?? "",
+    dateSpec: normalizeDateSpec(beat),
   };
 }
 
@@ -197,6 +208,8 @@ interface TimelineStore {
   isSaving: boolean;
   lastSaveError: string | null;
   autosaveEnabled: boolean;
+  importLabelPrefixes: string[];
+  documents: TimelineDocumentRecord[];
   loadTimeline: (projectId: string) => Promise<{ hadData: boolean }>;
   saveTimeline: () => Promise<boolean>;
   flushSaveAndSave: () => Promise<boolean>;
@@ -214,11 +227,26 @@ interface TimelineStore {
   toggleSelection: (item: TimelineSelectionItem) => void;
   addLane: () => string;
   addBeat: (laneId?: string, kind?: "story" | "anchor") => string | null;
+  importBeats: (
+    laneId: string,
+    items: { title: string; synopsis: string; detail: string; dateSpec: BeatDateSpec }[]
+  ) => string[];
+  createBeatsFromSegments: (
+    laneId: string,
+    items: { title: string; synopsis: string; detail: string; dateSpec: BeatDateSpec }[]
+  ) => string[];
+  saveDocument: (id: string | null, name: string, content: string) => string;
+  deleteDocument: (id: string) => void;
+  renameDocument: (id: string, name: string) => void;
+  insertPendingBeats: (laneId: string, slots: number[]) => string[];
+  bulkRenameBeatTitles: (beatIds: string[], baseLabel: string) => void;
+  addImportLabelPrefix: (prefix: string) => void;
+  removeImportLabelPrefix: (prefix: string) => void;
   insertStoryBeatRelativeToBeat: (beatId: string, position: "above" | "below") => string | null;
   updateLane: (laneId: string, patch: Partial<Pick<TimelineLane, "label" | "laneType" | "sortOrder">>) => void;
   updateBeat: (
     beatId: string,
-    patch: Partial<Pick<TimelineBeat, "title" | "description" | "date" | "slot" | "laneId">>
+    patch: Partial<Pick<TimelineBeat, "title" | "synopsis" | "detail" | "dateSpec" | "slot" | "laneId">>
   ) => void;
   /** Move (or swap) a beat onto an absolute slot in a lane. If that slot is already occupied by a
    * different beat, the two beats trade places (lane + slot). */
@@ -255,6 +283,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   isSaving: false,
   lastSaveError: null,
   autosaveEnabled: true,
+  importLabelPrefixes: [],
+  documents: [],
 
   loadTimeline: async (projectId) => {
     const driver = getStorageDriver();
@@ -276,6 +306,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       lanes,
       beats,
       connections,
+      importLabelPrefixes: hadData ? (payload.importLabelPrefixes ?? []) : [],
+      documents: hadData ? (payload.documents ?? []) : [],
       selection: [],
       scriptDraft: null,
       hasUnsavedChanges: false,
@@ -303,6 +335,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         lanes: s.lanes,
         beats: s.beats,
         connections: s.connections,
+        importLabelPrefixes: s.importLabelPrefixes,
+        documents: s.documents,
       };
       await driver.saveProjectData(s.activeProjectId, payload);
       await driver.updateProjectMeta(s.activeProjectId, { updatedAt: Date.now() });
@@ -401,8 +435,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       slot: nextSlot,
       kind,
       title: kind === "anchor" ? getDefaultAnchorTitle(laneBeats) : getDefaultBeatTitle(laneBeats),
-      description: "",
-      date: "",
+      synopsis: "",
+      detail: "",
+      dateSpec: emptyBeatDateSpec(),
     };
     set({
       beats: [...s.beats, beat],
@@ -412,6 +447,159 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       scriptDraft: null,
     });
     return id;
+  },
+
+  importBeats: (laneId, items) => {
+    if (items.length === 0) return [];
+    const s = get();
+    const laneBeats = s.beats.filter((b) => b.laneId === laneId);
+    let nextSlot =
+      laneBeats.length === 0 ? 0 : Math.max(...laneBeats.map((b) => b.slot)) + 1;
+
+    const newBeats: TimelineBeat[] = items.map((item) => {
+      const beat: TimelineBeat = {
+        id: generateTimelineId(),
+        laneId,
+        slot: nextSlot++,
+        kind: "story",
+        title: item.title,
+        synopsis: item.synopsis,
+        detail: item.detail,
+        dateSpec: item.dateSpec,
+      };
+      return beat;
+    });
+
+    const lastId = newBeats[newBeats.length - 1]?.id ?? null;
+    set({
+      beats: [...s.beats, ...newBeats],
+      selection: lastId ? [{ type: "beat", id: lastId }] : s.selection,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return newBeats.map((b) => b.id);
+  },
+
+  createBeatsFromSegments: (laneId, items) => {
+    return get().importBeats(laneId, items);
+  },
+
+  saveDocument: (id, name, content) => {
+    const s = get();
+    const trimmedName = name.trim() || "Untitled";
+    const now = Date.now();
+    if (id) {
+      const docs = s.documents.map((d) =>
+        d.id === id ? { ...d, name: trimmedName, content, updatedAt: now } : d
+      );
+      set({ documents: docs, hasUnsavedChanges: true, lastSaveError: null });
+      return id;
+    }
+    const newId = generateTimelineId();
+    const doc: TimelineDocumentRecord = {
+      id: newId,
+      name: trimmedName,
+      content,
+      updatedAt: now,
+    };
+    set({
+      documents: [...s.documents, doc],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    return newId;
+  },
+
+  deleteDocument: (id) => {
+    set((s) => ({
+      documents: s.documents.filter((d) => d.id !== id),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+  },
+
+  renameDocument: (id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    set((s) => ({
+      documents: s.documents.map((d) =>
+        d.id === id ? { ...d, name: trimmed, updatedAt: Date.now() } : d
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+  },
+
+  insertPendingBeats: (laneId, slots) => {
+    if (slots.length === 0) return [];
+    const s = get();
+    const sortedSlots = [...slots].sort((a, b) => b - a);
+    let beats = [...s.beats];
+    const created: TimelineBeat[] = [];
+    const laneBeats = beats.filter((b) => b.laneId === laneId);
+
+    for (const slot of sortedSlots) {
+      beats = makeRoomAtSlot(beats, laneId, slot);
+      const beat: TimelineBeat = {
+        id: generateTimelineId(),
+        laneId,
+        slot,
+        kind: "story",
+        title: getDefaultBeatTitle([...laneBeats, ...created]),
+        synopsis: "",
+        detail: "",
+        dateSpec: emptyBeatDateSpec(),
+      };
+      created.push(beat);
+    }
+
+    set({
+      beats: [...beats, ...created],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return created.map((b) => b.id);
+  },
+
+  bulkRenameBeatTitles: (beatIds, baseLabel) => {
+    const trimmed = baseLabel.trim() || "Beat";
+    const s = get();
+    const idSet = new Set(beatIds);
+    const ordered = s.beats
+      .filter((b) => idSet.has(b.id))
+      .sort((a, b) => a.slot - b.slot);
+    const titleById = new Map<string, string>();
+    ordered.forEach((b, i) => titleById.set(b.id, `${trimmed} ${i + 1}`));
+    set({
+      beats: s.beats.map((b) =>
+        titleById.has(b.id) ? { ...b, title: titleById.get(b.id)! } : b
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
+  addImportLabelPrefix: (prefix) => {
+    const trimmed = prefix.trim();
+    if (!trimmed) return;
+    set((s) => ({
+      importLabelPrefixes: s.importLabelPrefixes.includes(trimmed)
+        ? s.importLabelPrefixes
+        : [...s.importLabelPrefixes, trimmed],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+  },
+
+  removeImportLabelPrefix: (prefix) => {
+    set((s) => ({
+      importLabelPrefixes: s.importLabelPrefixes.filter((p) => p !== prefix),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
   },
 
   insertStoryBeatRelativeToBeat: (beatId, position) => {
@@ -431,8 +619,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       slot: targetSlot,
       kind: "story",
       title: getDefaultBeatTitle(s.beats.filter((b) => b.laneId === laneId)),
-      description: "",
-      date: "",
+      synopsis: "",
+      detail: "",
+      dateSpec: emptyBeatDateSpec(),
     };
 
     set({

@@ -7,9 +7,12 @@ import TimelineEntitiesPanel from "../components/timeline/TimelineEntitiesPanel"
 import TimelineBoard from "../components/timeline/TimelineBoard";
 import TimelineToolbar from "../components/timeline/TimelineToolbar";
 import TimelineScriptPane from "../components/timeline/TimelineScriptPane";
-import TimelineInspector from "../components/timeline/TimelineInspector";
+import TimelineInspector, { type InspectorMode } from "../components/timeline/TimelineInspector";
+import BeatTextEditorPanel, {
+  type BeatEditorDocumentState,
+} from "../components/timeline/beatEditor/BeatTextEditorPanel";
 import TimelineSaveControls from "../components/timeline/TimelineSaveControls";
-import { useTimelineStore } from "../store/timelineStore";
+import { resolveLaneIdFromSelection, useTimelineStore } from "../store/timelineStore";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
@@ -18,15 +21,26 @@ const ENTITIES_MIN_W = 220;
 const ENTITIES_MAX_W = 520;
 const SCRIPT_MIN_H = 160;
 const SCRIPT_MAX_H = 520;
+const INSPECTOR_MIN_W = 256;
+const INSPECTOR_MAX_W = 900;
+const INSPECTOR_DEFAULT_EXPANDED_W = 640;
 
 export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [beatEditorOpen, setBeatEditorOpen] = useState(false);
+  const [editorState, setEditorState] = useState<BeatEditorDocumentState | null>(null);
+  const loadDocumentRef = useRef<((content: string, id: string, name: string) => void) | null>(
+    null
+  );
+  const [inspectorMode, setInspectorMode] = useState<InspectorMode>("isolation");
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [scriptPaneOpen, setScriptPaneOpen] = useState(true);
   const [entitiesWidth, setEntitiesWidth] = useState(260);
   const [scriptHeight, setScriptHeight] = useState(240);
+  const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_MIN_W);
+  const [inspectorExpandedWidth, setInspectorExpandedWidth] = useState(INSPECTOR_DEFAULT_EXPANDED_W);
   const [projectName, setProjectName] = useState("");
   const [loading, setLoading] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
@@ -34,7 +48,10 @@ export default function TimelineScreen() {
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
   const selection = useTimelineStore((s) => s.selection);
+  const lanes = useTimelineStore((s) => s.lanes);
+  const beats = useTimelineStore((s) => s.beats);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
+  const editorInitialLaneId = resolveLaneIdFromSelection(lanes, beats, selection);
 
   useEffect(() => {
     if (selection.length === 0) setInspectorOpen(false);
@@ -77,6 +94,9 @@ export default function TimelineScreen() {
   const entitiesStartWidth = useRef(260);
   const scriptDragStart = useRef<number | null>(null);
   const scriptStartHeight = useRef(240);
+  const inspectorDragStart = useRef<number | null>(null);
+  const inspectorStartWidth = useRef(INSPECTOR_MIN_W);
+  const inspectorLatestWidth = useRef(INSPECTOR_MIN_W);
 
   const handleEntitiesPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -99,6 +119,22 @@ export default function TimelineScreen() {
     [scriptHeight]
   );
 
+  const clampInspectorWidth = useCallback((width: number) => {
+    const maxW = Math.min(INSPECTOR_MAX_W, window.innerWidth * 0.8);
+    return Math.min(maxW, Math.max(INSPECTOR_MIN_W, width));
+  }, []);
+
+  const handleInspectorPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      inspectorDragStart.current = e.clientX;
+      inspectorStartWidth.current = inspectorWidth;
+      document.body.style.userSelect = "none";
+    },
+    [inspectorWidth]
+  );
+
   useEffect(() => {
     const handlePointerMove = (e: PointerEvent) => {
       if (entitiesDragStart.current !== null) {
@@ -115,10 +151,20 @@ export default function TimelineScreen() {
           Math.min(maxH, Math.max(SCRIPT_MIN_H, scriptStartHeight.current + deltaY))
         );
       }
+      if (inspectorDragStart.current !== null) {
+        const deltaX = inspectorDragStart.current - e.clientX;
+        const next = clampInspectorWidth(inspectorStartWidth.current + deltaX);
+        inspectorLatestWidth.current = next;
+        setInspectorWidth(next);
+      }
     };
     const handlePointerUp = () => {
+      if (inspectorDragStart.current !== null && inspectorLatestWidth.current > INSPECTOR_MIN_W + 8) {
+        setInspectorExpandedWidth(inspectorLatestWidth.current);
+      }
       entitiesDragStart.current = null;
       scriptDragStart.current = null;
+      inspectorDragStart.current = null;
       document.body.style.userSelect = "";
     };
     window.addEventListener("pointermove", handlePointerMove);
@@ -127,7 +173,16 @@ export default function TimelineScreen() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, []);
+  }, [clampInspectorWidth]);
+
+  const handleInspectorToggleExpand = useCallback(() => {
+    setInspectorWidth((w) => {
+      if (w <= INSPECTOR_MIN_W + 8) {
+        return clampInspectorWidth(inspectorExpandedWidth);
+      }
+      return INSPECTOR_MIN_W;
+    });
+  }, [clampInspectorWidth, inspectorExpandedWidth]);
 
   if (loading) {
     return (
@@ -241,12 +296,24 @@ export default function TimelineScreen() {
       />
 
       <div className="flex-1 flex min-h-0 flex-col">
-        <TimelineToolbar onSelectForEdit={() => setInspectorOpen(true)} />
+        {!beatEditorOpen && (
+          <TimelineToolbar
+            onSelectForEdit={() => setInspectorOpen(true)}
+            onOpenBeatEditor={() => setBeatEditorOpen(true)}
+          />
+        )}
         <div className="flex-1 flex min-h-0 relative">
           {leftSidebarOpen && (
             <>
               <div className="flex-shrink-0 overflow-hidden flex" style={{ width: entitiesWidth }}>
-                <TimelineEntitiesPanel onSelectForEdit={() => setInspectorOpen(true)} />
+                <TimelineEntitiesPanel
+                  onSelectForEdit={() => setInspectorOpen(true)}
+                  beatEditorMode={beatEditorOpen}
+                  editorState={editorState}
+                  onOpenDocument={(content, id, name) =>
+                    loadDocumentRef.current?.(content, id, name)
+                  }
+                />
               </div>
               <div
                 role="separator"
@@ -270,32 +337,58 @@ export default function TimelineScreen() {
             </button>
           )}
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <TimelineBoard onSelectForEdit={() => setInspectorOpen(true)} />
-            {scriptPaneOpen && (
+            {beatEditorOpen ? (
+              <BeatTextEditorPanel
+                initialLaneId={editorInitialLaneId}
+                onClose={() => setBeatEditorOpen(false)}
+                onDocumentChange={setEditorState}
+                onRegisterLoadHandler={(handler) => {
+                  loadDocumentRef.current = handler;
+                }}
+              />
+            ) : (
               <>
-                <div
-                  role="separator"
-                  aria-orientation="horizontal"
-                  onPointerDown={handleScriptPointerDown}
-                  className="h-2 flex-shrink-0 cursor-row-resize flex items-center justify-center border-t border-dark-accent/50 hover:border-dark-accent/80 transition-colors select-none"
-                >
-                  <div className="h-0.5 w-8 rounded-full bg-dark-muted/40" />
-                </div>
-                <div className="flex-shrink-0 overflow-hidden" style={{ height: scriptHeight }}>
-                  <TimelineScriptPane />
-                </div>
+                <TimelineBoard
+                  onSelectForEdit={() => setInspectorOpen(true)}
+                  inspectorOpen={inspectorOpen}
+                  inspectorWidth={inspectorWidth}
+                />
+                {scriptPaneOpen && (
+                  <>
+                    <div
+                      role="separator"
+                      aria-orientation="horizontal"
+                      onPointerDown={handleScriptPointerDown}
+                      className="h-2 flex-shrink-0 cursor-row-resize flex items-center justify-center border-t border-dark-accent/50 hover:border-dark-accent/80 transition-colors select-none"
+                    >
+                      <div className="h-0.5 w-8 rounded-full bg-dark-muted/40" />
+                    </div>
+                    <div className="flex-shrink-0 overflow-hidden" style={{ height: scriptHeight }}>
+                      <TimelineScriptPane />
+                    </div>
+                  </>
+                )}
+                {!scriptPaneOpen && (
+                  <button
+                    onClick={() => setScriptPaneOpen(true)}
+                    className="h-6 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-t border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text text-xs transition-colors"
+                  >
+                    Script
+                  </button>
+                )}
               </>
             )}
-            {!scriptPaneOpen && (
-              <button
-                onClick={() => setScriptPaneOpen(true)}
-                className="h-6 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-t border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text text-xs transition-colors"
-              >
-                Script
-              </button>
-            )}
           </div>
-          {inspectorOpen && <TimelineInspector />}
+          {inspectorOpen && !beatEditorOpen && (
+            <TimelineInspector
+              width={inspectorWidth}
+              collapsedWidth={INSPECTOR_MIN_W}
+              onResizePointerDown={handleInspectorPointerDown}
+              onToggleExpand={handleInspectorToggleExpand}
+              mode={inspectorMode}
+              onModeChange={setInspectorMode}
+            />
+          )}
         </div>
       </div>
     </div>
