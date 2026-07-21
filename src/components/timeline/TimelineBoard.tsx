@@ -73,6 +73,21 @@ function computeBeatDropIndex(
   return index;
 }
 
+/**
+ * Which lane column a dragged beat is currently over, purely from its horizontal position.
+ * Deliberately independent of dnd-kit's collision detection: `closestCenter` compares the
+ * dragged item's rect against *every* registered droppable (every beat in every lane, plus each
+ * lane's own big track rect), and once a lane's track fills the whole viewport height, its center
+ * can end up numerically farther from the pointer than some unrelated droppable — which made
+ * hovering over open track space (e.g. above the topmost beat) resolve to the wrong target, or
+ * flicker between candidates. Picking the lane by straightforward horizontal math is unambiguous.
+ */
+function resolveLaneIndexFromX(pointerX: number, trackLeft: number, laneCount: number, laneWidthPx: number): number {
+  if (laneCount <= 0 || laneWidthPx <= 0) return 0;
+  const relativeX = pointerX - trackLeft;
+  return Math.max(0, Math.min(laneCount - 1, Math.floor(relativeX / laneWidthPx)));
+}
+
 export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
@@ -124,6 +139,21 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
 
   useEffect(() => {
     return () => viewportResizeObserverRef.current?.disconnect();
+  }, []);
+
+  // Defensive fallback alongside the ResizeObserver above: some window-manager-driven size
+  // changes (e.g. toggling OS-level fullscreen) can lag or get missed by ResizeObserver in a
+  // webview. A plain window resize listener re-measures directly so the lane tracks can't get
+  // stuck at a stale height/width.
+  useEffect(() => {
+    const remeasure = () => {
+      const el = viewportRef.current;
+      if (!el) return;
+      setViewportWidth(el.clientWidth);
+      setViewportHeight(el.clientHeight);
+    };
+    window.addEventListener("resize", remeasure);
+    return () => window.removeEventListener("resize", remeasure);
   }, []);
 
   const laneWidthPx = useMemo(() => {
@@ -202,24 +232,22 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
   const recomputeDragPreview = useCallback(() => {
     const evt = latestDragEventRef.current;
     if (!evt) return;
-    const { active, over } = evt;
+    const { active } = evt;
     const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
-    if (activeData?.type !== "beat") {
-      setDragPreview(null);
-      return;
-    }
-    const overData = over?.data.current as { type?: string; laneId?: string } | undefined;
-    const targetLaneId = overData?.laneId ?? (overData?.type === "lane" && over ? String(over.id) : null);
     const translated = active.rect.current.translated;
-    if (!targetLaneId || !translated) {
+    if (activeData?.type !== "beat" || !translated || sortedLanes.length === 0) {
       setDragPreview(null);
       return;
     }
+    const pointerX = translated.left + translated.width / 2;
     const pointerY = translated.top + translated.height / 2;
+    const trackLeft = trackContentRef.current?.getBoundingClientRect().left ?? 0;
+    const laneIndex = resolveLaneIndexFromX(pointerX, trackLeft, sortedLanes.length, laneWidthPx);
+    const targetLaneId = sortedLanes[laneIndex].id;
     const beatId = String(active.id);
     const index = computeBeatDropIndex(pointerY, targetLaneId, beats, beatId, getBeatElement);
     setDragPreview({ beatId, laneId: targetLaneId, index });
-  }, [beats, getBeatElement]);
+  }, [beats, getBeatElement, sortedLanes, laneWidthPx]);
 
   const handleDragStart = useCallback((_event: DragStartEvent) => {
     latestDragEventRef.current = null;
@@ -317,12 +345,12 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
       const { active, over } = event;
       latestDragEventRef.current = null;
       setDragPreview(null);
-      if (!over) return;
 
       const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
-      const overData = over.data.current as { type?: string; laneId?: string } | undefined;
 
       if (activeData?.type === "laneReorder") {
+        if (!over) return;
+        const overData = over.data.current as { type?: string; laneId?: string } | undefined;
         if (overData?.type !== "laneReorder") return;
         const targetLaneId = overData.laneId;
         if (!targetLaneId) return;
@@ -333,21 +361,35 @@ export default function TimelineBoard({ onSelectForEdit }: TimelineBoardProps) {
         return;
       }
 
+      if (sortedLanes.length === 0) return;
       const beatId = String(active.id);
-      const targetLaneId = overData?.laneId ?? (overData?.type === "lane" ? String(over.id) : null);
-      if (!targetLaneId) return;
 
-      // Same geometric index computation as the live drag preview, so dropping on open track
-      // space and dropping directly on a neighboring beat resolve to the identical slot.
+      // Resolve both the target lane and the in-lane index from the dragged item's own rendered
+      // position (same approach as the live preview) instead of dnd-kit's collision-based `over`
+      // — see resolveLaneIndexFromX for why that's more reliable, especially over open track space.
+      // `over` is only consulted as a fallback in the rare case the active rect isn't available.
       const translated = active.rect.current.translated;
-      const targetIndex =
-        translated != null
-          ? computeBeatDropIndex(translated.top + translated.height / 2, targetLaneId, beats, beatId, getBeatElement)
-          : beats.filter((b) => b.laneId === targetLaneId && b.id !== beatId).length;
+      let targetLaneId: string;
+      let targetIndex: number;
+      if (translated) {
+        const pointerX = translated.left + translated.width / 2;
+        const pointerY = translated.top + translated.height / 2;
+        const trackLeft = trackContentRef.current?.getBoundingClientRect().left ?? 0;
+        const laneIndex = resolveLaneIndexFromX(pointerX, trackLeft, sortedLanes.length, laneWidthPx);
+        targetLaneId = sortedLanes[laneIndex].id;
+        targetIndex = computeBeatDropIndex(pointerY, targetLaneId, beats, beatId, getBeatElement);
+      } else {
+        if (!over) return;
+        const overData = over.data.current as { type?: string; laneId?: string } | undefined;
+        const fallbackLaneId = overData?.laneId ?? (overData?.type === "lane" ? String(over.id) : null);
+        if (!fallbackLaneId) return;
+        targetLaneId = fallbackLaneId;
+        targetIndex = beats.filter((b) => b.laneId === targetLaneId && b.id !== beatId).length;
+      }
 
       moveBeat(beatId, targetLaneId, targetIndex);
     },
-    [beats, moveBeat, reorderLane, sortedLanes, getBeatElement]
+    [beats, moveBeat, reorderLane, sortedLanes, getBeatElement, laneWidthPx]
   );
 
   if (sortedLanes.length === 0) {

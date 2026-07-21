@@ -42,7 +42,7 @@ export default function LaneColumn({
   draggedBeatId,
   dropIndicatorIndex,
 }: LaneColumnProps) {
-  const { setNodeRef, isOver } = useDroppable({ id: laneId, data: { type: "lane", laneId } });
+  const { setNodeRef } = useDroppable({ id: laneId, data: { type: "lane", laneId } });
   const sorted = [...beats].sort((a, b) => a.order - b.order);
   const beatIds = sorted.map((b) => b.id);
 
@@ -71,7 +71,7 @@ export default function LaneColumn({
       ref={setNodeRef}
       style={{ width, flexBasis: width, minHeight: minHeight > 0 ? minHeight : undefined }}
       className={`relative flex flex-shrink-0 flex-col-reverse items-center gap-2 px-2 py-2 border-r border-dark-accent/20 transition-colors ${
-        isOver ? "bg-blue-500/10" : ""
+        dropIndicatorIndex != null ? "bg-blue-500/10" : ""
       }`}
     >
       {/* Lane track: a darker rail down the center so each lane reads as a distinct column, even
