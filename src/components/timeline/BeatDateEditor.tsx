@@ -40,13 +40,15 @@ export default function BeatDateEditor({
     <div className={`space-y-2 ${compact ? "" : "rounded border border-dark-accent/40 p-2"}`}>
       <span className="text-xs text-dark-muted">Date / Label</span>
       <div className="flex flex-wrap gap-1">
-        {(["none", "label", "absolute", "relative"] as const).map((mode) => (
+        {(["none", "resolved", "label", "absolute", "relative"] as const).map((mode) => (
           <button
             key={mode}
             type="button"
             onClick={() => {
               if (mode === dateSpec.mode) return;
               if (mode === "none") onChange({ mode: "none" });
+              if (mode === "resolved")
+                onChange({ mode: "resolved", resolved: dateSpec.resolved ?? dateSpec.label ?? "" });
               if (mode === "label") onChange({ mode: "label", label: dateSpec.label ?? "" });
               if (mode === "absolute")
                 onChange({ mode: "absolute", absolute: dateSpec.absolute ?? "" });
@@ -69,14 +71,26 @@ export default function BeatDateEditor({
           >
             {mode === "none"
               ? "None"
-              : mode === "label"
-                ? "Label"
-                : mode === "absolute"
-                  ? "Actual date"
-                  : "Relative"}
+              : mode === "resolved"
+                ? "Resolved"
+                : mode === "label"
+                  ? "Label"
+                  : mode === "absolute"
+                    ? "Actual date"
+                    : "Relative"}
           </button>
         ))}
       </div>
+
+      {dateSpec.mode === "resolved" && (
+        <input
+          type="text"
+          value={dateSpec.resolved ?? ""}
+          onChange={(e) => onChange({ mode: "resolved", resolved: e.target.value })}
+          placeholder="Auto-detected date text"
+          className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm focus:outline-none focus:border-blue-500"
+        />
+      )}
 
       {dateSpec.mode === "label" && (
         <input
@@ -191,7 +205,7 @@ export default function BeatDateEditor({
 
       {resolvedPreview && (
         <p className="text-[10px] text-dark-muted">
-          Resolved: <span className="text-dark-text">{resolvedPreview}</span>
+          Preview: <span className="text-dark-text">{resolvedPreview}</span>
         </p>
       )}
     </div>

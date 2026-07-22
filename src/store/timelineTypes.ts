@@ -14,9 +14,13 @@ export const DEFAULT_BEAT_WIDTH_PERCENT = 100;
 export const BEAT_WIDTH_PERCENT_MIN = 20;
 export const BEAT_WIDTH_PERCENT_MAX = 100;
 
+export const DEFAULT_BEAT_TEXT_SCALE_PERCENT = 100;
+export const BEAT_TEXT_SCALE_PERCENT_MIN = 50;
+export const BEAT_TEXT_SCALE_PERCENT_MAX = 200;
+
 export const BEAT_COLLAPSED_HEIGHT_PX = 44;
-export const DEFAULT_EXPANDED_BEAT_HEIGHT_PX = 160;
-export const EXPANDED_BEAT_HEIGHT_MIN = 80;
+export const DEFAULT_EXPANDED_BEAT_HEIGHT_PX = 200;
+export const EXPANDED_BEAT_HEIGHT_MIN = 120;
 export const EXPANDED_BEAT_HEIGHT_MAX = 400;
 export const BEAT_HEIGHT_TRANSITION_MS = 200;
 
@@ -49,7 +53,7 @@ export interface TimelineLane {
   sortOrder: number;
 }
 
-export type BeatDateMode = "none" | "label" | "absolute" | "relative";
+export type BeatDateMode = "none" | "label" | "absolute" | "relative" | "resolved";
 
 export interface BeatDateRelative {
   years: number;
@@ -63,6 +67,7 @@ export interface BeatDateSpec {
   label?: string;
   absolute?: string;
   relative?: BeatDateRelative;
+  resolved?: string;
 }
 
 export interface TimelineBeat {

@@ -54,6 +54,9 @@ function appendBeatDateParts(parts: string[], spec: BeatDateSpec): void {
   if (spec.mode === "label" && spec.label?.trim()) {
     parts.push(`dateLabel: "${escapeQuoted(spec.label.trim())}"`);
   }
+  if (spec.mode === "resolved" && spec.resolved?.trim()) {
+    parts.push(`dateResolved: "${escapeQuoted(spec.resolved.trim())}"`);
+  }
   if (spec.mode === "absolute" && spec.absolute?.trim()) {
     parts.push(`dateAbsolute: ${spec.absolute.trim()}`);
   }
@@ -92,6 +95,9 @@ function parseBeatDateSpec(line: string, kv: Record<string, string>): BeatDateSp
   if (modeRaw === "label") {
     return { mode: "label", label: kv.dateLabel ?? kv.date ?? "" };
   }
+  if (modeRaw === "resolved") {
+    return { mode: "resolved", resolved: kv.dateResolved ?? kv.date ?? "" };
+  }
   if (kv.date?.trim()) {
     return migrateLegacyDateString(kv.date);
   }
@@ -120,34 +126,27 @@ export function generateTimelineScript(
   });
 
   for (const beat of sortedBeats) {
+    const headerParts = [`Beat ${beat.id} lane: ${beat.laneId} slot: ${beat.slot}`];
     if (beat.kind === "anchor") {
-      const parts = [
-        `Beat ${beat.id} lane: ${beat.laneId} slot: ${beat.slot}`,
-        "kind: anchor",
-        `title: "${escapeQuoted(beat.title)}"`,
-      ];
-      if (beat.synopsis.trim()) {
-        parts.push(`synopsis: "${escapeQuoted(beat.synopsis)}"`);
-      }
-      if (beat.detail.trim()) {
-        parts.push(`detail: "${escapeQuoted(beat.detail)}"`);
-      }
-      appendBeatDateParts(parts, beat.dateSpec);
-      lines.push(parts.join(" "));
-      continue;
+      headerParts.push("kind: anchor");
     }
-    const parts = [
-      `Beat ${beat.id} lane: ${beat.laneId} slot: ${beat.slot}`,
-      `title: "${escapeQuoted(beat.title)}"`,
-    ];
+
+    const fieldLines: string[] = [`  title: "${escapeQuoted(beat.title)}"`];
     if (beat.synopsis.trim()) {
-      parts.push(`synopsis: "${escapeQuoted(beat.synopsis)}"`);
+      fieldLines.push(`  synopsis: "${escapeQuoted(beat.synopsis)}"`);
     }
     if (beat.detail.trim()) {
-      parts.push(`detail: "${escapeQuoted(beat.detail)}"`);
+      fieldLines.push(`  detail: "${escapeQuoted(beat.detail)}"`);
     }
-    appendBeatDateParts(parts, beat.dateSpec);
-    lines.push(parts.join(" "));
+    const dateParts: string[] = [];
+    appendBeatDateParts(dateParts, beat.dateSpec);
+    for (const part of dateParts) {
+      fieldLines.push(`  ${part}`);
+    }
+
+    lines.push(`${headerParts.join(" ")} {`);
+    lines.push(...fieldLines);
+    lines.push("}");
   }
 
   if (connections.length > 0) {
@@ -187,8 +186,11 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
   const laneIds = new Set<string>();
   const beatIds = new Set<string>();
 
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
+  const rawLines = text.split("\n");
+  let lineIndex = 0;
+  while (lineIndex < rawLines.length) {
+    const line = rawLines[lineIndex].trim();
+    lineIndex++;
     if (!line || line.startsWith("#") || line.startsWith("@")) continue;
 
     if (line.startsWith("Lane ")) {
@@ -214,22 +216,41 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
     }
 
     if (line.startsWith("Beat ")) {
-      const idMatch = /^Beat\s+(\S+)\s+/i.exec(line);
+      // Beat field data (title, synopsis, detail, date) lives in a `{ ... }` block below the
+      // header, mirroring how the family tree wraps a union's field data. Older saved scripts
+      // may still have every field on the single header line — that legacy form still parses,
+      // since we simply fold the block body (if any) back onto the header before extracting fields.
+      let header = line;
+      let blockBody = "";
+      if (header.endsWith("{")) {
+        header = header.slice(0, -1).trim();
+        const bodyLines: string[] = [];
+        while (lineIndex < rawLines.length) {
+          const innerLine = rawLines[lineIndex].trim();
+          lineIndex++;
+          if (innerLine === "}") break;
+          if (innerLine) bodyLines.push(innerLine);
+        }
+        blockBody = bodyLines.join(" ");
+      }
+      const fullLine = blockBody ? `${header} ${blockBody}` : header;
+
+      const idMatch = /^Beat\s+(\S+)\s+/i.exec(header);
       if (!idMatch) {
-        errors.push(`Invalid beat line: ${line}`);
+        errors.push(`Invalid beat line: ${header}`);
         continue;
       }
       const id = idMatch[1];
-      const kv = parseKeyValueRest(line);
-      const laneId = parseBareField(line, "lane");
+      const kv = parseKeyValueRest(fullLine);
+      const laneId = parseBareField(fullLine, "lane");
       if (!laneId) {
         errors.push(`Beat ${id} missing lane:`);
         continue;
       }
       // Accept the legacy `order:` key too, so scripts saved before the slot-grid rewrite still parse.
-      const slot = parseNumericField(line, "slot") ?? parseNumericField(line, "order") ?? 0;
-      if (/kind:\s*anchor/i.test(line)) {
-        const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(line);
+      const slot = parseNumericField(fullLine, "slot") ?? parseNumericField(fullLine, "order") ?? 0;
+      if (/kind:\s*anchor/i.test(fullLine)) {
+        const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(fullLine);
         const title = titleMatch
           ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
           : "Beat";
@@ -241,17 +262,17 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
           title,
           synopsis: kv.synopsis ?? "",
           detail: kv.detail ?? kv.description ?? "",
-          dateSpec: parseBeatDateSpec(line, kv),
+          dateSpec: parseBeatDateSpec(fullLine, kv),
         });
         beatIds.add(id);
         continue;
       }
       // Legacy "kind: empty" spacer beats are silently dropped — the slot grid represents gaps
       // natively now, so a line like this simply no longer produces a beat.
-      if (/kind:\s*empty/i.test(line) || /empty:\s*true/.test(line)) {
+      if (/kind:\s*empty/i.test(fullLine) || /empty:\s*true/.test(fullLine)) {
         continue;
       }
-      const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(line);
+      const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(fullLine);
       const title = titleMatch
         ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
         : "Beat";
@@ -263,7 +284,7 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         title,
         synopsis: kv.synopsis ?? "",
         detail: kv.detail ?? kv.description ?? "",
-        dateSpec: parseBeatDateSpec(line, kv),
+        dateSpec: parseBeatDateSpec(fullLine, kv),
       });
       beatIds.add(id);
       continue;
@@ -318,4 +339,22 @@ export function lineReferencesTimelineEntity(line: string, entityId: string): bo
   const idEscaped = entityId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const idRe = new RegExp(`(?:^|[^a-zA-Z0-9_])${idEscaped}(?:$|[^a-zA-Z0-9_])`);
   return idRe.test(line);
+}
+
+const LANE_LINE_QUOTED = /^(\s*Lane\s+\S+\s+)"((?:\\.|[^"\\])+)"/;
+const KV_QUOTED = /(\w+):\s*"((?:\\.|[^"\\])+)"/g;
+
+/** Replace non-empty quoted field values with "..." for compact script display. */
+export function compactTimelineScriptDisplay(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("@") || trimmed.startsWith("#")) return line;
+
+      let result = line.replace(LANE_LINE_QUOTED, '$1"..."');
+      result = result.replace(KV_QUOTED, '$1: "..."');
+      return result;
+    })
+    .join("\n");
 }

@@ -59,6 +59,9 @@ export function resolveBeatDate(
   if (spec.mode === "label") {
     return (spec.label ?? "").trim();
   }
+  if (spec.mode === "resolved") {
+    return (spec.resolved ?? "").trim();
+  }
   if (spec.mode === "absolute") {
     const iso = spec.absolute?.trim() ?? "";
     return iso ? formatIsoDateDisplay(iso) : "";
@@ -120,4 +123,11 @@ export function dateSpecFromImportText(text: string): BeatDateSpec {
   const iso = parseCalendarTextToIso(trimmed);
   if (iso) return { mode: "absolute", absolute: iso };
   return { mode: "label", label: trimmed };
+}
+
+/** Beat Text Editor default: store raw detected/assigned date text as-is. */
+export function dateSpecFromResolvedText(text: string): BeatDateSpec {
+  const trimmed = text.trim();
+  if (!trimmed) return emptyBeatDateSpec();
+  return { mode: "resolved", resolved: trimmed };
 }

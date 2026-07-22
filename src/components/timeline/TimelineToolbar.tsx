@@ -10,6 +10,8 @@ import {
   ZOOM_LANE_COUNT_STEPS,
 } from "../../store/timelineStore";
 import {
+  BEAT_TEXT_SCALE_PERCENT_MAX,
+  BEAT_TEXT_SCALE_PERCENT_MIN,
   BEAT_WIDTH_PERCENT_MAX,
   BEAT_WIDTH_PERCENT_MIN,
   EXPANDED_BEAT_HEIGHT_MAX,
@@ -28,6 +30,7 @@ export default function TimelineToolbar({ onSelectForEdit, onOpenBeatEditor }: T
   const selection = useTimelineStore((s) => s.selection);
   const zoomLaneCount = useTimelineStore((s) => s.zoomLaneCount);
   const beatWidthPercent = useTimelineStore((s) => s.beatWidthPercent);
+  const beatTextScalePercent = useTimelineStore((s) => s.beatTextScalePercent);
   const beatsExpanded = useTimelineStore((s) => s.beatsExpanded);
   const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
   const beatPlacementMode = useTimelineStore((s) => s.beatPlacementMode);
@@ -38,6 +41,7 @@ export default function TimelineToolbar({ onSelectForEdit, onOpenBeatEditor }: T
   const toggleConnection = useTimelineStore((s) => s.toggleConnection);
   const setZoomLaneCount = useTimelineStore((s) => s.setZoomLaneCount);
   const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
+  const setBeatTextScalePercent = useTimelineStore((s) => s.setBeatTextScalePercent);
   const setBeatsExpanded = useTimelineStore((s) => s.setBeatsExpanded);
   const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
   const setBeatPlacementMode = useTimelineStore((s) => s.setBeatPlacementMode);
@@ -389,6 +393,21 @@ export default function TimelineToolbar({ onSelectForEdit, onOpenBeatEditor }: T
           step={5}
           value={beatWidthPercent}
           onChange={(e) => setBeatWidthPercent(Number(e.target.value))}
+          className="w-20 h-1 accent-blue-500 cursor-pointer"
+        />
+      </div>
+
+      <div className="flex items-center gap-2" title="Text size inside beat blocks on the viewport">
+        <span className="text-xs text-dark-muted whitespace-nowrap">
+          Text size: {beatTextScalePercent}%
+        </span>
+        <input
+          type="range"
+          min={BEAT_TEXT_SCALE_PERCENT_MIN}
+          max={BEAT_TEXT_SCALE_PERCENT_MAX}
+          step={5}
+          value={beatTextScalePercent}
+          onChange={(e) => setBeatTextScalePercent(Number(e.target.value))}
           className="w-20 h-1 accent-blue-500 cursor-pointer"
         />
       </div>

@@ -1,5 +1,5 @@
 import type { BeatDateSpec } from "../../../store/timelineTypes";
-import { dateSpecFromImportText, emptyBeatDateSpec } from "../../../utils/beatDate";
+import { dateSpecFromResolvedText, emptyBeatDateSpec } from "../../../utils/beatDate";
 
 export const SEPARATOR_LINE = "- - - - - -";
 export const FIELD_LABELS = ["Title:", "Synopsis:", "Detail:", "Date:"] as const;
@@ -139,7 +139,7 @@ export function deriveAutoFields(
   const remaining = lines.slice(1).join("\n").trim();
   const date = disabled.date ? "" : detectDate(rawText);
   const detail = disabled.detail ? "" : remaining;
-  const dateSpec = date.trim() ? dateSpecFromImportText(date) : emptyBeatDateSpec();
+  const dateSpec = date.trim() ? dateSpecFromResolvedText(date) : emptyBeatDateSpec();
   return {
     title,
     synopsis: "",
@@ -180,7 +180,7 @@ export function parseSegmentFields(rawText: string): BeatSegmentFields {
       else if (key === "detail") fields.detail = val;
       else if (key === "date") {
         fields.dateText = val;
-        fields.dateSpec = val.trim() ? dateSpecFromImportText(val) : emptyBeatDateSpec();
+        fields.dateSpec = val.trim() ? dateSpecFromResolvedText(val) : emptyBeatDateSpec();
       }
     }
   }

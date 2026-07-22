@@ -1,6 +1,9 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { BEAT_COLLAPSED_HEIGHT_PX, BEAT_HEIGHT_TRANSITION_MS } from "../../store/timelineTypes";
+import {
+  BEAT_COLLAPSED_HEIGHT_PX,
+  BEAT_HEIGHT_TRANSITION_MS,
+} from "../../store/timelineTypes";
 import type { TimelineBeat } from "../../store/timelineTypes";
 import { resolveBeatDate } from "../../utils/beatDate";
 import { useTimelineStore } from "../../store/timelineStore";
@@ -17,8 +20,12 @@ interface BeatBlockProps {
   beatWidthPercent: number;
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
+  beatTextScalePercent: number;
+  suppressHeightTransition?: boolean;
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: (e: React.MouseEvent) => void;
+  onWidthResizeStart: (e: React.PointerEvent) => void;
+  onHeightResizeStart?: (e: React.PointerEvent) => void;
   registerRef: (beatId: string, el: HTMLElement | null) => void;
 }
 
@@ -31,8 +38,12 @@ export default function BeatBlock({
   beatWidthPercent,
   beatsExpanded,
   expandedBeatHeightPx,
+  beatTextScalePercent,
+  suppressHeightTransition = false,
   onClick,
   onDoubleClick,
+  onWidthResizeStart,
+  onHeightResizeStart,
   registerRef,
 }: BeatBlockProps) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
@@ -45,14 +56,22 @@ export default function BeatBlock({
   const allBeats = useTimelineStore((s) => s.beats);
   const displayDate = resolveBeatDate(beat, allBeats);
 
+  const textScale = beatTextScalePercent / 100;
+  const titleFontSizePx = 14 * textScale;
+  const detailFontSizePx = 10 * textScale;
+
   const style: React.CSSProperties = {
     transform: ghostInPlace ? undefined : CSS.Translate.toString(transform),
-    transition: ghostInPlace ? undefined : `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`,
+    transition:
+      ghostInPlace || suppressHeightTransition
+        ? undefined
+        : `height ${BEAT_HEIGHT_TRANSITION_MS}ms ease`,
     visibility: ghostInPlace ? "hidden" : undefined,
     width: `${beatWidthPercent}%`,
     height: heightPx,
     overflowX: "hidden",
     overflowY: "auto",
+    fontSize: titleFontSizePx,
   };
 
   return (
@@ -67,7 +86,7 @@ export default function BeatBlock({
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       data-beat-id={beat.id}
-      className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left text-sm cursor-grab active:cursor-grabbing select-none ${
+      className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left cursor-grab active:cursor-grabbing select-none ${
         isAnchor
           ? selected
             ? "border-blue-500 bg-[#2a1f3d] text-dark-text ring-1 ring-blue-500/60"
@@ -78,34 +97,67 @@ export default function BeatBlock({
       } ${highlightAsDropTarget ? "ring-2 ring-blue-400 shadow-[0_0_10px_2px_rgba(96,165,250,0.5)]" : ""}`}
     >
       <span className="block truncate font-medium">
-        {isAnchor && <span className="mr-1 text-[10px] opacity-80">⚓</span>}
+        {isAnchor && (
+          <span className="mr-1 opacity-80" style={{ fontSize: detailFontSizePx }}>
+            ⚓
+          </span>
+        )}
         {beat.title || (isAnchor ? "Anchor" : "Beat")}
       </span>
       {beatsExpanded ? (
         <>
           {displayDate && (
-            <span className="block text-[10px] text-dark-muted mt-1">{displayDate}</span>
+            <span className="block text-dark-muted mt-1" style={{ fontSize: detailFontSizePx }}>
+              {displayDate}
+            </span>
           )}
           {beat.synopsis.trim() && (
-            <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
+            <span
+              className="block text-dark-muted mt-1 whitespace-pre-wrap break-words"
+              style={{ fontSize: detailFontSizePx }}
+            >
               {beat.synopsis}
             </span>
           )}
           {beat.detail.trim() && (
-            <span className="block text-[10px] text-dark-muted mt-1 whitespace-pre-wrap break-words">
+            <span
+              className="block text-dark-muted mt-1 whitespace-pre-wrap break-words"
+              style={{ fontSize: detailFontSizePx }}
+            >
               {beat.detail}
             </span>
           )}
         </>
       ) : (
         displayDate && (
-          <span className="block truncate text-[10px] text-dark-muted mt-0.5">{displayDate}</span>
+          <span
+            className="block truncate text-dark-muted mt-0.5"
+            style={{ fontSize: detailFontSizePx }}
+          >
+            {displayDate}
+          </span>
         )
       )}
       {connected && (
         <span
           className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-dark-bg"
           title="Connected to another beat"
+        />
+      )}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize beat width"
+        onPointerDown={onWidthResizeStart}
+        className="absolute top-0 right-0 h-full w-2 cursor-ew-resize opacity-0 group-hover:opacity-100 hover:bg-blue-500/30 rounded-r-lg touch-none"
+      />
+      {beatsExpanded && onHeightResizeStart && (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize beat height"
+          onPointerDown={onHeightResizeStart}
+          className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 hover:bg-blue-500/30 rounded-b-lg touch-none"
         />
       )}
     </div>

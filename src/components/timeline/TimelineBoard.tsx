@@ -17,15 +17,21 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import BeatBlock from "./BeatBlock";
-import { computeSlotTrackContentHeightPx, useTimelineStore } from "../../store/timelineStore";
+import { computeSlotTrackContentHeightPx, getPrimarySelection, useTimelineStore } from "../../store/timelineStore";
+import type { TimelineBeat, TimelineLane } from "../../store/timelineTypes";
 import {
   BEAT_COLLAPSED_HEIGHT_PX,
   BEAT_GAP_PX,
   BEAT_HEIGHT_TRANSITION_MS,
+  BEAT_WIDTH_PERCENT_MAX,
+  BEAT_WIDTH_PERCENT_MIN,
+  EXPANDED_BEAT_HEIGHT_MAX,
+  EXPANDED_BEAT_HEIGHT_MIN,
   LANE_GATE_HEIGHT_PX,
   LANE_MIN_WIDTH_PX,
   LANE_TRACK_PADDING_PX,
@@ -78,6 +84,45 @@ function computeSlotFromY(
   return Math.max(0, Math.round(raw));
 }
 
+function computeGroupDragPreviews(
+  beats: TimelineBeat[],
+  sortedLanes: TimelineLane[],
+  draggedBeatId: string,
+  targetLaneId: string,
+  targetSlot: number,
+  selectedBeatIds: Set<string>
+): DragPreview[] {
+  const draggedBeat = beats.find((b) => b.id === draggedBeatId);
+  if (!draggedBeat) return [];
+
+  const isGroup = selectedBeatIds.has(draggedBeatId) && selectedBeatIds.size > 1;
+  if (!isGroup) {
+    return [{ beatId: draggedBeatId, laneId: targetLaneId, slot: targetSlot }];
+  }
+
+  const sourceLaneIndex = sortedLanes.findIndex((l) => l.id === draggedBeat.laneId);
+  const targetLaneIndex = sortedLanes.findIndex((l) => l.id === targetLaneId);
+  const laneIndexDelta = targetLaneIndex - sourceLaneIndex;
+  const slotDelta = targetSlot - draggedBeat.slot;
+
+  const previews: DragPreview[] = [];
+  for (const id of selectedBeatIds) {
+    const beat = beats.find((b) => b.id === id);
+    if (!beat) continue;
+    const laneIndex = sortedLanes.findIndex((l) => l.id === beat.laneId);
+    const newLaneIndex = Math.max(
+      0,
+      Math.min(sortedLanes.length - 1, laneIndex + laneIndexDelta)
+    );
+    previews.push({
+      beatId: id,
+      laneId: sortedLanes[newLaneIndex].id,
+      slot: Math.max(0, beat.slot + slotDelta),
+    });
+  }
+  return previews;
+}
+
 export default function TimelineBoard({
   onSelectForEdit,
   inspectorOpen = false,
@@ -89,16 +134,21 @@ export default function TimelineBoard({
   const selection = useTimelineStore((s) => s.selection);
   const zoomLaneCount = useTimelineStore((s) => s.zoomLaneCount);
   const beatWidthPercent = useTimelineStore((s) => s.beatWidthPercent);
+  const beatTextScalePercent = useTimelineStore((s) => s.beatTextScalePercent);
   const beatsExpanded = useTimelineStore((s) => s.beatsExpanded);
   const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
+  const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
+  const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
   const selectOnly = useTimelineStore((s) => s.selectOnly);
   const toggleSelection = useTimelineStore((s) => s.toggleSelection);
   const moveBeat = useTimelineStore((s) => s.moveBeat);
+  const moveBeatsGroup = useTimelineStore((s) => s.moveBeatsGroup);
   const reorderLane = useTimelineStore((s) => s.reorderLane);
 
   const sortedLanes = useMemo(() => [...lanes].sort((a, b) => a.sortOrder - b.sortOrder), [lanes]);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const verticalScrollRef = useRef<HTMLDivElement | null>(null);
   const viewportResizeObserverRef = useRef<ResizeObserver | null>(null);
   const trackContentRef = useRef<HTMLDivElement>(null);
   const beatRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -106,8 +156,9 @@ export default function TimelineBoard({
   const [viewportHeight, setViewportHeight] = useState(0);
   const [layoutTick, setLayoutTick] = useState(0);
   const dragRafRef = useRef<number | null>(null);
-  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const [dragPreviews, setDragPreviews] = useState<DragPreview[]>([]);
   const [activeDragBeatId, setActiveDragBeatId] = useState<string | null>(null);
+  const [isResizingBeatHeight, setIsResizingBeatHeight] = useState(false);
   const latestDragEventRef = useRef<{
     active: DragMoveEvent["active"];
     over: DragMoveEvent["over"];
@@ -151,13 +202,28 @@ export default function TimelineBoard({
     return () => window.removeEventListener("resize", remeasure);
   }, []);
 
+  // Re-measure when Inspector opens/closes or is resized — paddingRight changes the content box
+  // and some browsers batch/miss the contentRect ResizeObserver callback.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    setViewportWidth(el.clientWidth);
+    setViewportHeight(el.clientHeight);
+  }, [inspectorOpen, inspectorWidth]);
+
+  const inspectorScrollPaddingPx = inspectorOpen ? inspectorWidth + 8 : 0;
+
   const laneWidthPx = useMemo(() => {
     if (lanes.length === 0 || viewportWidth <= 0) return LANE_MIN_WIDTH_PX;
     const visibleCount = Math.min(zoomLaneCount, lanes.length);
     return Math.max(LANE_MIN_WIDTH_PX, viewportWidth / visibleCount);
   }, [lanes.length, viewportWidth, zoomLaneCount]);
 
-  const totalContentWidth = Math.max(viewportWidth, laneWidthPx * lanes.length);
+  // When every lane fits the (already padding-shrunk) content box, inner width equals
+  // viewportWidth and paddingRight alone yields zero max scrollLeft. Add inspector-width
+  // extra track width while the overlay is open so any lane can scroll clear of it.
+  const totalContentWidth =
+    Math.max(viewportWidth, laneWidthPx * lanes.length) + inspectorScrollPaddingPx;
 
   const beatHeightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
 
@@ -196,6 +262,29 @@ export default function TimelineBoard({
     () => new Set(selection.filter((s) => s.type === "beat").map((s) => s.id)),
     [selection]
   );
+
+  useEffect(() => {
+    const primary = getPrimarySelection(selection);
+    if (primary?.type !== "beat") return;
+    const el = beatRefs.current.get(primary.id);
+    if (!el) return;
+    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }, [selection]);
+
+  const draggedBeatIds = useMemo(() => {
+    if (dragPreviews.length > 0) return new Set(dragPreviews.map((p) => p.beatId));
+    if (activeDragBeatId) return new Set([activeDragBeatId]);
+    return new Set<string>();
+  }, [dragPreviews, activeDragBeatId]);
+
+  const dropTargetsByLane = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    for (const preview of dragPreviews) {
+      if (!map.has(preview.laneId)) map.set(preview.laneId, new Set());
+      map.get(preview.laneId)!.add(preview.slot);
+    }
+    return map;
+  }, [dragPreviews]);
   const selectedLaneIds = useMemo(
     () => new Set(selection.filter((s) => s.type === "lane").map((s) => s.id)),
     [selection]
@@ -232,6 +321,84 @@ export default function TimelineBoard({
 
   const getBeatElement = useCallback((beatId: string) => beatRefs.current.get(beatId) ?? null, []);
 
+  const handleBeatWidthResizeStart = useCallback(
+    (beatId: string, e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const startX = e.clientX;
+      const startPercent = beatWidthPercent;
+      const lanePx = Math.max(laneWidthPx, 1);
+
+      const onMove = (ev: PointerEvent) => {
+        const deltaPercent = ((ev.clientX - startX) / lanePx) * 100;
+        const next = Math.min(
+          BEAT_WIDTH_PERCENT_MAX,
+          Math.max(BEAT_WIDTH_PERCENT_MIN, startPercent + deltaPercent)
+        );
+        const el = getBeatElement(beatId);
+        const beforeRect = el?.getBoundingClientRect();
+        flushSync(() => setBeatWidthPercent(next));
+        if (beforeRect && el) {
+          const afterRect = el.getBoundingClientRect();
+          const deltaLeft = afterRect.left - beforeRect.left;
+          const viewport = viewportRef.current;
+          if (viewport && deltaLeft !== 0) {
+            viewport.scrollLeft += deltaLeft;
+          }
+        }
+      };
+
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [beatWidthPercent, laneWidthPx, getBeatElement, setBeatWidthPercent]
+  );
+
+  const handleBeatHeightResizeStart = useCallback(
+    (beatId: string, e: React.PointerEvent) => {
+      if (!beatsExpanded) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setIsResizingBeatHeight(true);
+      const startY = e.clientY;
+      const startHeight = expandedBeatHeightPx;
+
+      const onMove = (ev: PointerEvent) => {
+        const deltaY = ev.clientY - startY;
+        const next = Math.min(
+          EXPANDED_BEAT_HEIGHT_MAX,
+          Math.max(EXPANDED_BEAT_HEIGHT_MIN, startHeight + deltaY)
+        );
+        const el = getBeatElement(beatId);
+        const beforeRect = el?.getBoundingClientRect();
+        flushSync(() => setExpandedBeatHeightPx(next));
+        if (beforeRect && el) {
+          const afterRect = el.getBoundingClientRect();
+          const deltaTop = afterRect.top - beforeRect.top;
+          const vScroll = verticalScrollRef.current;
+          if (vScroll && deltaTop !== 0) {
+            vScroll.scrollTop += deltaTop;
+          }
+        }
+      };
+
+      const onUp = () => {
+        setIsResizingBeatHeight(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [beatsExpanded, expandedBeatHeightPx, getBeatElement, setExpandedBeatHeightPx]
+  );
+
   /** Resolve the target lane + slot for a beat drag purely from the dragged item's own rendered
    * rect — shared by the live preview and the final drop so they always agree. */
   const resolveDragTarget = useCallback(
@@ -259,20 +426,29 @@ export default function TimelineBoard({
     const { active } = evt;
     const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
     if (activeData?.type !== "beat") {
-      setDragPreview(null);
+      setDragPreviews([]);
       return;
     }
     const target = resolveDragTarget(active);
     if (!target) {
-      setDragPreview(null);
+      setDragPreviews([]);
       return;
     }
-    setDragPreview({ beatId: target.beatId, laneId: target.targetLaneId, slot: target.targetSlot });
-  }, [resolveDragTarget]);
+    setDragPreviews(
+      computeGroupDragPreviews(
+        beats,
+        sortedLanes,
+        target.beatId,
+        target.targetLaneId,
+        target.targetSlot,
+        selectedBeatIds
+      )
+    );
+  }, [resolveDragTarget, beats, sortedLanes, selectedBeatIds]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     latestDragEventRef.current = null;
-    setDragPreview(null);
+    setDragPreviews([]);
     const data = event.active.data.current as { type?: string } | undefined;
     if (data?.type === "beat") {
       setActiveDragBeatId(String(event.active.id));
@@ -294,7 +470,7 @@ export default function TimelineBoard({
 
   const handleDragCancel = useCallback((_event: DragCancelEvent) => {
     latestDragEventRef.current = null;
-    setDragPreview(null);
+    setDragPreviews([]);
     setActiveDragBeatId(null);
   }, []);
 
@@ -386,7 +562,7 @@ export default function TimelineBoard({
     (event: DragEndEvent) => {
       const { active, over } = event;
       latestDragEventRef.current = null;
-      setDragPreview(null);
+      setDragPreviews([]);
       setActiveDragBeatId(null);
 
       const activeData = active.data.current as { type?: string; laneId?: string } | undefined;
@@ -413,7 +589,22 @@ export default function TimelineBoard({
       // available.
       const target = resolveDragTarget(active);
       if (target) {
-        moveBeat(target.beatId, target.targetLaneId, target.targetSlot);
+        const previews = computeGroupDragPreviews(
+          beats,
+          sortedLanes,
+          target.beatId,
+          target.targetLaneId,
+          target.targetSlot,
+          selectedBeatIds
+        );
+        const isGroup = selectedBeatIds.has(target.beatId) && selectedBeatIds.size > 1;
+        if (isGroup) {
+          moveBeatsGroup(
+            previews.map((p) => ({ beatId: p.beatId, laneId: p.laneId, slot: p.slot }))
+          );
+        } else {
+          moveBeat(target.beatId, target.targetLaneId, target.targetSlot);
+        }
         return;
       }
 
@@ -426,7 +617,7 @@ export default function TimelineBoard({
       const fallbackSlot = laneBeats.length === 0 ? 0 : Math.max(...laneBeats.map((b) => b.slot)) + 1;
       moveBeat(beatId, fallbackLaneId, fallbackSlot);
     },
-    [beats, moveBeat, reorderLane, sortedLanes, resolveDragTarget]
+    [beats, moveBeat, moveBeatsGroup, reorderLane, sortedLanes, resolveDragTarget, selectedBeatIds]
   );
 
   if (sortedLanes.length === 0) {
@@ -452,12 +643,17 @@ export default function TimelineBoard({
         onWheel={handleViewportWheel}
         className="flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden bg-dark-bg/50"
         style={{
-          paddingRight: inspectorOpen ? inspectorWidth : undefined,
-          scrollPaddingRight: inspectorOpen ? inspectorWidth : undefined,
+          paddingRight: inspectorOpen ? inspectorScrollPaddingPx : undefined,
+          scrollPaddingRight: inspectorOpen ? inspectorScrollPaddingPx : undefined,
+          overflowAnchor: "none",
         }}
       >
         <div className="flex h-full flex-col" style={{ width: totalContentWidth, minWidth: totalContentWidth }}>
-          <div className="flex-1 min-h-0 overflow-y-auto overscroll-x-contain">
+          <div
+            ref={verticalScrollRef}
+            className="flex-1 min-h-0 overflow-y-auto overscroll-x-contain"
+            style={{ overflowAnchor: "none" }}
+          >
             <div
               ref={trackContentRef}
               className="relative flex min-h-full items-end"
@@ -475,11 +671,15 @@ export default function TimelineBoard({
                   beatWidthPercent={beatWidthPercent}
                   beatsExpanded={beatsExpanded}
                   expandedBeatHeightPx={expandedBeatHeightPx}
+                  beatTextScalePercent={beatTextScalePercent}
+                  suppressHeightTransition={isResizingBeatHeight}
                   onBeatClick={handleBeatClick}
                   onBeatDoubleClick={handleBeatDoubleClick}
+                  onBeatWidthResizeStart={handleBeatWidthResizeStart}
+                  onBeatHeightResizeStart={handleBeatHeightResizeStart}
                   registerBeatRef={registerBeatRef}
-                  draggedBeatId={dragPreview?.beatId ?? null}
-                  dropTargetSlot={dragPreview?.laneId === lane.id ? dragPreview.slot : null}
+                  draggedBeatIds={draggedBeatIds}
+                  dropTargetSlots={dropTargetsByLane.get(lane.id) ?? new Set()}
                 />
               ))}
               <ConnectorOverlay
@@ -525,8 +725,10 @@ export default function TimelineBoard({
             beatWidthPercent={beatWidthPercent}
             beatsExpanded={beatsExpanded}
             expandedBeatHeightPx={expandedBeatHeightPx}
+            beatTextScalePercent={beatTextScalePercent}
             onClick={() => {}}
             onDoubleClick={() => {}}
+            onWidthResizeStart={() => {}}
             registerRef={() => {}}
           />
         ) : null}

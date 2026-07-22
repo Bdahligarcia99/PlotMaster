@@ -10,6 +10,7 @@ import {
   setCommittedSeparators,
 } from "./beatDocumentExtensions";
 import { insertAutoSeparatorsInText } from "./beatDocumentModel";
+import { isTauri } from "../../../tauri/openProjectInNewWindow";
 
 export interface BeatDocumentEditorHandle {
   getView: () => EditorView | null;
@@ -32,6 +33,9 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
     const viewRef = useRef<EditorView | null>(null);
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+
+    const onPasteRef = useRef(onPaste);
+    onPasteRef.current = onPaste;
 
     useImperativeHandle(ref, () => ({
       getView: () => viewRef.current,
@@ -66,6 +70,24 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
     useEffect(() => {
       if (!containerRef.current) return;
 
+      const applyPastedText = (targetView: EditorView, clip: string) => {
+        const processed = onPasteRef.current
+          ? onPasteRef.current(clip)
+          : insertAutoSeparatorsInText(clip);
+        const { from, to } = targetView.state.selection.main;
+        targetView.dispatch({
+          changes: { from, to, insert: processed },
+          effects: setAutoSeparatorLines.of(
+            findAutoSeparatorLines(
+              targetView.state.doc.toString().slice(0, from) +
+                processed +
+                targetView.state.doc.toString().slice(to),
+              false
+            )
+          ),
+        });
+      };
+
       const view = new EditorView({
         state: EditorState.create({
           doc: content,
@@ -81,24 +103,28 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
               }
             }),
             EditorView.domEventHandlers({
-              paste(event, view) {
+              paste(event, pasteView) {
                 const clip = event.clipboardData?.getData("text/plain");
-                if (!clip) return false;
-                event.preventDefault();
-                const processed = onPaste ? onPaste(clip) : insertAutoSeparatorsInText(clip);
-                const { from, to } = view.state.selection.main;
-                view.dispatch({
-                  changes: { from, to, insert: processed },
-                  effects: setAutoSeparatorLines.of(
-                    findAutoSeparatorLines(
-                      view.state.doc.toString().slice(0, from) +
-                        processed +
-                        view.state.doc.toString().slice(to),
-                      false
-                    )
-                  ),
-                });
-                return true;
+                if (clip) {
+                  event.preventDefault();
+                  applyPastedText(pasteView, clip);
+                  return true;
+                }
+                // WKWebView's native right-click "Paste" menu item doesn't reliably populate
+                // `clipboardData` for multi-line clipboard content in the Tauri desktop app (Cmd+V
+                // works fine — this only affects the context-menu path). Read straight from the OS
+                // clipboard as a fallback so multi-line pastes still land.
+                if (isTauri()) {
+                  event.preventDefault();
+                  import("@tauri-apps/plugin-clipboard-manager")
+                    .then(({ readText }) => readText())
+                    .then((text) => {
+                      if (text) applyPastedText(pasteView, text);
+                    })
+                    .catch(() => {});
+                  return true;
+                }
+                return false;
               },
             }),
           ],

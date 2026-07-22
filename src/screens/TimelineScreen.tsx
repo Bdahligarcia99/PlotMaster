@@ -12,7 +12,7 @@ import BeatTextEditorPanel, {
   type BeatEditorDocumentState,
 } from "../components/timeline/beatEditor/BeatTextEditorPanel";
 import TimelineSaveControls from "../components/timeline/TimelineSaveControls";
-import { resolveLaneIdFromSelection, useTimelineStore } from "../store/timelineStore";
+import { resolveLaneIdFromSelection, getSelectedBeatIds, useTimelineStore } from "../store/timelineStore";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
@@ -48,6 +48,7 @@ export default function TimelineScreen() {
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
   const selection = useTimelineStore((s) => s.selection);
+  const removeBeats = useTimelineStore((s) => s.removeBeats);
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
@@ -56,6 +57,22 @@ export default function TimelineScreen() {
   useEffect(() => {
     if (selection.length === 0) setInspectorOpen(false);
   }, [selection]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return;
+      const beatIds = getSelectedBeatIds(selection);
+      if (beatIds.length === 0) return;
+      e.preventDefault();
+      removeBeats(beatIds);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selection, removeBeats]);
 
   useWindowTitle(projectName ? `${projectName} - Synapse IWE` : "Synapse IWE");
 

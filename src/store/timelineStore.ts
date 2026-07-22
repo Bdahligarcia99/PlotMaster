@@ -14,9 +14,12 @@ import { emptyBeatDateSpec, migrateLegacyDateString } from "../utils/beatDate";
 import { generateTimelineScript, parseTimelineScript } from "./timelineScript";
 import {
   BEAT_GAP_PX,
+  BEAT_TEXT_SCALE_PERCENT_MAX,
+  BEAT_TEXT_SCALE_PERCENT_MIN,
   BEAT_WIDTH_PERCENT_MAX,
   BEAT_WIDTH_PERCENT_MIN,
   type BeatDateSpec,
+  DEFAULT_BEAT_TEXT_SCALE_PERCENT,
   DEFAULT_BEAT_WIDTH_PERCENT,
   DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
   DEFAULT_ZOOM_LANE_COUNT,
@@ -37,8 +40,8 @@ const SAVE_DEBOUNCE_MS = 500;
 
 export type { TimelineLane, TimelineBeat, TimelineConnection, TimelineSelectionItem, BeatDateSpec, BeatDateMode, BeatDateRelative } from "./timelineTypes";
 export type { TimelineOrientation, TimelineDocumentRecord } from "../storage/StorageDriver";
-export { resolveBeatDate, resolveBeatAbsoluteIso, emptyBeatDateSpec, dateSpecFromImportText } from "../utils/beatDate";
-export { generateTimelineScript, parseTimelineScript, lineReferencesTimelineEntity } from "./timelineScript";
+export { resolveBeatDate, resolveBeatAbsoluteIso, emptyBeatDateSpec, dateSpecFromImportText, dateSpecFromResolvedText } from "../utils/beatDate";
+export { generateTimelineScript, parseTimelineScript, lineReferencesTimelineEntity, compactTimelineScriptDisplay } from "./timelineScript";
 export {
   LANE_TYPE_PRESETS,
   ZOOM_LANE_COUNT_STEPS,
@@ -199,6 +202,7 @@ interface TimelineStore {
   selection: TimelineSelectionItem[];
   zoomLaneCount: number;
   beatWidthPercent: number;
+  beatTextScalePercent: number;
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
   beatPlacementMode: "auto" | "above" | "below";
@@ -217,6 +221,7 @@ interface TimelineStore {
   setScriptPanelLayout: (layout: "split" | "codeOnly" | "viewOnly") => void;
   setZoomLaneCount: (count: number) => void;
   setBeatWidthPercent: (percent: number) => void;
+  setBeatTextScalePercent: (percent: number) => void;
   setBeatsExpanded: (expanded: boolean) => void;
   setExpandedBeatHeightPx: (px: number) => void;
   setBeatPlacementMode: (mode: "auto" | "above" | "below") => void;
@@ -251,8 +256,10 @@ interface TimelineStore {
   /** Move (or swap) a beat onto an absolute slot in a lane. If that slot is already occupied by a
    * different beat, the two beats trade places (lane + slot). */
   moveBeat: (beatId: string, targetLaneId: string, targetSlot: number) => void;
+  moveBeatsGroup: (moves: { beatId: string; laneId: string; slot: number }[]) => void;
   removeLane: (laneId: string) => void;
   removeBeat: (beatId: string) => void;
+  removeBeats: (beatIds: string[]) => void;
   addConnection: (beatIds: string[]) => string | null;
   updateConnection: (
     connectionId: string,
@@ -274,6 +281,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   selection: [],
   zoomLaneCount: DEFAULT_ZOOM_LANE_COUNT,
   beatWidthPercent: DEFAULT_BEAT_WIDTH_PERCENT,
+  beatTextScalePercent: DEFAULT_BEAT_TEXT_SCALE_PERCENT,
   beatsExpanded: false,
   expandedBeatHeightPx: DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
   beatPlacementMode: "auto",
@@ -372,6 +380,14 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   setBeatWidthPercent: (percent) =>
     set({
       beatWidthPercent: Math.min(BEAT_WIDTH_PERCENT_MAX, Math.max(BEAT_WIDTH_PERCENT_MIN, percent)),
+    }),
+
+  setBeatTextScalePercent: (percent) =>
+    set({
+      beatTextScalePercent: Math.min(
+        BEAT_TEXT_SCALE_PERCENT_MAX,
+        Math.max(BEAT_TEXT_SCALE_PERCENT_MIN, percent)
+      ),
     }),
 
   setBeatsExpanded: (expanded) => set({ beatsExpanded: expanded }),
@@ -684,6 +700,44 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     });
   },
 
+  moveBeatsGroup: (moves) => {
+    const s = get();
+    if (moves.length === 0) return;
+    const movingIds = new Set(moves.map((m) => m.beatId));
+    const originalById = new Map<string, { laneId: string; slot: number }>();
+    for (const id of movingIds) {
+      const b = s.beats.find((x) => x.id === id);
+      if (b) originalById.set(id, { laneId: b.laneId, slot: b.slot });
+    }
+
+    let beats = s.beats.map((b) => {
+      const move = moves.find((m) => m.beatId === b.id);
+      if (move) return { ...b, laneId: move.laneId, slot: Math.max(0, move.slot) };
+      return b;
+    });
+
+    for (const move of moves) {
+      const origin = originalById.get(move.beatId);
+      if (!origin) continue;
+      const clampedSlot = Math.max(0, move.slot);
+      const occupant = beats.find(
+        (b) => !movingIds.has(b.id) && b.laneId === move.laneId && b.slot === clampedSlot
+      );
+      if (occupant) {
+        beats = beats.map((b) =>
+          b.id === occupant.id ? { ...b, laneId: origin.laneId, slot: origin.slot } : b
+        );
+      }
+    }
+
+    set({
+      beats,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
   removeLane: (laneId) => {
     const s = get();
     const removedBeatIds = new Set(s.beats.filter((b) => b.laneId === laneId).map((b) => b.id));
@@ -709,17 +763,20 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   },
 
   removeBeat: (beatId) => {
-    const s = get();
-    const beat = s.beats.find((b) => b.id === beatId);
-    if (!beat) return;
+    get().removeBeats([beatId]);
+  },
 
-    // No renumbering — its slot just becomes empty again, same as any other unused slot.
-    const beats = s.beats.filter((b) => b.id !== beatId);
-    const connections = s.connections.filter((c) => !c.beatIds.includes(beatId));
+  removeBeats: (beatIds) => {
+    const s = get();
+    const idSet = new Set(beatIds);
+    if (idSet.size === 0) return;
+
+    const beats = s.beats.filter((b) => !idSet.has(b.id));
+    const connections = s.connections.filter((c) => !c.beatIds.some((id) => idSet.has(id)));
     set({
       beats,
       connections,
-      selection: s.selection.filter((item) => !(item.type === "beat" && item.id === beatId)),
+      selection: s.selection.filter((item) => !(item.type === "beat" && idSet.has(item.id))),
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
@@ -910,4 +967,8 @@ export function getSelectedConnection(
 
 export function isSelected(selection: TimelineSelectionItem[], item: TimelineSelectionItem): boolean {
   return selection.some((s) => s.type === item.type && s.id === item.id);
+}
+
+export function getSelectedBeatIds(selection: TimelineSelectionItem[]): string[] {
+  return selection.filter((s) => s.type === "beat").map((s) => s.id);
 }

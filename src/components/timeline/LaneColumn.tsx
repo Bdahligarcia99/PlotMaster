@@ -15,15 +15,17 @@ interface LaneColumnProps {
   beatWidthPercent: number;
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
+  beatTextScalePercent: number;
+  suppressHeightTransition?: boolean;
   onBeatClick: (beatId: string, e: React.MouseEvent) => void;
   onBeatDoubleClick: (beatId: string, e: React.MouseEvent) => void;
+  onBeatWidthResizeStart: (beatId: string, e: React.PointerEvent) => void;
+  onBeatHeightResizeStart: (beatId: string, e: React.PointerEvent) => void;
   registerBeatRef: (beatId: string, el: HTMLElement | null) => void;
-  /** Id of the beat currently being dragged (anywhere on the board), if any. */
-  draggedBeatId: string | null;
-  /** Absolute slot on the shared slot grid a "drop here" indicator should render at. Only set for
-   * the lane currently under the pointer. If that slot is already occupied by a different beat,
-   * that beat is highlighted as a swap target instead of showing a separate indicator row. */
-  dropTargetSlot: number | null;
+  /** Ids of beats currently being dragged (single or group). */
+  draggedBeatIds: Set<string>;
+  /** Absolute slots where drop indicators should render in this lane. */
+  dropTargetSlots: Set<number>;
 }
 
 /** Pixel height of a run of `missingSlots` consecutive unoccupied slots, rendered as a single
@@ -52,16 +54,20 @@ export default function LaneColumn({
   beatWidthPercent,
   beatsExpanded,
   expandedBeatHeightPx,
+  beatTextScalePercent,
+  suppressHeightTransition = false,
   onBeatClick,
   onBeatDoubleClick,
+  onBeatWidthResizeStart,
+  onBeatHeightResizeStart,
   registerBeatRef,
-  draggedBeatId,
-  dropTargetSlot,
+  draggedBeatIds,
+  dropTargetSlots,
 }: LaneColumnProps) {
   const { setNodeRef } = useDroppable({ id: laneId, data: { type: "lane", laneId } });
   const beatHeightPx = beatsExpanded ? expandedBeatHeightPx : BEAT_COLLAPSED_HEIGHT_PX;
   const sorted = [...beats].sort((a, b) => a.slot - b.slot);
-  const isDragging = draggedBeatId != null;
+  const isDragging = draggedBeatIds.size > 0;
   const trackWidthPercent = beatWidthPercent / 2;
 
   const renderItems: RenderItem[] = [];
@@ -70,24 +76,31 @@ export default function LaneColumn({
   // Fill the gap between the last thing we placed (`cursorSlot`) and `upToSlot` (exclusive) — as
   // one plain spacer, or split around the drop indicator if it falls inside this gap.
   const flushGapUpTo = (upToSlot: number) => {
-    if (dropTargetSlot != null && dropTargetSlot >= cursorSlot && dropTargetSlot < upToSlot) {
-      const before = dropTargetSlot - cursorSlot;
-      if (before > 0) {
-        renderItems.push({ kind: "spacer", heightPx: spacerHeightPx(before, beatHeightPx), key: `sp-${cursorSlot}` });
-      }
-      renderItems.push({ kind: "indicator", key: `ind-${dropTargetSlot}` });
-      const after = upToSlot - dropTargetSlot - 1;
-      if (after > 0) {
-        renderItems.push({
-          kind: "spacer",
-          heightPx: spacerHeightPx(after, beatHeightPx),
-          key: `sp-${dropTargetSlot + 1}`,
-        });
-      }
-    } else {
-      const missing = upToSlot - cursorSlot;
-      if (missing > 0) {
-        renderItems.push({ kind: "spacer", heightPx: spacerHeightPx(missing, beatHeightPx), key: `sp-${cursorSlot}` });
+    const slotsInGap = dropTargetSlots;
+    let slot = cursorSlot;
+    while (slot < upToSlot) {
+      const nextDrop = [...slotsInGap].sort((a, b) => a - b).find((s) => s >= slot && s < upToSlot);
+      if (nextDrop != null && nextDrop >= slot) {
+        const before = nextDrop - slot;
+        if (before > 0) {
+          renderItems.push({
+            kind: "spacer",
+            heightPx: spacerHeightPx(before, beatHeightPx),
+            key: `sp-${slot}`,
+          });
+        }
+        renderItems.push({ kind: "indicator", key: `ind-${nextDrop}` });
+        slot = nextDrop + 1;
+      } else {
+        const missing = upToSlot - slot;
+        if (missing > 0) {
+          renderItems.push({
+            kind: "spacer",
+            heightPx: spacerHeightPx(missing, beatHeightPx),
+            key: `sp-${slot}`,
+          });
+        }
+        slot = upToSlot;
       }
     }
     cursorSlot = upToSlot;
@@ -95,13 +108,16 @@ export default function LaneColumn({
 
   for (const beat of sorted) {
     flushGapUpTo(beat.slot);
-    renderItems.push({ kind: "beat", beat, isSwapTarget: dropTargetSlot === beat.slot });
+    renderItems.push({
+      kind: "beat",
+      beat,
+      isSwapTarget: dropTargetSlots.has(beat.slot) && !draggedBeatIds.has(beat.id),
+    });
     cursorSlot = beat.slot + 1;
   }
-  // A drop target higher than anything currently in this lane still needs an indicator, even
-  // though there's no "next beat" to flush up to.
-  if (dropTargetSlot != null && dropTargetSlot >= cursorSlot) {
-    flushGapUpTo(dropTargetSlot + 1);
+  const maxDropSlot = dropTargetSlots.size > 0 ? Math.max(...dropTargetSlots) : -1;
+  if (maxDropSlot >= cursorSlot) {
+    flushGapUpTo(maxDropSlot + 1);
   }
 
   return (
@@ -109,7 +125,7 @@ export default function LaneColumn({
       ref={setNodeRef}
       style={{ width, flexBasis: width, minHeight: minHeight > 0 ? minHeight : undefined }}
       className={`relative flex flex-shrink-0 flex-col-reverse items-center gap-2 px-2 py-2 border-r border-dark-accent/20 ${
-        dropTargetSlot != null && isDragging ? "bg-blue-500/10" : ""
+        dropTargetSlots.size > 0 && isDragging ? "bg-blue-500/10" : ""
       }`}
     >
       {/* Lane track: a darker rail down the center so each lane reads as a distinct column, even
@@ -155,12 +171,16 @@ export default function LaneColumn({
             selected={selectedBeatIds.has(item.beat.id)}
             connected={connectedBeatIds.has(item.beat.id)}
             highlightAsDropTarget={item.isSwapTarget}
-            ghostInPlace={draggedBeatId === item.beat.id}
+            ghostInPlace={draggedBeatIds.has(item.beat.id)}
             beatWidthPercent={beatWidthPercent}
             beatsExpanded={beatsExpanded}
             expandedBeatHeightPx={expandedBeatHeightPx}
+            beatTextScalePercent={beatTextScalePercent}
+            suppressHeightTransition={suppressHeightTransition}
             onClick={(e) => onBeatClick(item.beat.id, e)}
             onDoubleClick={(e) => onBeatDoubleClick(item.beat.id, e)}
+            onWidthResizeStart={(e) => onBeatWidthResizeStart(item.beat.id, e)}
+            onHeightResizeStart={(e) => onBeatHeightResizeStart(item.beat.id, e)}
             registerRef={registerBeatRef}
           />
         );

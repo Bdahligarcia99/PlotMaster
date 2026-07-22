@@ -90,10 +90,11 @@ export interface TimelineBeatRecord {
   /** Legacy freeform date string — migrated to dateSpec on load. */
   date?: string;
   dateSpec?: {
-    mode: "none" | "label" | "absolute" | "relative";
+    mode: "none" | "label" | "absolute" | "relative" | "resolved";
     label?: string;
     absolute?: string;
     relative?: { years: number; months: number; days: number; originBeatId: string };
+    resolved?: string;
   };
   /** Legacy anchor-ghost fields, read (and discarded) for backward compatibility only. */
   anchorId?: string;
