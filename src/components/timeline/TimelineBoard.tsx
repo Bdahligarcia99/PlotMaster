@@ -159,6 +159,12 @@ export default function TimelineBoard({
   const [dragPreviews, setDragPreviews] = useState<DragPreview[]>([]);
   const [activeDragBeatId, setActiveDragBeatId] = useState<string | null>(null);
   const [isResizingBeatHeight, setIsResizingBeatHeight] = useState(false);
+  // Tracks how far the user is scrolled from the bottom of the lane track (updated live on
+  // scroll). Beats stack upward from the bottom (flex-col-reverse), so when expanding/collapsing
+  // beat height changes the track's total scroll height, this lets us hold the viewport's
+  // position relative to the bottom steady instead of visually "jumping" as the content grows.
+  const distanceFromBottomRef = useRef(0);
+  const scrollFixInitializedRef = useRef(false);
   const latestDragEventRef = useRef<{
     active: DragMoveEvent["active"];
     over: DragMoveEvent["over"];
@@ -299,12 +305,24 @@ export default function TimelineBoard({
   }, [beats, lanes, laneWidthPx, beatsExpanded, expandedBeatHeightPx]);
 
   useEffect(() => {
+    // Skip on the very first run (mount) — there's nothing to anchor yet, and we don't want to
+    // force a scroll on initial load.
+    const skipScrollFix = !scrollFixInitializedRef.current;
+    scrollFixInitializedRef.current = true;
+
     let start: number | null = null;
     let rafId: number;
 
     const tick = (now: number) => {
       if (start === null) start = now;
       setLayoutTick((t) => t + 1);
+      if (!skipScrollFix) {
+        const el = verticalScrollRef.current;
+        if (el) {
+          const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+          el.scrollTop = Math.max(0, Math.min(maxScroll, maxScroll - distanceFromBottomRef.current));
+        }
+      }
       if (now - start < BEAT_HEIGHT_TRANSITION_MS + 50) {
         rafId = requestAnimationFrame(tick);
       }
@@ -313,6 +331,12 @@ export default function TimelineBoard({
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [beatsExpanded, expandedBeatHeightPx]);
+
+  const handleVerticalScroll = useCallback(() => {
+    const el = verticalScrollRef.current;
+    if (!el) return;
+    distanceFromBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight;
+  }, []);
 
   const registerBeatRef = useCallback((beatId: string, el: HTMLElement | null) => {
     if (el) beatRefs.current.set(beatId, el);
@@ -651,6 +675,7 @@ export default function TimelineBoard({
         <div className="flex h-full flex-col" style={{ width: totalContentWidth, minWidth: totalContentWidth }}>
           <div
             ref={verticalScrollRef}
+            onScroll={handleVerticalScroll}
             className="flex-1 min-h-0 overflow-y-auto overscroll-x-contain"
             style={{ overflowAnchor: "none" }}
           >
