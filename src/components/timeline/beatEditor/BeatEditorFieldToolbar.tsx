@@ -10,10 +10,9 @@ interface BeatEditorFieldToolbarProps {
   onToolChange: (tool: BeatEditorTool) => void;
   disabledFields: FieldDisableFlags;
   onToggleField: (field: keyof FieldDisableFlags) => void;
-  onCommitSeparators: () => void;
-  onInsertTemplate: () => void;
+  onAutoDetectFields: () => void;
   onInsertSeparator: () => void;
-  separatorsCommitted: boolean;
+  autoDetectDisabled?: boolean;
   prefixPanelOpen: boolean;
   onTogglePrefixPanel: () => void;
   newPrefix: string;
@@ -36,10 +35,9 @@ export default function BeatEditorFieldToolbar({
   onToolChange,
   disabledFields,
   onToggleField,
-  onCommitSeparators,
-  onInsertTemplate,
+  onAutoDetectFields,
   onInsertSeparator,
-  separatorsCommitted,
+  autoDetectDisabled = false,
   prefixPanelOpen,
   onTogglePrefixPanel,
   newPrefix,
@@ -97,16 +95,14 @@ export default function BeatEditorFieldToolbar({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={onInsertTemplate}>
-          Insert template
-        </Button>
         <Button
           variant="primary"
           size="sm"
-          onClick={onCommitSeparators}
-          disabled={separatorsCommitted}
+          onClick={onAutoDetectFields}
+          disabled={autoDetectDisabled}
+          title="Auto-label pasted beat blocks into Title/Synopsis/Detail/Date fields"
         >
-          {separatorsCommitted ? "Separators committed" : "Commit separators"}
+          Auto-detect fields
         </Button>
         <button
           type="button"

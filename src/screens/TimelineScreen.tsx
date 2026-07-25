@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
@@ -8,14 +8,16 @@ import TimelineBoard from "../components/timeline/TimelineBoard";
 import TimelineToolbar from "../components/timeline/TimelineToolbar";
 import TimelineScriptPane from "../components/timeline/TimelineScriptPane";
 import TimelineInspector, { type InspectorMode } from "../components/timeline/TimelineInspector";
-import BeatTextEditorPanel, {
-  type BeatEditorDocumentState,
-} from "../components/timeline/beatEditor/BeatTextEditorPanel";
+import TimelineTextEditorWorkspace, {
+  type TextEditorDrafts,
+  type TextEditorPane,
+} from "../components/timeline/TimelineTextEditorWorkspace";
 import TimelineSaveControls from "../components/timeline/TimelineSaveControls";
-import { resolveLaneIdFromSelection, getSelectedBeatIds, useTimelineStore } from "../store/timelineStore";
+import { getSelectedBeatIds, useTimelineStore } from "../store/timelineStore";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
+import { DEFAULT_BEAT_TEXT_SCALE_PERCENT } from "../store/timelineTypes";
 
 const ENTITIES_MIN_W = 220;
 const ENTITIES_MAX_W = 520;
@@ -24,16 +26,23 @@ const SCRIPT_MAX_H = 520;
 const INSPECTOR_MIN_W = 256;
 const INSPECTOR_MAX_W = 900;
 const INSPECTOR_DEFAULT_EXPANDED_W = 640;
+const UNIFORM_PANE_WIDTH_DEFAULT_PX = 420;
+
+type WorkspaceMode = "outline" | "textEditor";
 
 export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [beatEditorOpen, setBeatEditorOpen] = useState(false);
-  const [editorState, setEditorState] = useState<BeatEditorDocumentState | null>(null);
-  const loadDocumentRef = useRef<((content: string, id: string, name: string) => void) | null>(
-    null
-  );
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("outline");
+  const [textDrafts, setTextDrafts] = useState<TextEditorDrafts>({});
+  const [panes, setPanes] = useState<TextEditorPane[]>([]);
+  const [activePaneId, setActivePaneId] = useState<string | null>(null);
+  const [unifiedScroll, setUnifiedScroll] = useState(false);
+  const [paneFractions, setPaneFractions] = useState<number[]>([]);
+  const [uniformPaneWidth, setUniformPaneWidth] = useState(false);
+  const [uniformPaneWidthPx, setUniformPaneWidthPx] = useState(UNIFORM_PANE_WIDTH_DEFAULT_PX);
+  const [textScalePercent, setTextScalePercent] = useState(DEFAULT_BEAT_TEXT_SCALE_PERCENT);
   const [inspectorMode, setInspectorMode] = useState<InspectorMode>("isolation");
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [scriptPaneOpen, setScriptPaneOpen] = useState(true);
@@ -47,12 +56,30 @@ export default function TimelineScreen() {
   const [editNameValue, setEditNameValue] = useState("");
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
+  const createUserDocument = useTimelineStore((s) => s.createUserDocument);
   const selection = useTimelineStore((s) => s.selection);
   const removeBeats = useTimelineStore((s) => s.removeBeats);
-  const lanes = useTimelineStore((s) => s.lanes);
-  const beats = useTimelineStore((s) => s.beats);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
-  const editorInitialLaneId = resolveLaneIdFromSelection(lanes, beats, selection);
+
+  const isTextEditor = workspaceMode === "textEditor";
+
+  const openFileIds = useMemo(
+    () => panes.map((p) => p.docId).filter((id): id is string => id != null),
+    [panes]
+  );
+
+  const activeFileId = useMemo(() => {
+    if (!activePaneId) return null;
+    return panes.find((p) => p.paneId === activePaneId)?.docId ?? null;
+  }, [panes, activePaneId]);
+
+  const dirtyDocIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [id, draft] of Object.entries(textDrafts)) {
+      if (draft.dirty) ids.add(id);
+    }
+    return ids;
+  }, [textDrafts]);
 
   useEffect(() => {
     if (selection.length === 0) setInspectorOpen(false);
@@ -65,6 +92,7 @@ export default function TimelineScreen() {
       if (!target) return;
       const tag = target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return;
+      if (isTextEditor) return;
       const beatIds = getSelectedBeatIds(selection);
       if (beatIds.length === 0) return;
       e.preventDefault();
@@ -72,7 +100,7 @@ export default function TimelineScreen() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selection, removeBeats]);
+  }, [selection, removeBeats, isTextEditor]);
 
   useWindowTitle(projectName ? `${projectName} - Synapse IWE` : "Synapse IWE");
 
@@ -106,6 +134,54 @@ export default function TimelineScreen() {
     setEditNameValue(projectName);
     setIsEditingName(true);
   };
+
+  const handleOpenFile = useCallback(
+    (docId: string) => {
+      const existingPane = panes.find((p) => p.docId === docId);
+
+      if (existingPane && existingPane.paneId === activePaneId) {
+        setActivePaneId(null);
+        return;
+      }
+
+      if (existingPane) {
+        setActivePaneId(existingPane.paneId);
+        return;
+      }
+
+      if (activePaneId) {
+        setPanes((prev) =>
+          prev.map((p) => (p.paneId === activePaneId ? { ...p, docId } : p))
+        );
+        return;
+      }
+
+      const paneId = crypto.randomUUID();
+      setPanes((prev) => [...prev, { paneId, docId }]);
+      setActivePaneId(paneId);
+    },
+    [panes, activePaneId]
+  );
+
+  const handleNewUserFile = useCallback(() => {
+    const id = createUserDocument("Untitled");
+    const paneId = crypto.randomUUID();
+    setPanes((prev) => [...prev, { paneId, docId: id }]);
+    setActivePaneId(paneId);
+    setTextDrafts((d) => ({ ...d, [id]: { content: "", dirty: false } }));
+  }, [createUserDocument]);
+
+  const handleDeleteUserFile = useCallback((docId: string) => {
+    setPanes((prev) => prev.filter((p) => p.docId !== docId));
+    setTextDrafts((d) => {
+      const { [docId]: _, ...rest } = d;
+      return rest;
+    });
+    setActivePaneId((cur) => {
+      const pane = panes.find((p) => p.paneId === cur);
+      return pane?.docId === docId ? null : cur;
+    });
+  }, [panes]);
 
   const entitiesDragStart = useRef<number | null>(null);
   const entitiesStartWidth = useRef(260);
@@ -270,6 +346,31 @@ export default function TimelineScreen() {
             <span className="text-xs text-dark-muted bg-dark-accent px-2 py-0.5 rounded">
               Timeline Outliner
             </span>
+            <div className="h-4 w-px bg-dark-accent" />
+            <div className="flex rounded-lg border border-dark-accent overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setWorkspaceMode("outline")}
+                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                  workspaceMode === "outline"
+                    ? "bg-dark-accent text-dark-text"
+                    : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+                }`}
+              >
+                Outline
+              </button>
+              <button
+                type="button"
+                onClick={() => setWorkspaceMode("textEditor")}
+                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                  workspaceMode === "textEditor"
+                    ? "bg-dark-accent text-dark-text"
+                    : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+                }`}
+              >
+                Text Editor
+              </button>
+            </div>
           </div>
         }
         right={
@@ -286,38 +387,39 @@ export default function TimelineScreen() {
             >
               Entities
             </button>
-            <button
-              onClick={() => setScriptPaneOpen((v) => !v)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                scriptPaneOpen
-                  ? "bg-dark-accent border-dark-accent text-dark-text"
-                  : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
-              }`}
-            >
-              Script
-            </button>
-            <button
-              onClick={() => setInspectorOpen(!inspectorOpen)}
-              className={`px-3 py-1.5 rounded-lg border transition-colors flex items-center ${
-                inspectorOpen
-                  ? "bg-dark-accent border-dark-accent text-dark-text"
-                  : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </button>
+            {!isTextEditor && (
+              <>
+                <button
+                  onClick={() => setScriptPaneOpen((v) => !v)}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                    scriptPaneOpen
+                      ? "bg-dark-accent border-dark-accent text-dark-text"
+                      : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
+                  }`}
+                >
+                  Script
+                </button>
+                <button
+                  onClick={() => setInspectorOpen(!inspectorOpen)}
+                  className={`px-3 py-1.5 rounded-lg border transition-colors flex items-center ${
+                    inspectorOpen
+                      ? "bg-dark-accent border-dark-accent text-dark-text"
+                      : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </button>
+              </>
+            )}
           </div>
         }
       />
 
       <div className="flex-1 flex min-h-0 flex-col">
-        {!beatEditorOpen && (
-          <TimelineToolbar
-            onSelectForEdit={() => setInspectorOpen(true)}
-            onOpenBeatEditor={() => setBeatEditorOpen(true)}
-          />
+        {!isTextEditor && (
+          <TimelineToolbar onSelectForEdit={() => setInspectorOpen(true)} />
         )}
         <div className="flex-1 flex min-h-0 relative">
           {leftSidebarOpen && (
@@ -325,11 +427,13 @@ export default function TimelineScreen() {
               <div className="flex-shrink-0 overflow-hidden flex" style={{ width: entitiesWidth }}>
                 <TimelineEntitiesPanel
                   onSelectForEdit={() => setInspectorOpen(true)}
-                  beatEditorMode={beatEditorOpen}
-                  editorState={editorState}
-                  onOpenDocument={(content, id, name) =>
-                    loadDocumentRef.current?.(content, id, name)
-                  }
+                  textEditorMode={isTextEditor}
+                  openFileIds={openFileIds}
+                  activeFileId={activeFileId}
+                  dirtyDocIds={dirtyDocIds}
+                  onOpenFile={handleOpenFile}
+                  onNewUserFile={handleNewUserFile}
+                  onDeleteUserFile={handleDeleteUserFile}
                 />
               </div>
               <div
@@ -354,14 +458,24 @@ export default function TimelineScreen() {
             </button>
           )}
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            {beatEditorOpen ? (
-              <BeatTextEditorPanel
-                initialLaneId={editorInitialLaneId}
-                onClose={() => setBeatEditorOpen(false)}
-                onDocumentChange={setEditorState}
-                onRegisterLoadHandler={(handler) => {
-                  loadDocumentRef.current = handler;
-                }}
+            {isTextEditor ? (
+              <TimelineTextEditorWorkspace
+                drafts={textDrafts}
+                onDraftsChange={setTextDrafts}
+                panes={panes}
+                onPanesChange={setPanes}
+                activePaneId={activePaneId}
+                onActivePaneIdChange={setActivePaneId}
+                unifiedScroll={unifiedScroll}
+                onUnifiedScrollChange={setUnifiedScroll}
+                paneFractions={paneFractions}
+                onPaneFractionsChange={setPaneFractions}
+                uniformPaneWidth={uniformPaneWidth}
+                onUniformPaneWidthChange={setUniformPaneWidth}
+                uniformPaneWidthPx={uniformPaneWidthPx}
+                onUniformPaneWidthPxChange={setUniformPaneWidthPx}
+                textScalePercent={textScalePercent}
+                onTextScalePercentChange={setTextScalePercent}
               />
             ) : (
               <>
@@ -396,7 +510,7 @@ export default function TimelineScreen() {
               </>
             )}
           </div>
-          {inspectorOpen && !beatEditorOpen && (
+          {inspectorOpen && !isTextEditor && (
             <TimelineInspector
               width={inspectorWidth}
               collapsedWidth={INSPECTOR_MIN_W}

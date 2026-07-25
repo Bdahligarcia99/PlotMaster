@@ -21,10 +21,9 @@ import TimelineBulkRenameModal from "./TimelineBulkRenameModal";
 
 interface TimelineToolbarProps {
   onSelectForEdit?: () => void;
-  onOpenBeatEditor?: () => void;
 }
 
-export default function TimelineToolbar({ onSelectForEdit, onOpenBeatEditor }: TimelineToolbarProps) {
+export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProps) {
   const lanes = useTimelineStore((s) => s.lanes);
   const beats = useTimelineStore((s) => s.beats);
   const selection = useTimelineStore((s) => s.selection);
@@ -335,15 +334,6 @@ export default function TimelineToolbar({ onSelectForEdit, onOpenBeatEditor }: T
         className={!canConnect ? "opacity-50 cursor-not-allowed" : ""}
       >
         {canConnect && setAlreadyConnected ? "Uncross" : "Crossing"}
-      </Button>
-
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => onOpenBeatEditor?.()}
-        title="Open Beat Text Editor to paste and structure beats"
-      >
-        Beat Text Editor
       </Button>
 
       <Button

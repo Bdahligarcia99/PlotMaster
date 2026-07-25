@@ -130,13 +130,22 @@ export interface FieldDisableFlags {
   date: boolean;
 }
 
+const ID_LINE = /^id:\s*\S+\s*$/i;
+
 export function deriveAutoFields(
   rawText: string,
   disabled: FieldDisableFlags
 ): BeatSegmentFields {
   const lines = rawText.split("\n");
-  const title = (lines[0] ?? "").trim();
-  const remaining = lines.slice(1).join("\n").trim();
+  let titleLineIndex = 0;
+  while (titleLineIndex < lines.length && !lines[titleLineIndex].trim()) {
+    titleLineIndex++;
+  }
+  if (titleLineIndex < lines.length && ID_LINE.test(lines[titleLineIndex].trim())) {
+    titleLineIndex++;
+  }
+  const title = (lines[titleLineIndex] ?? "").trim();
+  const remaining = lines.slice(titleLineIndex + 1).join("\n").trim();
   const date = disabled.date ? "" : detectDate(rawText);
   const detail = disabled.detail ? "" : remaining;
   const dateSpec = date.trim() ? dateSpecFromResolvedText(date) : emptyBeatDateSpec();

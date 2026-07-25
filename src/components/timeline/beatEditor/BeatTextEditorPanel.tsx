@@ -9,7 +9,6 @@ import {
   assignFieldInSegment,
   extractSegments,
   findSegmentForOffset,
-  getTemplateBlock,
   insertAutoSeparatorsInText,
   insertSeparatorAtCursor,
   scanCommittedSeparators,
@@ -121,11 +120,6 @@ export default function BeatTextEditorPanel({
     const next = applyAutoLabelsToDocument(content, disabledFields, activePrefixList);
     setContent(next);
   }, [content, disabledFields, activePrefixList]);
-
-  const handleInsertTemplate = useCallback(() => {
-    const block = getTemplateBlock();
-    editorRef.current?.insertAtCursor(block);
-  }, []);
 
   const handleApplySelection = useCallback(() => {
     const sel = editorRef.current?.getSelection();
@@ -280,10 +274,9 @@ export default function BeatTextEditorPanel({
           onToggleField={(field) =>
             setDisabledFields((d) => ({ ...d, [field]: !d[field] }))
           }
-          onCommitSeparators={handleCommitAndLabel}
-          onInsertTemplate={handleInsertTemplate}
+          onAutoDetectFields={handleCommitAndLabel}
           onInsertSeparator={handleInsertSeparator}
-          separatorsCommitted={separatorsCommitted}
+          autoDetectDisabled={false}
           prefixPanelOpen={prefixPanelOpen}
           onTogglePrefixPanel={() => setPrefixPanelOpen((v) => !v)}
           newPrefix={newPrefix}

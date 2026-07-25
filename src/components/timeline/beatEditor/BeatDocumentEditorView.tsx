@@ -25,10 +25,16 @@ interface BeatDocumentEditorViewProps {
   onChange: (text: string) => void;
   separatorsCommitted: boolean;
   onPaste?: (text: string) => string;
+  fontSizePercent?: number;
 }
 
+const BASE_FONT_PX = 13;
+
 const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocumentEditorViewProps>(
-  function BeatDocumentEditorView({ content, onChange, separatorsCommitted, onPaste }, ref) {
+  function BeatDocumentEditorView(
+    { content, onChange, separatorsCommitted, onPaste, fontSizePercent = 100 },
+    ref
+  ) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const onChangeRef = useRef(onChange);
@@ -165,6 +171,11 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
       <div
         ref={containerRef}
         className="flex-1 min-h-0 overflow-hidden rounded-lg border border-dark-accent bg-dark-bg"
+        style={
+          {
+            "--beat-editor-font-size": `${(BASE_FONT_PX * fontSizePercent) / 100}px`,
+          } as React.CSSProperties
+        }
       />
     );
   }

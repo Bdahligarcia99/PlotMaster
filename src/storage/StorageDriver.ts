@@ -110,12 +110,16 @@ export interface TimelineConnectionRecord {
   date: string;
 }
 
-/** Saved beat text document (Beat Text Editor). */
+/** Saved text document in Timeline Text Editor mode (user-made notes or lane-derived files). */
 export interface TimelineDocumentRecord {
   id: string;
   name: string;
   content: string;
   updatedAt: number;
+  /** Defaults to "user" when absent (legacy projects). */
+  kind?: "user" | "derived";
+  /** Set when kind === "derived" — the lane this file mirrors. */
+  laneId?: string;
 }
 
 export interface TimelineProjectPayload {

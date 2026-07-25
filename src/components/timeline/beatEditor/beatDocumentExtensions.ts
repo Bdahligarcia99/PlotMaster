@@ -93,7 +93,7 @@ export const beatEditorTheme = EditorView.theme({
   },
   ".cm-content": {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: "13px",
+    fontSize: "var(--beat-editor-font-size, 13px)",
     lineHeight: "1.6",
     padding: "12px 0",
   },
