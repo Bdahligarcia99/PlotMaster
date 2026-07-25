@@ -78,6 +78,9 @@ export default function ModuleTile({
       >
         <span className="text-2xl mb-2">{module.icon}</span>
         <span className={`text-sm font-medium ${isGreyedOut ? "text-dark-muted" : "text-dark-text"}`}>{module.label}</span>
+        {module.description && (
+          <span className="text-xs text-dark-muted mt-1.5 text-center leading-snug">{module.description}</span>
+        )}
         <span className="mt-1.5 text-xs text-blue-400">Open ▸</span>
       </button>
     );
@@ -108,6 +111,9 @@ export default function ModuleTile({
         <span className="text-2xl flex-shrink-0">{module.icon}</span>
       </div>
       <span className={`text-sm font-medium mt-2 w-full ${isGreyedOut ? "text-dark-muted" : "text-dark-text"}`}>{module.label}</span>
+      {module.description && (
+        <span className="text-xs text-dark-muted mt-1 w-full text-center leading-snug">{module.description}</span>
+      )}
     </button>
   );
 }

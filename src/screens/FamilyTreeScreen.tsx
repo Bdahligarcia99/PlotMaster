@@ -7,6 +7,8 @@ const SCRIPT_MIN_H = 160;
 const SCRIPT_MAX_H = 520;
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
+import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
+import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import FamilyTreeCanvas from "../components/family-tree/FamilyTreeCanvas";
 import FamilyTreeToolbar from "../components/family-tree/FamilyTreeToolbar";
@@ -225,8 +227,17 @@ export default function FamilyTreeScreen() {
             <span className="text-xs text-dark-muted bg-dark-accent px-2 py-0.5 rounded">
               Family Tree
             </span>
+            <div className="h-4 w-px bg-dark-accent" />
+            <ModeSwitchNavbar
+              slots={[
+                { id: "primary", label: "Family Tree", active: true },
+                { id: "textEditor", label: "Text Editor", disabled: true },
+                { id: "entities", label: "Entities", disabled: true },
+              ]}
+            />
           </div>
         }
+        children={projectId ? <ModuleSwitcherNavbar currentProjectId={projectId} /> : undefined}
         right={
           <div className="flex items-center gap-2">
             <FamilyTreeSaveControls />
@@ -238,9 +249,9 @@ export default function FamilyTreeScreen() {
                   ? "bg-dark-accent border-dark-accent text-dark-text"
                   : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
               }`}
-              title={leftSidebarOpen ? "Hide Entities" : "Show Entities"}
+              title={leftSidebarOpen ? "Hide Sub Entities" : "Show Sub Entities"}
             >
-              Entities
+              Sub Entities
             </button>
             <button
               onClick={() => setScriptPaneOpen((v) => !v)}
@@ -295,10 +306,10 @@ export default function FamilyTreeScreen() {
             <button
               onClick={() => setLeftSidebarOpen(true)}
               className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
-              title="Show Entities"
+              title="Show Sub Entities"
             >
               <span className="text-xs font-medium transform -rotate-90 whitespace-nowrap origin-center">
-                Entities
+                Sub Entities
               </span>
             </button>
           )}

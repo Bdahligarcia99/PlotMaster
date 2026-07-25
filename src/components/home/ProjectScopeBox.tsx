@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import Card from "../ui/Card";
 import Button from "../ui/Button";
-import { MODULE_REGISTRY, AVAILABLE_MODULES } from "../../home/moduleRegistry";
+import { MODULE_REGISTRY, AVAILABLE_MODULES, CREATEABLE_MODULES } from "../../home/moduleRegistry";
 import ModuleTile from "./ModuleTile";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 
@@ -45,7 +45,7 @@ export default function ProjectScopeBox({
   };
 
   const hasSelection = Array.from(selectedModules).some((id) =>
-    AVAILABLE_MODULES.includes(id as "familyTree" | "characters" | "timeline" | "ideaPlayground")
+    CREATEABLE_MODULES.includes(id as (typeof CREATEABLE_MODULES)[number])
   );
   const selectedCount = selectedModules.size;
   const canCreate =
@@ -54,13 +54,13 @@ export default function ProjectScopeBox({
       : false;
 
   const handleToggleModule = (moduleId: string) => {
-    if (!AVAILABLE_MODULES.includes(moduleId as "familyTree" | "characters" | "timeline" | "ideaPlayground")) return;
+    if (variant !== "multi") return;
+    if (!CREATEABLE_MODULES.includes(moduleId as (typeof CREATEABLE_MODULES)[number])) return;
     setSelectedModules((prev) => {
-      // Single selection only: if clicking the selected one, deselect; else select only this one
-      if (prev.has(moduleId)) {
-        return new Set<string>();
-      }
-      return new Set([moduleId]);
+      const next = new Set(prev);
+      if (next.has(moduleId)) next.delete(moduleId);
+      else next.add(moduleId);
+      return next;
     });
     setValidationError(null);
   };
@@ -69,7 +69,7 @@ export default function ProjectScopeBox({
     if (variant === "multi" && canCreate) {
       setValidationError(null);
       const modules = Array.from(selectedModules).filter((id) =>
-        AVAILABLE_MODULES.includes(id as "familyTree" | "characters" | "timeline" | "ideaPlayground")
+        CREATEABLE_MODULES.includes(id as (typeof CREATEABLE_MODULES)[number])
       );
       onCreate?.(projectName.trim(), modules);
     }
@@ -224,18 +224,29 @@ export default function ProjectScopeBox({
 
         {/* Module tiles grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {MODULE_REGISTRY.map((module) => (
+          {MODULE_REGISTRY.map((module) => {
+            const isCreateable =
+              variant === "multi"
+                ? CREATEABLE_MODULES.includes(module.id as (typeof CREATEABLE_MODULES)[number])
+                : AVAILABLE_MODULES.includes(module.id as "familyTree" | "characters" | "timeline" | "ideaPlayground");
+            const isGreyedOut =
+              variant === "multi"
+                ? !isCreateable
+                : selectedCount > 0 && !selectedModules.has(module.id);
+
+            return (
             <ModuleTile
               key={module.id}
               module={module}
               variant={variant}
               selected={selectedModules.has(module.id)}
-              showCheckbox={variant === "multi"}
-              isGreyedOut={selectedCount > 0 && !selectedModules.has(module.id)}
+              showCheckbox={variant === "multi" && isCreateable}
+              isGreyedOut={isGreyedOut}
               onSelect={() => handleToggleModule(module.id)}
               onOpen={(moduleId) => handleQuickOpen(moduleId)}
             />
-          ))}
+            );
+          })}
         </div>
             </div>
           </div>

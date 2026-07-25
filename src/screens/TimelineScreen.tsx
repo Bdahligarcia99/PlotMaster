@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
+import Modal from "../components/ui/Modal";
 import TopBar from "../components/ui/TopBar";
+import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
+import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import TimelineEntitiesPanel from "../components/timeline/TimelineEntitiesPanel";
 import TimelineBoard from "../components/timeline/TimelineBoard";
@@ -13,6 +16,10 @@ import TimelineTextEditorWorkspace, {
   type TextEditorPane,
 } from "../components/timeline/TimelineTextEditorWorkspace";
 import TimelineSaveControls from "../components/timeline/TimelineSaveControls";
+import {
+  parseLaneFileContent,
+  validateBlockIdsForLane,
+} from "../components/timeline/beatEditor/laneFileFormat";
 import { getSelectedBeatIds, useTimelineStore } from "../store/timelineStore";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
@@ -29,6 +36,12 @@ const INSPECTOR_DEFAULT_EXPANDED_W = 640;
 const UNIFORM_PANE_WIDTH_DEFAULT_PX = 420;
 
 type WorkspaceMode = "outline" | "textEditor";
+
+type LaneDeleteConfirm = {
+  docId: string;
+  paneId: string;
+  laneName: string;
+};
 
 export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -54,8 +67,15 @@ export default function TimelineScreen() {
   const [loading, setLoading] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState("");
+  const [laneDeleteConfirm, setLaneDeleteConfirm] = useState<LaneDeleteConfirm | null>(null);
+  const [textEditorCommitError, setTextEditorCommitError] = useState<string | null>(null);
+  const pendingSaveAfterCommitRef = useRef(false);
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
+  const flushSaveAndSave = useTimelineStore((s) => s.flushSaveAndSave);
+  const saveDerivedLaneFile = useTimelineStore((s) => s.saveDerivedLaneFile);
+  const saveUserDocumentContent = useTimelineStore((s) => s.saveUserDocumentContent);
+  const confirmDeleteLaneFromDocument = useTimelineStore((s) => s.confirmDeleteLaneFromDocument);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
   const selection = useTimelineStore((s) => s.selection);
   const removeBeats = useTimelineStore((s) => s.removeBeats);
@@ -80,6 +100,125 @@ export default function TimelineScreen() {
     }
     return ids;
   }, [textDrafts]);
+
+  const hasDraftChanges = dirtyDocIds.size > 0;
+
+  const removePaneAndDraftForDoc = useCallback(
+    (docId: string, paneId: string) => {
+      setPanes((prev) => prev.filter((p) => p.paneId !== paneId));
+      setTextDrafts((d) => {
+        const { [docId]: _, ...rest } = d;
+        return rest;
+      });
+      setActivePaneId((cur) => (cur === paneId ? null : cur));
+    },
+    []
+  );
+
+  const commitAllDirtyDrafts = useCallback((): { ok: boolean; pendingConfirm?: boolean } => {
+    const dirtyIds = Object.entries(textDrafts)
+      .filter(([, d]) => d.dirty)
+      .map(([id]) => id);
+
+    if (dirtyIds.length === 0) {
+      setTextEditorCommitError(null);
+      return { ok: true };
+    }
+
+    const store = useTimelineStore.getState();
+    const docs = store.documents;
+
+    for (const docId of dirtyIds) {
+      const doc = docs.find((d) => d.id === docId);
+      if (!doc) continue;
+      const content = textDrafts[docId]?.content ?? doc.content;
+
+      if (doc.kind === "derived" && doc.laneId) {
+        const lane = store.lanes.find((l) => l.id === doc.laneId);
+        if (!lane) {
+          setTextEditorCommitError("Lane no longer exists.");
+          return { ok: false };
+        }
+
+        const parsed = parseLaneFileContent(content);
+        if (parsed.errors.length > 0) {
+          setTextEditorCommitError(parsed.errors.join("; "));
+          return { ok: false };
+        }
+        if (parsed.isEmpty || parsed.blocks.length === 0) {
+          const pane = panes.find((p) => p.docId === docId);
+          setLaneDeleteConfirm({
+            docId,
+            paneId: pane?.paneId ?? "",
+            laneName: doc.name,
+          });
+          return { ok: false, pendingConfirm: true };
+        }
+
+        const laneBeatIds = new Set(
+          store.beats.filter((b) => b.laneId === doc.laneId).map((b) => b.id)
+        );
+        const idErrors = validateBlockIdsForLane(parsed.blocks, laneBeatIds);
+        if (idErrors.length > 0) {
+          setTextEditorCommitError(idErrors.join("; "));
+          return { ok: false };
+        }
+      }
+    }
+
+    let nextDrafts = { ...textDrafts };
+    for (const docId of dirtyIds) {
+      const doc = useTimelineStore.getState().documents.find((d) => d.id === docId);
+      if (!doc) continue;
+      const content = textDrafts[docId]?.content ?? doc.content;
+
+      if (doc.kind === "derived") {
+        const result = saveDerivedLaneFile(docId, content);
+        if (!result.ok) {
+          setTextEditorCommitError(result.errors.join("; ") || "Failed to save derived file.");
+          return { ok: false };
+        }
+        nextDrafts[docId] = { content: result.content, dirty: false };
+      } else {
+        saveUserDocumentContent(docId, content);
+        nextDrafts[docId] = { content, dirty: false };
+      }
+    }
+
+    setTextDrafts(nextDrafts);
+    setTextEditorCommitError(null);
+    return { ok: true };
+  }, [textDrafts, panes, saveDerivedLaneFile, saveUserDocumentContent]);
+
+  const handleLaneDeleteConfirm = useCallback(async () => {
+    if (!laneDeleteConfirm) return;
+    const { docId, paneId } = laneDeleteConfirm;
+    confirmDeleteLaneFromDocument(docId);
+    if (paneId) removePaneAndDraftForDoc(docId, paneId);
+    setLaneDeleteConfirm(null);
+
+    const commitOk = commitAllDirtyDrafts();
+    if (pendingSaveAfterCommitRef.current && commitOk.ok) {
+      pendingSaveAfterCommitRef.current = false;
+      await flushSaveAndSave();
+    }
+  }, [
+    laneDeleteConfirm,
+    confirmDeleteLaneFromDocument,
+    removePaneAndDraftForDoc,
+    commitAllDirtyDrafts,
+    flushSaveAndSave,
+  ]);
+
+  const handleCommitDraftsForSave = useCallback((): { ok: boolean } => {
+    const result = commitAllDirtyDrafts();
+    if (!result.ok && result.pendingConfirm) {
+      pendingSaveAfterCommitRef.current = true;
+    } else if (result.ok) {
+      pendingSaveAfterCommitRef.current = false;
+    }
+    return { ok: result.ok };
+  }, [commitAllDirtyDrafts]);
 
   useEffect(() => {
     if (selection.length === 0) setInspectorOpen(false);
@@ -347,35 +486,37 @@ export default function TimelineScreen() {
               Timeline Outliner
             </span>
             <div className="h-4 w-px bg-dark-accent" />
-            <div className="flex rounded-lg border border-dark-accent overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setWorkspaceMode("outline")}
-                className={`px-3 py-1 text-xs font-medium transition-colors ${
-                  workspaceMode === "outline"
-                    ? "bg-dark-accent text-dark-text"
-                    : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
-                }`}
-              >
-                Outline
-              </button>
-              <button
-                type="button"
-                onClick={() => setWorkspaceMode("textEditor")}
-                className={`px-3 py-1 text-xs font-medium transition-colors ${
-                  workspaceMode === "textEditor"
-                    ? "bg-dark-accent text-dark-text"
-                    : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
-                }`}
-              >
-                Text Editor
-              </button>
-            </div>
+            <ModeSwitchNavbar
+              slots={[
+                {
+                  id: "outline",
+                  label: "Outline",
+                  active: workspaceMode === "outline",
+                  onClick: () => setWorkspaceMode("outline"),
+                },
+                {
+                  id: "textEditor",
+                  label: "Text Editor",
+                  active: workspaceMode === "textEditor",
+                  onClick: () => setWorkspaceMode("textEditor"),
+                },
+                {
+                  id: "entities",
+                  label: "Entities",
+                  disabled: true,
+                },
+              ]}
+            />
           </div>
         }
+        children={projectId ? <ModuleSwitcherNavbar currentProjectId={projectId} /> : undefined}
         right={
           <div className="flex items-center gap-2">
-            <TimelineSaveControls />
+            <TimelineSaveControls
+              hasDraftChanges={hasDraftChanges}
+              onCommitDrafts={handleCommitDraftsForSave}
+              commitError={textEditorCommitError}
+            />
             <div className="h-4 w-px bg-dark-accent" />
             <button
               onClick={() => setLeftSidebarOpen((v) => !v)}
@@ -384,8 +525,9 @@ export default function TimelineScreen() {
                   ? "bg-dark-accent border-dark-accent text-dark-text"
                   : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
               }`}
+              title={leftSidebarOpen ? "Hide Sub Entities" : "Show Sub Entities"}
             >
-              Entities
+              Sub Entities
             </button>
             {!isTextEditor && (
               <>
@@ -450,10 +592,10 @@ export default function TimelineScreen() {
             <button
               onClick={() => setLeftSidebarOpen(true)}
               className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
-              title="Show Entities"
+              title="Show Sub Entities"
             >
               <span className="text-xs font-medium transform -rotate-90 whitespace-nowrap origin-center">
-                Entities
+                Sub Entities
               </span>
             </button>
           )}
@@ -476,6 +618,7 @@ export default function TimelineScreen() {
                 onUniformPaneWidthPxChange={setUniformPaneWidthPx}
                 textScalePercent={textScalePercent}
                 onTextScalePercentChange={setTextScalePercent}
+                onRequestLaneDeleteConfirm={setLaneDeleteConfirm}
               />
             ) : (
               <>
@@ -522,6 +665,37 @@ export default function TimelineScreen() {
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={laneDeleteConfirm != null}
+        onClose={() => {
+          setLaneDeleteConfirm(null);
+          pendingSaveAfterCommitRef.current = false;
+        }}
+        title="Delete lane?"
+        contentClassName="max-w-md"
+      >
+        <p className="text-sm text-dark-muted mb-4">
+          Deleting this file will delete lane{" "}
+          <span className="text-dark-text font-medium">{laneDeleteConfirm?.laneName}</span> and all
+          of its beats and crossings. This cannot be undone.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setLaneDeleteConfirm(null);
+              pendingSaveAfterCommitRef.current = false;
+            }}
+          >
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" onClick={() => void handleLaneDeleteConfirm()}>
+            Delete lane
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

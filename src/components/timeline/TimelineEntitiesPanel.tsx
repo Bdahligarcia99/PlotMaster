@@ -111,7 +111,7 @@ export default function TimelineEntitiesPanel({
       <div className="w-full flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden h-full">
         <div className="p-4 border-b border-dark-accent/50">
           <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
-            Entities
+            Sub Entities
           </h2>
           <p className="text-dark-muted text-xs mt-1">Files</p>
         </div>
@@ -228,7 +228,7 @@ export default function TimelineEntitiesPanel({
     <div className="w-full flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden h-full">
       <div className="p-4 border-b border-dark-accent/50">
         <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
-          Entities
+          Sub Entities
         </h2>
         <p className="text-dark-muted text-xs mt-1">Lanes → Beats</p>
       </div>

@@ -8,6 +8,7 @@ import { getStorageDriver } from "../../storage/StorageDriver";
 import type { ProjectIndexItem } from "../../storage/StorageDriver";
 import { createProject, createTimelineProject } from "../../home/createProject";
 import { MODULE_ID_TO_TYPE } from "../../home/moduleRegistry";
+import { getModuleRoute, moduleIdToTypeName } from "../../home/moduleRoutes";
 import { useAppStore } from "../../store/appStore";
 import {
   isTauri,
@@ -145,25 +146,36 @@ export default function IntroDialog({
         openInNewWindow(`/project/${id}`);
       }
     } else {
-      const moduleNames = enabledModules.map(
-        (id) => MODULE_ID_TO_TYPE[id] ?? id
-      );
-      const id = createModularProject(name, moduleNames);
-      openInNewWindow(`/projects/${id}`);
+      const subProjects: Record<string, string> = {};
+      const moduleNames: string[] = [];
+
+      for (const moduleId of enabledModules) {
+        const typeName = MODULE_ID_TO_TYPE[moduleId] ?? moduleIdToTypeName(moduleId);
+        moduleNames.push(typeName);
+
+        if (moduleId === "familyTree") {
+          subProjects[typeName] = await createProject(name, ["familyTree"]);
+        } else if (moduleId === "timeline") {
+          subProjects[typeName] = await createTimelineProject(name);
+        } else if (moduleId === "characters") {
+          subProjects[typeName] = createStandaloneProject(name, "Profiles");
+        }
+      }
+
+      createModularProject(name, moduleNames, subProjects);
+
+      const firstModuleId = enabledModules[0];
+      const firstTypeName = MODULE_ID_TO_TYPE[firstModuleId] ?? moduleIdToTypeName(firstModuleId);
+      const firstSubId = subProjects[firstTypeName];
+      if (firstSubId) {
+        openInNewWindow(getModuleRoute(firstTypeName, firstSubId));
+      }
     }
   };
 
   const getProjectPath = (
     p: ProjectIndexItem | { id: string; moduleType: string }
-  ): string => {
-    if (p.moduleType === "familyTree") {
-      return `/family-tree/${p.id}`;
-    }
-    if (p.moduleType === "timeline" || p.moduleType === "Timeline") {
-      return `/timeline/${p.id}`;
-    }
-    return `/project/${p.id}`;
-  };
+  ): string => getModuleRoute(p.moduleType, p.id);
 
   const handleOpenProject = (
     p: ProjectIndexItem | { id: string; moduleType: string; name: string; lastOpened: number }

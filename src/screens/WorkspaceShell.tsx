@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
+import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
+import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
@@ -119,7 +121,28 @@ export default function WorkspaceShell() {
             <span className="text-xs text-dark-muted bg-dark-accent px-2 py-0.5 rounded">
               {project.moduleType}
             </span>
+            {(isFamilyTree || isProfiles) && (
+              <>
+                <div className="h-4 w-px bg-dark-accent" />
+                <ModeSwitchNavbar
+                  slots={[
+                    {
+                      id: "primary",
+                      label: isFamilyTree ? "Family Tree" : "Characters",
+                      active: true,
+                    },
+                    { id: "textEditor", label: "Text Editor", disabled: true },
+                    { id: "entities", label: "Entities", disabled: true },
+                  ]}
+                />
+              </>
+            )}
           </div>
+        }
+        children={
+          id && (isProfiles || project?.moduleType === "Profiles") ? (
+            <ModuleSwitcherNavbar currentProjectId={id} />
+          ) : undefined
         }
         right={
           <div className="flex items-center gap-2">
@@ -132,9 +155,17 @@ export default function WorkspaceShell() {
                       ? "bg-dark-accent border-dark-accent text-dark-text"
                       : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
                   }`}
-                  title={leftSidebarOpen ? "Hide Entities" : "Show Entities"}
+                  title={
+                    leftSidebarOpen
+                      ? isIdeas
+                        ? "Hide Entities"
+                        : "Hide Sub Entities"
+                      : isIdeas
+                        ? "Show Entities"
+                        : "Show Sub Entities"
+                  }
                 >
-                  Entities
+                  {isIdeas ? "Entities" : "Sub Entities"}
                 </button>
                 <button
                   onClick={() => setScriptPaneOpen((v) => !v)}
@@ -181,10 +212,10 @@ export default function WorkspaceShell() {
                 <button
                   onClick={() => setLeftSidebarOpen(true)}
                   className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
-                  title="Show Entities"
+                  title="Show Sub Entities"
                 >
                   <span className="text-xs font-medium transform -rotate-90 whitespace-nowrap origin-center">
-                    Entities
+                    Sub Entities
                   </span>
                 </button>
               )}
@@ -221,10 +252,10 @@ export default function WorkspaceShell() {
               <button
                 onClick={() => setLeftSidebarOpen(true)}
                 className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
-                title="Show Entities"
+                title="Show Sub Entities"
               >
                 <span className="text-xs font-medium transform -rotate-90 whitespace-nowrap origin-center">
-                  Entities
+                  Sub Entities
                 </span>
               </button>
             )}
@@ -301,10 +332,10 @@ export default function WorkspaceShell() {
               <button
                 onClick={() => setLeftSidebarOpen(true)}
                 className="w-7 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-r border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text transition-colors"
-                title="Show Entities"
+                title="Show Sub Entities"
               >
                 <span className="text-xs font-medium transform -rotate-90 whitespace-nowrap origin-center">
-                  Entities
+                  Sub Entities
                 </span>
               </button>
             )}

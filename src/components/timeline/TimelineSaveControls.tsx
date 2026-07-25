@@ -3,7 +3,17 @@ import Button from "../ui/Button";
 import Modal from "../ui/Modal";
 import { useTimelineStore } from "../../store/timelineStore";
 
-export default function TimelineSaveControls() {
+interface TimelineSaveControlsProps {
+  hasDraftChanges?: boolean;
+  onCommitDrafts?: () => { ok: boolean };
+  commitError?: string | null;
+}
+
+export default function TimelineSaveControls({
+  hasDraftChanges = false,
+  onCommitDrafts,
+  commitError = null,
+}: TimelineSaveControlsProps) {
   const {
     activeProjectId,
     hasUnsavedChanges,
@@ -16,6 +26,9 @@ export default function TimelineSaveControls() {
   const [savedFeedbackUntil, setSavedFeedbackUntil] = useState(0);
   const [showReloadConfirm, setShowReloadConfirm] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  const hasAnyUnsaved = hasUnsavedChanges || hasDraftChanges;
+  const statusError = lastSaveError ?? commitError;
 
   useEffect(() => {
     if (savedFeedbackUntil > 0) {
@@ -34,6 +47,10 @@ export default function TimelineSaveControls() {
   const showSavedCheck = savedFeedbackUntil > Date.now();
 
   const handleSave = async () => {
+    if (onCommitDrafts) {
+      const commitOk = onCommitDrafts();
+      if (!commitOk.ok) return;
+    }
     const ok = await flushSaveAndSave();
     if (ok) {
       setSavedFeedbackUntil(Date.now() + 1200);
@@ -50,7 +67,7 @@ export default function TimelineSaveControls() {
   };
 
   const handleReloadClick = () => {
-    if (hasUnsavedChanges) {
+    if (hasAnyUnsaved) {
       setShowReloadConfirm(true);
     } else {
       void doReload();
@@ -61,13 +78,13 @@ export default function TimelineSaveControls() {
     <>
       <div className="flex items-center gap-2">
         <span
-          className={`text-xs min-w-[7rem] text-right ${lastSaveError ? "text-red-400" : "text-dark-muted"}`}
+          className={`text-xs min-w-[7rem] text-right ${statusError ? "text-red-400" : "text-dark-muted"}`}
           aria-live="polite"
         >
-          {activeProjectId && (isSaving || lastSaveError || hasUnsavedChanges)
+          {activeProjectId && (isSaving || statusError || hasAnyUnsaved)
             ? isSaving
               ? "Saving…"
-              : lastSaveError
+              : statusError
                 ? "Save failed"
                 : "Unsaved changes"
             : "\u00A0"}
@@ -76,7 +93,7 @@ export default function TimelineSaveControls() {
           variant="primary"
           size="sm"
           onClick={handleSave}
-          disabled={!activeProjectId || isSaving}
+          disabled={!activeProjectId || isSaving || (!hasAnyUnsaved && !showSavedCheck)}
           title={activeProjectId ? "Save timeline" : "No project loaded"}
         >
           {showSavedCheck ? "Saved ✓" : isSaving ? "Saving…" : "Save"}

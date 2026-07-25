@@ -286,12 +286,12 @@ Right-side panel for editing selected entity properties. Width: `w-64` (256px).
 
 ---
 
-### 2. Entities Panel
+### 2. Sub Entities Panel
 
-Left sidebar listing entities (characters, nodes, etc.). Collapsible, typically 260px wide.
+Left sidebar listing entities (characters, nodes, etc.). Collapsible, typically 260px wide. Labeled **Sub Entities** in functional modules to distinguish it from the future global **Entities** workspace nav item.
 
 **Structure:**
-- Header: "Entities" (uppercase, muted) + optional subtitle
+- Header: "Sub Entities" (uppercase, muted) + optional subtitle
 - Search input (optional)
 - Scrollable list of entity items
 - Each item: icon/avatar, name, optional chevron/action
@@ -301,7 +301,7 @@ Left sidebar listing entities (characters, nodes, etc.). Collapsible, typically 
 ```tsx
 <div className="w-[260px] flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden">
   <div className="p-4 border-b border-dark-accent/50">
-    <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">Entities</h2>
+    <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">Sub Entities</h2>
     <p className="text-dark-muted text-xs mt-1">Optional subtitle</p>
   </div>
   <div className="p-3 border-b border-dark-accent/50">
@@ -320,7 +320,41 @@ Left sidebar listing entities (characters, nodes, etc.). Collapsible, typically 
 </div>
 ```
 
-**Examples:** `FamilyTreeLeftSidebar`, `TimelineEntitiesPanel`, `ProfilesEntitiesPanel`, `IdeasEntitiesPanel`
+**Examples:** `FamilyTreeLeftSidebar`, `TimelineEntitiesPanel`, `ProfilesEntitiesPanel`, `IdeasEntitiesPanel` (Ideas still uses "Entities" until that module is functional)
+
+---
+
+## Top Navigation Patterns
+
+### Module Switcher Navbar
+
+Centered in `TopBar` via the `children` slot. Icon buttons for each module enabled on a multi-module project; navigates between sibling sub-project routes. Renders only when the current project id belongs to a modular project with 2+ modules.
+
+**Component:** `src/components/ui/ModuleSwitcherNavbar.tsx`
+
+```tsx
+<TopBar
+  left={/* Projects + project name + mode switcher */}
+  children={<ModuleSwitcherNavbar currentProjectId={projectId} />}
+  right={/* Save/Reload + panel toggles */}
+/>
+```
+
+### Mode-Switch Navbar
+
+Per-module pill group in `TopBar` `left`: primary module mode | Text Editor (future global) | Entities (future global). Text Editor and Entities are disabled placeholders except Timeline Outliner's local Text Editor mode.
+
+**Component:** `src/components/ui/ModeSwitchNavbar.tsx`
+
+```tsx
+<ModeSwitchNavbar
+  slots={[
+    { id: "primary", label: "Characters", active: true },
+    { id: "textEditor", label: "Text Editor", disabled: true },
+    { id: "entities", label: "Entities", disabled: true },
+  ]}
+/>
+```
 
 ---
 
@@ -360,10 +394,10 @@ Standard layout for modules with all three panels:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ TopBar (Projects | Project name | Entities toggle | Inspector)  │
+│ TopBar (Projects | Project name | Mode switch | Module switcher*) │
 ├──────────────┬────────────────────────────────────┬────────────┤
 │              │                                     │            │
-│  Entities    │           Main Canvas/Content       │ Properties │
+│  Sub Entities│           Main Canvas/Content       │ Properties │
 │  Panel       │                                     │ (Inspector)│
 │  (260px)     │                                     │  (256px)   │
 │              ├────────────────────────────────────┤            │
@@ -373,11 +407,11 @@ Standard layout for modules with all three panels:
 ```
 
 **Toggle buttons (TopBar right):**
-- "Entities" – show/hide left sidebar
+- "Sub Entities" – show/hide left sidebar (functional modules; Ideas still uses "Entities")
 - "Inspector" – show/hide right properties panel
 
 **Collapsed states:**
-- When Entities hidden: thin vertical "Entities" tab on left edge
+- When Sub Entities hidden: thin vertical "Sub Entities" tab on left edge
 - When Script hidden: thin horizontal "Script" tab on bottom edge
 
 **State:**
@@ -420,5 +454,5 @@ mb-4
 | Modal | `src/components/ui/Modal.tsx` |
 | Save & Reload Controls | Per-module: `*SaveControls.tsx` (e.g. `FamilyTreeSaveControls.tsx`) |
 | Properties (Inspector) | Per-module: `*Inspector.tsx` |
-| Entities | Per-module: `*EntitiesPanel.tsx` |
+| Entities | Per-module: `*EntitiesPanel.tsx` (header: "Sub Entities" in functional modules) |
 | Script Editor | Per-module: `*ScriptPane.tsx` |

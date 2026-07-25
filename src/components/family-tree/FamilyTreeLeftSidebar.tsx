@@ -258,7 +258,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
     <div className="w-full min-w-0 flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden">
       <div className="p-4 border-b border-dark-accent/50">
         <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
-          Entities
+          Sub Entities
         </h2>
         <p className="text-dark-muted text-xs mt-1">Family units and unlinked people</p>
       </div>

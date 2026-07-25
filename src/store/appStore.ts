@@ -8,6 +8,8 @@ export interface Project {
   id: string;
   name: string;
   enabledModules: string[];
+  /** Maps module type name (e.g. "Timeline") to sub-project id. */
+  subProjects?: Record<string, string>;
   lastOpened: number;
 }
 
@@ -29,7 +31,7 @@ interface AppStore {
   modularProjects: Project[];
   standaloneProjects: StandaloneProject[];
   introDialogOpen: boolean;
-  createModularProject: (name: string, enabledModules: string[]) => string;
+  createModularProject: (name: string, enabledModules: string[], subProjects?: Record<string, string>) => string;
   createStandaloneProject: (name: string, moduleType: string) => string;
   removeStandaloneProject: (id: string) => void;
   /** Hydrate a project from the driver into standaloneProjects when opening from driver/recent. */
@@ -80,12 +82,13 @@ export const useAppStore = create<AppStore>((set) => ({
 
   setIntroDialogOpen: (open) => set({ introDialogOpen: open }),
 
-  createModularProject: (name, enabledModules) => {
+  createModularProject: (name, enabledModules, subProjects = {}) => {
     const id = generateId();
     const project: Project = {
       id,
       name,
       enabledModules,
+      subProjects,
       lastOpened: Date.now(),
     };
     set((state) => {

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Button from "../ui/Button";
-import Modal from "../ui/Modal";
 import BeatDocumentEditorView, {
   type BeatDocumentEditorHandle,
 } from "./beatEditor/BeatDocumentEditorView";
@@ -50,6 +49,11 @@ interface TimelineTextEditorWorkspaceProps {
   onUniformPaneWidthPxChange: (px: number) => void;
   textScalePercent: number;
   onTextScalePercentChange: (pct: number) => void;
+  onRequestLaneDeleteConfirm: (payload: {
+    docId: string;
+    paneId: string;
+    laneName: string;
+  }) => void;
 }
 
 export default function TimelineTextEditorWorkspace({
@@ -69,6 +73,7 @@ export default function TimelineTextEditorWorkspace({
   onUniformPaneWidthPxChange,
   textScalePercent,
   onTextScalePercentChange,
+  onRequestLaneDeleteConfirm,
 }: TimelineTextEditorWorkspaceProps) {
   const documents = useTimelineStore((s) => s.documents);
   const importLabelPrefixes = useTimelineStore((s) => s.importLabelPrefixes);
@@ -76,19 +81,11 @@ export default function TimelineTextEditorWorkspace({
   const removeImportLabelPrefix = useTimelineStore((s) => s.removeImportLabelPrefix);
   const deleteDocument = useTimelineStore((s) => s.deleteDocument);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
-  const saveDerivedLaneFile = useTimelineStore((s) => s.saveDerivedLaneFile);
-  const saveUserDocumentContent = useTimelineStore((s) => s.saveUserDocumentContent);
   const convertUserDocumentToLane = useTimelineStore((s) => s.convertUserDocumentToLane);
-  const confirmDeleteLaneFromDocument = useTimelineStore((s) => s.confirmDeleteLaneFromDocument);
   const syncDerivedDocumentFromBeats = useTimelineStore((s) => s.syncDerivedDocumentFromBeats);
   const ensureDerivedDocuments = useTimelineStore((s) => s.ensureDerivedDocuments);
 
   const [parseErrors, setParseErrors] = useState<string[]>([]);
-  const [laneDeleteConfirm, setLaneDeleteConfirm] = useState<{
-    docId: string;
-    paneId: string;
-    laneName: string;
-  } | null>(null);
   const [activeTool, setActiveTool] = useState<BeatEditorTool>(null);
   const [disabledFields, setDisabledFields] = useState<FieldDisableFlags>({
     synopsis: false,
@@ -264,40 +261,6 @@ export default function TimelineTextEditorWorkspace({
     }
   };
 
-  const handleSave = () => {
-    if (!activeFileId || !activeDoc) return;
-    const content = drafts[activeFileId]?.content ?? activeDoc.content;
-
-    if (activeDoc.kind === "derived") {
-      const result = saveDerivedLaneFile(activeFileId, content);
-      if (!result.ok) {
-        if (result.needsLaneDeleteConfirm) {
-          setLaneDeleteConfirm({
-            docId: activeFileId,
-            paneId: activePane!.paneId,
-            laneName: activeDoc.name,
-          });
-          return;
-        }
-        setParseErrors(result.errors);
-        return;
-      }
-      setParseErrors([]);
-      onDraftsChange({
-        ...drafts,
-        [activeFileId]: { content: result.content, dirty: false },
-      });
-      return;
-    }
-
-    saveUserDocumentContent(activeFileId, content);
-    setParseErrors([]);
-    onDraftsChange({
-      ...drafts,
-      [activeFileId]: { content, dirty: false },
-    });
-  };
-
   const handleConvert = () => {
     if (!activeFileId || !activeDoc || activeDoc.kind === "derived") return;
     const content = drafts[activeFileId]?.content ?? activeDoc.content;
@@ -317,7 +280,7 @@ export default function TimelineTextEditorWorkspace({
     if (!activeFileId || !activeDoc || !activePane) return;
 
     if (activeDoc.kind === "derived") {
-      setLaneDeleteConfirm({
+      onRequestLaneDeleteConfirm({
         docId: activeFileId,
         paneId: activePane.paneId,
         laneName: activeDoc.name,
@@ -335,6 +298,12 @@ export default function TimelineTextEditorWorkspace({
     deleteDocument(activeFileId);
     removePaneAndDraftForDoc(activeFileId, activePane.paneId);
     setParseErrors([]);
+  };
+
+  const handleExpandAllPanes = () => {
+    if (panes.length === 0) return;
+    onUniformPaneWidthChange(false);
+    onPaneFractionsChange(panes.map(() => 1 / panes.length));
   };
 
   const clampUniformWidth = (px: number) =>
@@ -553,14 +522,6 @@ export default function TimelineTextEditorWorkspace({
           Insert beat
         </Button>
         <Button
-          variant="primary"
-          size="sm"
-          onClick={handleSave}
-          disabled={!activeFileId || !activeDirty}
-        >
-          Save
-        </Button>
-        <Button
           variant="secondary"
           size="sm"
           onClick={handleConvert}
@@ -603,6 +564,19 @@ export default function TimelineTextEditorWorkspace({
           }
         >
           Uniform width
+        </button>
+        <button
+          type="button"
+          onClick={handleExpandAllPanes}
+          disabled={panes.length === 0 || unifiedScroll}
+          className="px-2 py-1 text-xs rounded border border-dark-accent/50 text-dark-muted hover:text-dark-text disabled:opacity-50 disabled:cursor-not-allowed"
+          title={
+            unifiedScroll
+              ? "Expand all panes applies to side-by-side panes only"
+              : "Evenly expand all open panes to fill the available width"
+          }
+        >
+          Expand all panes
         </button>
         <div className="flex items-center gap-1" title="Text size in all open editors">
           <button
@@ -710,37 +684,6 @@ export default function TimelineTextEditorWorkspace({
           {!uniformPaneWidth && panes.map((pane, i) => renderSideBySidePane(pane, i))}
         </div>
       )}
-
-      <Modal
-        isOpen={laneDeleteConfirm != null}
-        onClose={() => setLaneDeleteConfirm(null)}
-        title="Delete lane?"
-        contentClassName="max-w-md"
-      >
-        <p className="text-sm text-dark-muted mb-4">
-          Deleting this file will delete lane{" "}
-          <span className="text-dark-text font-medium">{laneDeleteConfirm?.laneName}</span> and all
-          of its beats and crossings. This cannot be undone.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setLaneDeleteConfirm(null)}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              if (!laneDeleteConfirm) return;
-              confirmDeleteLaneFromDocument(laneDeleteConfirm.docId);
-              removePaneAndDraftForDoc(laneDeleteConfirm.docId, laneDeleteConfirm.paneId);
-              setLaneDeleteConfirm(null);
-              setParseErrors([]);
-            }}
-          >
-            Delete lane
-          </Button>
-        </div>
-      </Modal>
     </div>
   );
 }
