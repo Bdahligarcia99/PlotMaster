@@ -360,6 +360,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       expandedBeatHeightPx: hadData
         ? (payload.expandedBeatHeightPx ?? DEFAULT_EXPANDED_BEAT_HEIGHT_PX)
         : DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
+      beatTextScalePercent: hadData
+        ? (payload.beatTextScalePercent ?? DEFAULT_BEAT_TEXT_SCALE_PERCENT)
+        : DEFAULT_BEAT_TEXT_SCALE_PERCENT,
       selection: [],
       magnifyToolActive: false,
       magnifiedBeatId: null,
@@ -395,6 +398,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         documents: s.documents,
         beatWidthPercent: s.beatWidthPercent,
         expandedBeatHeightPx: s.expandedBeatHeightPx,
+        beatTextScalePercent: s.beatTextScalePercent,
       };
       await driver.saveProjectData(s.activeProjectId, payload);
       await driver.updateProjectMeta(s.activeProjectId, { updatedAt: Date.now() });
@@ -440,13 +444,17 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         BEAT_TEXT_SCALE_PERCENT_MAX,
         Math.max(BEAT_TEXT_SCALE_PERCENT_MIN, percent)
       ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
     }),
 
   setBeatsExpanded: (expanded) => set({ beatsExpanded: expanded }),
 
   setExpandedBeatHeightPx: (px) =>
     set({
-      expandedBeatHeightPx: Math.min(EXPANDED_BEAT_HEIGHT_MAX, Math.max(EXPANDED_BEAT_HEIGHT_MIN, px)),
+      expandedBeatHeightPx: Math.round(
+        Math.min(EXPANDED_BEAT_HEIGHT_MAX, Math.max(EXPANDED_BEAT_HEIGHT_MIN, px))
+      ),
       hasUnsavedChanges: true,
       lastSaveError: null,
     }),
@@ -1272,6 +1280,7 @@ function storeSnapshot(state: TimelineStore): string {
     importLabelPrefixes: state.importLabelPrefixes,
     beatWidthPercent: state.beatWidthPercent,
     expandedBeatHeightPx: state.expandedBeatHeightPx,
+    beatTextScalePercent: state.beatTextScalePercent,
   });
 }
 

@@ -50,3 +50,80 @@ body {
 .react-flow__connection-path {
   stroke: #64748b !important;
 }
+
+/* Range sliders — dark navy-indigo palette (app-wide) */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: transparent;
+  cursor: pointer;
+  accent-color: #3b82f6;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #0f3460;
+  border: 1px solid #16213e;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #1a1a2e;
+  box-shadow: 0 0 0 1px #0f3460;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: #60a5fa;
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  background: #2563eb;
+  transform: scale(1.08);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #0f3460;
+  border: 1px solid #16213e;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #1a1a2e;
+  box-shadow: 0 0 0 1px #0f3460;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  background: #60a5fa;
+}
+
+input[type="range"]::-moz-range-thumb:active {
+  background: #2563eb;
+  transform: scale(1.08);
+}
+
+input[type="range"]:focus-visible {
+  outline: none;
+}
+
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+
+input[type="range"]:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px #3b82f6;
+}

@@ -6,6 +6,7 @@ import {
 } from "../../store/timelineTypes";
 import type { TimelineBeat } from "../../store/timelineTypes";
 import { resolveBeatDate } from "../../utils/beatDate";
+import { laneColorBeatBackground } from "../../utils/color";
 import { useTimelineStore } from "../../store/timelineStore";
 
 interface BeatBlockProps {
@@ -76,7 +77,7 @@ export default function BeatBlock({
     fontSize: titleFontSizePx,
     ...(laneColor
       ? {
-          backgroundColor: `${laneColor}33`,
+          backgroundColor: laneColorBeatBackground(laneColor),
           borderColor: selected ? undefined : laneColor,
         }
       : {}),

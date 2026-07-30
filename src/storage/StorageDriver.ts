@@ -143,6 +143,7 @@ export interface TimelineProjectPayload {
   documents?: TimelineDocumentRecord[];
   beatWidthPercent?: number;
   expandedBeatHeightPx?: number;
+  beatTextScalePercent?: number;
 }
 
 export type ProjectData = ProjectPayload | TimelineProjectPayload;

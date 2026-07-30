@@ -407,23 +407,6 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         />
       </div>
 
-      <div className="flex items-center gap-2" title="Text size inside beat blocks on the viewport">
-        <span className="text-xs text-dark-muted whitespace-nowrap">
-          Text size: {beatTextScalePercent}%
-        </span>
-        <input
-          type="range"
-          min={BEAT_TEXT_SCALE_PERCENT_MIN}
-          max={BEAT_TEXT_SCALE_PERCENT_MAX}
-          step={5}
-          value={beatTextScalePercent}
-          onChange={(e) => setBeatTextScalePercent(Number(e.target.value))}
-          className="w-20 h-1 accent-blue-500 cursor-pointer"
-        />
-      </div>
-
-      <div className="h-4 w-px bg-dark-accent/60 mx-1" />
-
       <Button
         variant="secondary"
         size="sm"
@@ -447,6 +430,21 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
           />
         </div>
       )}
+
+      <div className="flex items-center gap-2" title="Text size inside beat blocks on the viewport">
+        <span className="text-xs text-dark-muted whitespace-nowrap">
+          Text size: {beatTextScalePercent}%
+        </span>
+        <input
+          type="range"
+          min={BEAT_TEXT_SCALE_PERCENT_MIN}
+          max={BEAT_TEXT_SCALE_PERCENT_MAX}
+          step={5}
+          value={beatTextScalePercent}
+          onChange={(e) => setBeatTextScalePercent(Number(e.target.value))}
+          className="w-20 h-1 accent-blue-500 cursor-pointer"
+        />
+      </div>
 
       {message && <span className="text-xs text-dark-muted ml-2">{message}</span>}
 

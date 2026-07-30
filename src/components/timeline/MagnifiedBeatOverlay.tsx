@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { TimelineBeat } from "../../store/timelineTypes";
 import { useTimelineStore } from "../../store/timelineStore";
 import { resolveBeatDate } from "../../utils/beatDate";
+import { laneColorBeatBackground } from "../../utils/color";
 import BeatDateEditor from "./BeatDateEditor";
 
 const MAGNIFY_SCALE = 1.75;
@@ -72,7 +73,7 @@ export default function MagnifiedBeatOverlay({
   };
 
   const bgStyle = lane?.color
-    ? { backgroundColor: `${lane.color}33`, borderColor: lane.color }
+    ? { backgroundColor: laneColorBeatBackground(lane.color), borderColor: lane.color }
     : undefined;
 
   return createPortal(
@@ -83,7 +84,7 @@ export default function MagnifiedBeatOverlay({
         aria-hidden="true"
       />
       <div
-        className={`fixed z-[61] rounded-lg border px-4 py-3 shadow-2xl ring-2 ring-blue-500/60 flex flex-col gap-2 overflow-y-auto ${
+        className={`fixed z-[61] rounded-lg border px-4 py-3 shadow-2xl ring-2 ring-blue-500/60 flex flex-col gap-4 overflow-y-auto ${
           isAnchor
             ? "border-violet-500/70 bg-[#231a33] text-dark-text"
             : "border-blue-500 bg-[#1e2a3a] text-dark-text"
@@ -97,7 +98,7 @@ export default function MagnifiedBeatOverlay({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <label className="block space-y-1">
+        <label className="block space-y-1.5">
           <span className="text-xs text-dark-muted">Title</span>
           <input
             type="text"
@@ -111,24 +112,24 @@ export default function MagnifiedBeatOverlay({
         {displayDate && (
           <span className="text-xs text-dark-muted">{displayDate}</span>
         )}
-        <label className="block space-y-1 flex-1 min-h-0">
+        <label className="block space-y-1.5">
           <span className="text-xs text-dark-muted">Synopsis</span>
           <textarea
             value={synopsis}
             onChange={(e) => setSynopsis(e.target.value)}
             onBlur={commitFields}
             rows={3}
-            className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-y"
+            className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-none"
           />
         </label>
-        <label className="block space-y-1 flex-1 min-h-0">
+        <label className="block space-y-1.5">
           <span className="text-xs text-dark-muted">Detail</span>
           <textarea
             value={detail}
             onChange={(e) => setDetail(e.target.value)}
             onBlur={commitFields}
             rows={4}
-            className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-y"
+            className="w-full px-2 py-1.5 rounded bg-dark-bg border border-dark-accent text-dark-text text-sm resize-none"
           />
         </label>
         <BeatDateEditor

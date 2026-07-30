@@ -401,9 +401,11 @@ export default function TimelineBoard({
 
       const onMove = (ev: PointerEvent) => {
         const deltaY = ev.clientY - startY;
-        const next = Math.min(
-          EXPANDED_BEAT_HEIGHT_MAX,
-          Math.max(EXPANDED_BEAT_HEIGHT_MIN, startHeight - deltaY)
+        const next = Math.round(
+          Math.min(
+            EXPANDED_BEAT_HEIGHT_MAX,
+            Math.max(EXPANDED_BEAT_HEIGHT_MIN, startHeight - deltaY)
+          )
         );
         const el = getBeatElement(beatId);
         const beforeRect = el?.getBoundingClientRect();
