@@ -5,6 +5,7 @@ import type { TimelineBeat } from "../../store/timelineTypes";
 
 interface LaneColumnProps {
   laneId: string;
+  laneColor?: string;
   width: number;
   /** Minimum height (px) for the lane's track — the visible viewport height. The column still
    * grows taller than this to fit its beats when there are more than fit on-screen. */
@@ -46,6 +47,7 @@ type RenderItem =
  * slot number in different lanes always land at the same height. */
 export default function LaneColumn({
   laneId,
+  laneColor,
   width,
   minHeight,
   beats,
@@ -170,6 +172,7 @@ export default function LaneColumn({
             beat={item.beat}
             selected={selectedBeatIds.has(item.beat.id)}
             connected={connectedBeatIds.has(item.beat.id)}
+            laneColor={laneColor}
             highlightAsDropTarget={item.isSwapTarget}
             ghostInPlace={draggedBeatIds.has(item.beat.id)}
             beatWidthPercent={beatWidthPercent}

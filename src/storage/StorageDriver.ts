@@ -80,6 +80,7 @@ export interface TimelineLaneRecord {
   label: string;
   laneType: string;
   sortOrder: number;
+  color?: string;
 }
 
 export interface TimelineBeatRecord {
@@ -140,6 +141,8 @@ export interface TimelineProjectPayload {
   connections?: TimelineConnectionRecord[];
   importLabelPrefixes?: string[];
   documents?: TimelineDocumentRecord[];
+  beatWidthPercent?: number;
+  expandedBeatHeightPx?: number;
 }
 
 export type ProjectData = ProjectPayload | TimelineProjectPayload;

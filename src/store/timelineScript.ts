@@ -35,8 +35,7 @@ function parseKeyValueRest(line: string): Record<string, string> {
   return out;
 }
 
-/** Reads an unquoted token field like `lane: abc123` or `type: character`. `parseKeyValueRest`
- * only matches quoted string values, so bare (unquoted) fields need their own lookup. */
+/** Reads an unquoted token field like `lane: abc123` or `type: character`. */
 function parseBareField(line: string, key: string): string | undefined {
   const match = new RegExp(`(?:^|\\s)${key}:\\s*(\\S+)`).exec(line);
   return match ? match[1] : undefined;
@@ -104,6 +103,30 @@ function parseBeatDateSpec(line: string, kv: Record<string, string>): BeatDateSp
   return emptyBeatDateSpec();
 }
 
+function beatFieldLines(beat: TimelineBeat): string[] {
+  const fieldLines: string[] = [`      title: "${escapeQuoted(beat.title)}"`];
+  if (beat.synopsis.trim()) {
+    fieldLines.push(`      synopsis: "${escapeQuoted(beat.synopsis)}"`);
+  }
+  if (beat.detail.trim()) {
+    fieldLines.push(`      detail: "${escapeQuoted(beat.detail)}"`);
+  }
+  const dateParts: string[] = [];
+  appendBeatDateParts(dateParts, beat.dateSpec);
+  for (const part of dateParts) {
+    fieldLines.push(`      ${part}`);
+  }
+  return fieldLines;
+}
+
+function beatHeaderLine(beat: TimelineBeat): string {
+  const headerParts = [`    Beat ${beat.id} slot: ${beat.slot}`];
+  if (beat.kind === "anchor") {
+    headerParts.push("kind: anchor");
+  }
+  return `${headerParts.join(" ")} {`;
+}
+
 export function generateTimelineScript(
   lanes: TimelineLane[],
   beats: TimelineBeat[],
@@ -113,44 +136,31 @@ export function generateTimelineScript(
   const sortedLanes = [...lanes].sort((a, b) => a.sortOrder - b.sortOrder);
 
   for (const lane of sortedLanes) {
-    lines.push(
-      `Lane ${lane.id} "${escapeQuoted(lane.label)}" type: ${lane.laneType} sort: ${lane.sortOrder}`
-    );
-  }
-
-  if (sortedLanes.length > 0) lines.push("");
-
-  const sortedBeats = [...beats].sort((a, b) => {
-    if (a.laneId !== b.laneId) return a.laneId.localeCompare(b.laneId);
-    return a.slot - b.slot;
-  });
-
-  for (const beat of sortedBeats) {
-    const headerParts = [`Beat ${beat.id} lane: ${beat.laneId} slot: ${beat.slot}`];
-    if (beat.kind === "anchor") {
-      headerParts.push("kind: anchor");
+    const laneParts = [
+      `Lane ${lane.id} "${escapeQuoted(lane.label)}" type: ${lane.laneType} sort: ${lane.sortOrder}`,
+    ];
+    if (lane.color?.trim()) {
+      laneParts.push(`color: "${escapeQuoted(lane.color.trim())}"`);
     }
+    lines.push(`${laneParts.join(" ")} {`);
 
-    const fieldLines: string[] = [`  title: "${escapeQuoted(beat.title)}"`];
-    if (beat.synopsis.trim()) {
-      fieldLines.push(`  synopsis: "${escapeQuoted(beat.synopsis)}"`);
-    }
-    if (beat.detail.trim()) {
-      fieldLines.push(`  detail: "${escapeQuoted(beat.detail)}"`);
-    }
-    const dateParts: string[] = [];
-    appendBeatDateParts(dateParts, beat.dateSpec);
-    for (const part of dateParts) {
-      fieldLines.push(`  ${part}`);
-    }
+    const laneBeats = beats
+      .filter((b) => b.laneId === lane.id)
+      .sort((a, b) => a.slot - b.slot);
 
-    lines.push(`${headerParts.join(" ")} {`);
-    lines.push(...fieldLines);
+    lines.push("  beats: [");
+    for (let i = 0; i < laneBeats.length; i++) {
+      const beat = laneBeats[i];
+      lines.push(beatHeaderLine(beat));
+      lines.push(...beatFieldLines(beat));
+      lines.push("    }" + (i < laneBeats.length - 1 ? "," : ""));
+    }
+    lines.push("  ]");
     lines.push("}");
+    lines.push("");
   }
 
   if (connections.length > 0) {
-    lines.push("");
     const sortedConnections = [...connections].sort((a, b) => a.id.localeCompare(b.id));
     for (const connection of sortedConnections) {
       const parts = [`Crossing ${connection.id} beats: ${connection.beatIds.join(",")}`];
@@ -165,9 +175,10 @@ export function generateTimelineScript(
       }
       lines.push(parts.join(" "));
     }
+    lines.push("");
   }
 
-  lines.push("", "@timeline", "");
+  lines.push("@timeline", "");
   return lines.join("\n");
 }
 
@@ -176,6 +187,168 @@ export interface ParsedTimelineScript {
   beats: TimelineBeat[];
   connections: TimelineConnection[];
   errors: string[];
+}
+
+function parseLaneHeader(line: string): Omit<TimelineLane, "sortOrder"> & { sortOrder: number } | null {
+  const idMatch = /^Lane\s+(\S+)\s+/i.exec(line);
+  if (!idMatch) return null;
+  const id = idMatch[1];
+  const afterId = line.slice(idMatch[0].length);
+  const labelMatch = parseQuotedString(afterId, afterId.indexOf('"'));
+  const label = labelMatch?.value ?? "Lane";
+  const sortOrder = parseNumericField(line, "sort") ?? 0;
+  const laneType = parseBareField(line, "type") ?? "character";
+  const colorKv = parseKeyValueRest(line);
+  const color = colorKv.color?.trim() || undefined;
+  return {
+    id,
+    label,
+    laneType,
+    sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+    color,
+  };
+}
+
+function parseBeatDeclaration(
+  header: string,
+  blockBody: string,
+  laneId: string,
+  errors: string[]
+): TimelineBeat | null {
+  const idMatch = /^Beat\s+(\S+)\s+/i.exec(header);
+  if (!idMatch) {
+    errors.push(`Invalid beat line: ${header}`);
+    return null;
+  }
+  const id = idMatch[1];
+  const fullLine = blockBody ? `${header} ${blockBody}` : header;
+  const kv = parseKeyValueRest(fullLine);
+  const explicitLaneId = parseBareField(fullLine, "lane");
+  const resolvedLaneId = explicitLaneId ?? laneId;
+  if (!resolvedLaneId) {
+    errors.push(`Beat ${id} missing lane:`);
+    return null;
+  }
+  const slot = parseNumericField(fullLine, "slot") ?? parseNumericField(fullLine, "order") ?? 0;
+  if (/kind:\s*anchor/i.test(fullLine)) {
+    const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(fullLine);
+    const title = titleMatch
+      ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
+      : "Beat";
+    return {
+      id,
+      laneId: resolvedLaneId,
+      slot: Number.isFinite(slot) ? slot : 0,
+      kind: "anchor",
+      title,
+      synopsis: kv.synopsis ?? "",
+      detail: kv.detail ?? kv.description ?? "",
+      dateSpec: parseBeatDateSpec(fullLine, kv),
+    };
+  }
+  if (/kind:\s*empty/i.test(fullLine) || /empty:\s*true/.test(fullLine)) {
+    return null;
+  }
+  const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(fullLine);
+  const title = titleMatch
+    ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
+    : "Beat";
+  return {
+    id,
+    laneId: resolvedLaneId,
+    slot: Number.isFinite(slot) ? slot : 0,
+    kind: "story",
+    title,
+    synopsis: kv.synopsis ?? "",
+    detail: kv.detail ?? kv.description ?? "",
+    dateSpec: parseBeatDateSpec(fullLine, kv),
+  };
+}
+
+function parseBeatBlockFromLines(
+  rawLines: string[],
+  startIndex: number,
+  laneId: string,
+  errors: string[]
+): { beat: TimelineBeat | null; nextIndex: number } {
+  let lineIndex = startIndex;
+  let header = rawLines[lineIndex]?.trim() ?? "";
+  lineIndex++;
+  if (!header.startsWith("Beat ")) {
+    return { beat: null, nextIndex: lineIndex };
+  }
+
+  let blockBody = "";
+  if (header.endsWith("{")) {
+    header = header.slice(0, -1).trim();
+    const bodyLines: string[] = [];
+    while (lineIndex < rawLines.length) {
+      const innerLine = rawLines[lineIndex].trim().replace(/,$/, "");
+      lineIndex++;
+      if (innerLine === "}" || innerLine === "},") break;
+      if (innerLine) bodyLines.push(innerLine);
+    }
+    blockBody = bodyLines.join(" ");
+  }
+
+  const beat = parseBeatDeclaration(header, blockBody, laneId, errors);
+  return { beat, nextIndex: lineIndex };
+}
+
+function parseNestedLaneBlock(
+  rawLines: string[],
+  startIndex: number,
+  headerLine: string,
+  errors: string[]
+): { lane: TimelineLane; beats: TimelineBeat[]; nextIndex: number } | null {
+  const laneHeader = parseLaneHeader(headerLine.replace(/\{$/, "").trim());
+  if (!laneHeader) {
+    errors.push(`Invalid lane line: ${headerLine}`);
+    return null;
+  }
+
+  const lane: TimelineLane = {
+    id: laneHeader.id,
+    label: laneHeader.label,
+    laneType: laneHeader.laneType,
+    sortOrder: laneHeader.sortOrder,
+    color: laneHeader.color,
+  };
+  const beats: TimelineBeat[] = [];
+  let lineIndex = startIndex;
+
+  while (lineIndex < rawLines.length) {
+    const line = rawLines[lineIndex].trim();
+    lineIndex++;
+    if (!line || line.startsWith("#")) continue;
+    if (line === "}" || line === "},") break;
+
+    if (/^beats:\s*\[/.test(line)) {
+      while (lineIndex < rawLines.length) {
+        const inner = rawLines[lineIndex].trim();
+        if (inner === "]" || inner === "],") {
+          lineIndex++;
+          break;
+        }
+        if (inner.startsWith("Beat ")) {
+          const result = parseBeatBlockFromLines(rawLines, lineIndex - 1, lane.id, errors);
+          if (result.beat) beats.push(result.beat);
+          lineIndex = result.nextIndex;
+          continue;
+        }
+        lineIndex++;
+      }
+      continue;
+    }
+
+    if (line.startsWith("Beat ")) {
+      const result = parseBeatBlockFromLines(rawLines, lineIndex - 1, lane.id, errors);
+      if (result.beat) beats.push(result.beat);
+      lineIndex = result.nextIndex;
+    }
+  }
+
+  return { lane, beats, nextIndex: lineIndex };
 }
 
 export function parseTimelineScript(text: string): ParsedTimelineScript {
@@ -194,32 +367,36 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
     if (!line || line.startsWith("#") || line.startsWith("@")) continue;
 
     if (line.startsWith("Lane ")) {
-      const idMatch = /^Lane\s+(\S+)\s+/i.exec(line);
-      if (!idMatch) {
+      if (line.endsWith("{")) {
+        const nested = parseNestedLaneBlock(rawLines, lineIndex, line, errors);
+        if (nested) {
+          lanes.push({ ...nested.lane, sortOrder: nested.lane.sortOrder ?? lanes.length });
+          laneIds.add(nested.lane.id);
+          for (const beat of nested.beats) {
+            if (!beatIds.has(beat.id)) {
+              beats.push(beat);
+              beatIds.add(beat.id);
+            }
+          }
+          lineIndex = nested.nextIndex;
+        }
+        continue;
+      }
+
+      const laneHeader = parseLaneHeader(line);
+      if (!laneHeader) {
         errors.push(`Invalid lane line: ${line}`);
         continue;
       }
-      const id = idMatch[1];
-      const afterId = line.slice(idMatch[0].length);
-      const labelMatch = parseQuotedString(afterId, afterId.indexOf('"'));
-      const label = labelMatch?.value ?? "Lane";
-      const sortOrder = parseNumericField(line, "sort") ?? lanes.length;
-      const laneType = parseBareField(line, "type") ?? "character";
       lanes.push({
-        id,
-        label,
-        laneType,
-        sortOrder: Number.isFinite(sortOrder) ? sortOrder : lanes.length,
+        ...laneHeader,
+        sortOrder: Number.isFinite(laneHeader.sortOrder) ? laneHeader.sortOrder : lanes.length,
       });
-      laneIds.add(id);
+      laneIds.add(laneHeader.id);
       continue;
     }
 
     if (line.startsWith("Beat ")) {
-      // Beat field data (title, synopsis, detail, date) lives in a `{ ... }` block below the
-      // header, mirroring how the family tree wraps a union's field data. Older saved scripts
-      // may still have every field on the single header line — that legacy form still parses,
-      // since we simply fold the block body (if any) back onto the header before extracting fields.
       let header = line;
       let blockBody = "";
       if (header.endsWith("{")) {
@@ -233,60 +410,11 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         }
         blockBody = bodyLines.join(" ");
       }
-      const fullLine = blockBody ? `${header} ${blockBody}` : header;
-
-      const idMatch = /^Beat\s+(\S+)\s+/i.exec(header);
-      if (!idMatch) {
-        errors.push(`Invalid beat line: ${header}`);
-        continue;
+      const beat = parseBeatDeclaration(header, blockBody, "", errors);
+      if (beat) {
+        beats.push(beat);
+        beatIds.add(beat.id);
       }
-      const id = idMatch[1];
-      const kv = parseKeyValueRest(fullLine);
-      const laneId = parseBareField(fullLine, "lane");
-      if (!laneId) {
-        errors.push(`Beat ${id} missing lane:`);
-        continue;
-      }
-      // Accept the legacy `order:` key too, so scripts saved before the slot-grid rewrite still parse.
-      const slot = parseNumericField(fullLine, "slot") ?? parseNumericField(fullLine, "order") ?? 0;
-      if (/kind:\s*anchor/i.test(fullLine)) {
-        const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(fullLine);
-        const title = titleMatch
-          ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
-          : "Beat";
-        beats.push({
-          id,
-          laneId,
-          slot: Number.isFinite(slot) ? slot : 0,
-          kind: "anchor",
-          title,
-          synopsis: kv.synopsis ?? "",
-          detail: kv.detail ?? kv.description ?? "",
-          dateSpec: parseBeatDateSpec(fullLine, kv),
-        });
-        beatIds.add(id);
-        continue;
-      }
-      // Legacy "kind: empty" spacer beats are silently dropped — the slot grid represents gaps
-      // natively now, so a line like this simply no longer produces a beat.
-      if (/kind:\s*empty/i.test(fullLine) || /empty:\s*true/.test(fullLine)) {
-        continue;
-      }
-      const titleMatch = /title:\s*"((?:\\.|[^"\\])*)"/.exec(fullLine);
-      const title = titleMatch
-        ? titleMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
-        : "Beat";
-      beats.push({
-        id,
-        laneId,
-        slot: Number.isFinite(slot) ? slot : 0,
-        kind: "story",
-        title,
-        synopsis: kv.synopsis ?? "",
-        detail: kv.detail ?? kv.description ?? "",
-        dateSpec: parseBeatDateSpec(fullLine, kv),
-      });
-      beatIds.add(id);
       continue;
     }
 
@@ -341,7 +469,7 @@ export function lineReferencesTimelineEntity(line: string, entityId: string): bo
   return idRe.test(line);
 }
 
-const LANE_LINE_QUOTED = /^(\s*Lane\s+\S+\s+)"((?:\\.|[^"\\])+)"/;
+const LANE_LINE_QUOTED = /^(\s*Lane\s+\S+[^"{]*?)"((?:\\.|[^"\\])+)"/;
 const KV_QUOTED = /(\w+):\s*"((?:\\.|[^"\\])+)"/g;
 
 /** Replace non-empty quoted field values with "..." for compact script display. */

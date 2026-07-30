@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
+import ModuleBadge from "../components/ui/ModuleBadge";
+import ProjectSaveControls from "../components/ui/ProjectSaveControls";
 import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
@@ -118,9 +120,7 @@ export default function WorkspaceShell() {
             </button>
             <div className="h-4 w-px bg-dark-accent" />
             <span className="text-dark-text font-medium truncate max-w-[200px]">{project.name}</span>
-            <span className="text-xs text-dark-muted bg-dark-accent px-2 py-0.5 rounded">
-              {project.moduleType}
-            </span>
+            <ModuleBadge label={project.moduleType} />
             {(isFamilyTree || isProfiles) && (
               <>
                 <div className="h-4 w-px bg-dark-accent" />
@@ -146,6 +146,14 @@ export default function WorkspaceShell() {
         }
         right={
           <div className="flex items-center gap-2">
+            <ProjectSaveControls
+              activeProjectId={id ?? null}
+              status={null}
+              isSaving={false}
+              showSavedCheck={false}
+              saveAsFileProjectName={project.name}
+            />
+            <div className="h-4 w-px bg-dark-accent" />
             {hasPanelLayout && (
               <>
                 <button

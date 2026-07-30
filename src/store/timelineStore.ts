@@ -223,6 +223,8 @@ interface TimelineStore {
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
   beatPlacementMode: "auto" | "above" | "below";
+  magnifyToolActive: boolean;
+  magnifiedBeatId: string | null;
   scriptPanelLayout: "split" | "codeOnly" | "viewOnly";
   scriptDraft: string | null;
   hasUnsavedChanges: boolean;
@@ -242,6 +244,8 @@ interface TimelineStore {
   setBeatsExpanded: (expanded: boolean) => void;
   setExpandedBeatHeightPx: (px: number) => void;
   setBeatPlacementMode: (mode: "auto" | "above" | "below") => void;
+  setMagnifyToolActive: (active: boolean) => void;
+  setMagnifiedBeatId: (id: string | null) => void;
   setSelection: (
     items: TimelineSelectionItem[] | ((prev: TimelineSelectionItem[]) => TimelineSelectionItem[])
   ) => void;
@@ -280,7 +284,7 @@ interface TimelineStore {
   addImportLabelPrefix: (prefix: string) => void;
   removeImportLabelPrefix: (prefix: string) => void;
   insertStoryBeatRelativeToBeat: (beatId: string, position: "above" | "below") => string | null;
-  updateLane: (laneId: string, patch: Partial<Pick<TimelineLane, "label" | "laneType" | "sortOrder">>) => void;
+  updateLane: (laneId: string, patch: Partial<Pick<TimelineLane, "label" | "laneType" | "sortOrder" | "color">>) => void;
   updateBeat: (
     beatId: string,
     patch: Partial<Pick<TimelineBeat, "title" | "synopsis" | "detail" | "dateSpec" | "slot" | "laneId">>
@@ -317,6 +321,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   beatsExpanded: false,
   expandedBeatHeightPx: DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
   beatPlacementMode: "auto",
+  magnifyToolActive: false,
+  magnifiedBeatId: null,
   scriptPanelLayout: "split",
   scriptDraft: null,
   hasUnsavedChanges: false,
@@ -348,7 +354,15 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       connections,
       importLabelPrefixes: hadData ? (payload.importLabelPrefixes ?? []) : [],
       documents: hadData ? (payload.documents ?? []).map(normalizeDocument) : [],
+      beatWidthPercent: hadData
+        ? (payload.beatWidthPercent ?? DEFAULT_BEAT_WIDTH_PERCENT)
+        : DEFAULT_BEAT_WIDTH_PERCENT,
+      expandedBeatHeightPx: hadData
+        ? (payload.expandedBeatHeightPx ?? DEFAULT_EXPANDED_BEAT_HEIGHT_PX)
+        : DEFAULT_EXPANDED_BEAT_HEIGHT_PX,
       selection: [],
+      magnifyToolActive: false,
+      magnifiedBeatId: null,
       scriptDraft: null,
       hasUnsavedChanges: false,
       lastSaveError: null,
@@ -379,6 +393,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         connections: s.connections,
         importLabelPrefixes: s.importLabelPrefixes,
         documents: s.documents,
+        beatWidthPercent: s.beatWidthPercent,
+        expandedBeatHeightPx: s.expandedBeatHeightPx,
       };
       await driver.saveProjectData(s.activeProjectId, payload);
       await driver.updateProjectMeta(s.activeProjectId, { updatedAt: Date.now() });
@@ -414,6 +430,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   setBeatWidthPercent: (percent) =>
     set({
       beatWidthPercent: Math.min(BEAT_WIDTH_PERCENT_MAX, Math.max(BEAT_WIDTH_PERCENT_MIN, percent)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
     }),
 
   setBeatTextScalePercent: (percent) =>
@@ -429,9 +447,19 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   setExpandedBeatHeightPx: (px) =>
     set({
       expandedBeatHeightPx: Math.min(EXPANDED_BEAT_HEIGHT_MAX, Math.max(EXPANDED_BEAT_HEIGHT_MIN, px)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
     }),
 
   setBeatPlacementMode: (mode) => set({ beatPlacementMode: mode }),
+
+  setMagnifyToolActive: (active) =>
+    set({
+      magnifyToolActive: active,
+      magnifiedBeatId: active ? get().magnifiedBeatId : null,
+    }),
+
+  setMagnifiedBeatId: (id) => set({ magnifiedBeatId: id }),
 
   setSelection: (itemsOrFn) => {
     set((state) => ({
@@ -1242,6 +1270,8 @@ function storeSnapshot(state: TimelineStore): string {
     connections: state.connections,
     documents: state.documents,
     importLabelPrefixes: state.importLabelPrefixes,
+    beatWidthPercent: state.beatWidthPercent,
+    expandedBeatHeightPx: state.expandedBeatHeightPx,
   });
 }
 

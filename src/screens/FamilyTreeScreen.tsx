@@ -7,6 +7,7 @@ const SCRIPT_MIN_H = 160;
 const SCRIPT_MAX_H = 520;
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
+import ModuleBadge from "../components/ui/ModuleBadge";
 import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
@@ -231,9 +232,7 @@ export default function FamilyTreeScreen() {
                 {projectName}
               </button>
             )}
-            <span className="text-xs text-dark-muted bg-dark-accent px-2 py-0.5 rounded">
-              Family Tree
-            </span>
+            <ModuleBadge label="Family Tree" />
             <div className="h-4 w-px bg-dark-accent" />
             <ModeSwitchNavbar
               slots={[

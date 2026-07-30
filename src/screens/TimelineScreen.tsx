@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import TopBar from "../components/ui/TopBar";
+import ModuleBadge from "../components/ui/ModuleBadge";
 import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
@@ -482,9 +483,7 @@ export default function TimelineScreen() {
                 {projectName}
               </button>
             )}
-            <span className="text-xs text-dark-muted bg-dark-accent px-2 py-0.5 rounded">
-              Timeline Outliner
-            </span>
+            <ModuleBadge label="Timeline Outliner" />
             <div className="h-4 w-px bg-dark-accent" />
             <ModeSwitchNavbar
               slots={[

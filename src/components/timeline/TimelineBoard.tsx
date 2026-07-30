@@ -22,6 +22,7 @@ import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import BeatBlock from "./BeatBlock";
+import MagnifiedBeatOverlay from "./MagnifiedBeatOverlay";
 import { computeSlotTrackContentHeightPx, getPrimarySelection, useTimelineStore } from "../../store/timelineStore";
 import type { TimelineBeat, TimelineLane } from "../../store/timelineTypes";
 import {
@@ -137,8 +138,12 @@ export default function TimelineBoard({
   const beatTextScalePercent = useTimelineStore((s) => s.beatTextScalePercent);
   const beatsExpanded = useTimelineStore((s) => s.beatsExpanded);
   const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
+  const magnifyToolActive = useTimelineStore((s) => s.magnifyToolActive);
+  const magnifiedBeatId = useTimelineStore((s) => s.magnifiedBeatId);
   const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
   const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
+  const setMagnifiedBeatId = useTimelineStore((s) => s.setMagnifiedBeatId);
+  const setMagnifyToolActive = useTimelineStore((s) => s.setMagnifyToolActive);
   const selectOnly = useTimelineStore((s) => s.selectOnly);
   const toggleSelection = useTimelineStore((s) => s.toggleSelection);
   const moveBeat = useTimelineStore((s) => s.moveBeat);
@@ -159,6 +164,7 @@ export default function TimelineBoard({
   const [dragPreviews, setDragPreviews] = useState<DragPreview[]>([]);
   const [activeDragBeatId, setActiveDragBeatId] = useState<string | null>(null);
   const [isResizingBeatHeight, setIsResizingBeatHeight] = useState(false);
+  const [magnifiedAnchorRect, setMagnifiedAnchorRect] = useState<DOMRect | null>(null);
   // Tracks how far the user is scrolled from the bottom of the lane track (updated live on
   // scroll). Beats stack upward from the bottom (flex-col-reverse), so when expanding/collapsing
   // beat height changes the track's total scroll height, this lets us hold the viewport's
@@ -321,6 +327,7 @@ export default function TimelineBoard({
         if (el) {
           const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
           el.scrollTop = Math.max(0, Math.min(maxScroll, maxScroll - distanceFromBottomRef.current));
+          distanceFromBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight;
         }
       }
       if (now - start < BEAT_HEIGHT_TRANSITION_MS + 50) {
@@ -396,7 +403,7 @@ export default function TimelineBoard({
         const deltaY = ev.clientY - startY;
         const next = Math.min(
           EXPANDED_BEAT_HEIGHT_MAX,
-          Math.max(EXPANDED_BEAT_HEIGHT_MIN, startHeight + deltaY)
+          Math.max(EXPANDED_BEAT_HEIGHT_MIN, startHeight - deltaY)
         );
         const el = getBeatElement(beatId);
         const beforeRect = el?.getBoundingClientRect();
@@ -407,6 +414,8 @@ export default function TimelineBoard({
           const vScroll = verticalScrollRef.current;
           if (vScroll && deltaTop !== 0) {
             vScroll.scrollTop += deltaTop;
+            distanceFromBottomRef.current =
+              vScroll.scrollHeight - vScroll.scrollTop - vScroll.clientHeight;
           }
         }
       };
@@ -501,13 +510,20 @@ export default function TimelineBoard({
   const handleBeatClick = useCallback(
     (beatId: string, e: React.MouseEvent) => {
       e.stopPropagation();
+      if (magnifyToolActive) {
+        setMagnifiedBeatId(beatId);
+        const el = getBeatElement(beatId);
+        if (el) setMagnifiedAnchorRect(el.getBoundingClientRect());
+        selectOnly({ type: "beat", id: beatId });
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.shiftKey) {
         toggleSelection({ type: "beat", id: beatId });
       } else {
         selectOnly({ type: "beat", id: beatId });
       }
     },
-    [toggleSelection, selectOnly]
+    [toggleSelection, selectOnly, magnifyToolActive, setMagnifiedBeatId, getBeatElement]
   );
 
   const handleBeatDoubleClick = useCallback(
@@ -558,8 +574,34 @@ export default function TimelineBoard({
   );
 
   const handleBackgroundClick = useCallback(() => {
+    if (magnifiedBeatId) {
+      setMagnifiedBeatId(null);
+      setMagnifiedAnchorRect(null);
+    }
     selectOnly(null);
-  }, [selectOnly]);
+  }, [selectOnly, magnifiedBeatId, setMagnifiedBeatId]);
+
+  useEffect(() => {
+    if (!magnifiedBeatId) {
+      setMagnifiedAnchorRect(null);
+      return;
+    }
+    const el = getBeatElement(magnifiedBeatId);
+    if (el) setMagnifiedAnchorRect(el.getBoundingClientRect());
+  }, [magnifiedBeatId, getBeatElement, layoutTick]);
+
+  useEffect(() => {
+    if (!magnifyToolActive) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMagnifiedBeatId(null);
+        setMagnifiedAnchorRect(null);
+        setMagnifyToolActive(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [magnifyToolActive, setMagnifiedBeatId, setMagnifyToolActive]);
 
   const handleViewportWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     const el = viewportRef.current;
@@ -688,6 +730,7 @@ export default function TimelineBoard({
                 <LaneColumn
                   key={lane.id}
                   laneId={lane.id}
+                  laneColor={lane.color}
                   width={laneWidthPx}
                   minHeight={laneTrackMinHeightPx}
                   beats={beatsByLane.get(lane.id) ?? []}
@@ -758,6 +801,16 @@ export default function TimelineBoard({
           />
         ) : null}
       </DragOverlay>
+      {magnifiedBeatId && magnifiedAnchorRect && (
+        <MagnifiedBeatOverlay
+          beatId={magnifiedBeatId}
+          anchorRect={magnifiedAnchorRect}
+          onClose={() => {
+            setMagnifiedBeatId(null);
+            setMagnifiedAnchorRect(null);
+          }}
+        />
+      )}
     </DndContext>
   );
 }

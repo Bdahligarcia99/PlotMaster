@@ -9,6 +9,7 @@ import {
 } from "../../store/timelineStore";
 import type { BeatDateSpec } from "../../store/timelineTypes";
 import BeatDateEditor from "./BeatDateEditor";
+import ColorInput from "../ui/ColorInput";
 import TimelineInspectorMultiBeatPanel from "./import/TimelineInspectorMultiBeatPanel";
 
 export type InspectorMode = "isolation" | "multi";
@@ -126,6 +127,7 @@ export default function TimelineInspector({
   const [laneLabel, setLaneLabel] = useState("");
   const [laneType, setLaneType] = useState("character");
   const [laneTypeCustom, setLaneTypeCustom] = useState("");
+  const [laneColor, setLaneColor] = useState("");
   const [beatTitle, setBeatTitle] = useState("");
   const [beatSynopsis, setBeatSynopsis] = useState("");
   const [beatDetail, setBeatDetail] = useState("");
@@ -142,8 +144,9 @@ export default function TimelineInspector({
         : "custom";
       setLaneType(preset);
       setLaneTypeCustom(preset === "custom" ? editingLane.laneType : "");
+      setLaneColor(editingLane.color ?? "");
     }
-  }, [editingLane?.id, editingLane?.label, editingLane?.laneType]);
+  }, [editingLane?.id, editingLane?.label, editingLane?.laneType, editingLane?.color]);
 
   useEffect(() => {
     if (editingBeat) {
@@ -275,6 +278,15 @@ export default function TimelineInspector({
                 />
               </label>
             )}
+            <ColorInput
+              label="Lane color"
+              value={laneColor || "#64748b"}
+              onChange={(hex) => {
+                setLaneColor(hex);
+                updateLane(editingLane.id, { color: hex });
+              }}
+              className="mb-0"
+            />
           </div>
         )}
 

@@ -44,6 +44,9 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const setBeatsExpanded = useTimelineStore((s) => s.setBeatsExpanded);
   const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
   const setBeatPlacementMode = useTimelineStore((s) => s.setBeatPlacementMode);
+  const magnifyToolActive = useTimelineStore((s) => s.magnifyToolActive);
+  const setMagnifyToolActive = useTimelineStore((s) => s.setMagnifyToolActive);
+  const setMagnifiedBeatId = useTimelineStore((s) => s.setMagnifiedBeatId);
   const [message, setMessage] = useState<string | null>(null);
   const [beatMenuOpen, setBeatMenuOpen] = useState(false);
   const [renameModalOpen, setRenameModalOpen] = useState(false);
@@ -334,6 +337,23 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         className={!canConnect ? "opacity-50 cursor-not-allowed" : ""}
       >
         {canConnect && setAlreadyConnected ? "Uncross" : "Crossing"}
+      </Button>
+
+      <Button
+        variant={magnifyToolActive ? "primary" : "secondary"}
+        size="sm"
+        onClick={() => {
+          const next = !magnifyToolActive;
+          if (!next) setMagnifiedBeatId(null);
+          setMagnifyToolActive(next);
+        }}
+        title={
+          magnifyToolActive
+            ? "Magnification active — click a beat to enlarge and edit; click again to exit"
+            : "Magnify a beat in place for direct editing"
+        }
+      >
+        Magnify
       </Button>
 
       <Button

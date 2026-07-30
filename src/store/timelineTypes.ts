@@ -51,6 +51,8 @@ export interface TimelineLane {
   label: string;
   laneType: string;
   sortOrder: number;
+  /** Optional lane color applied to beat blocks in this lane. */
+  color?: string;
 }
 
 export type BeatDateMode = "none" | "label" | "absolute" | "relative" | "resolved";

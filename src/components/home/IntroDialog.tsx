@@ -14,6 +14,7 @@ import {
   initializeFileBackedModularProject,
   initializeFileBackedStandaloneProject,
   registerProjectFileRef,
+  openSynprojFileAndRegister,
 } from "../../storage/synproj/synprojProjectService";
 import { useAppStore, type Project } from "../../store/appStore";
 import {
@@ -77,6 +78,8 @@ export default function IntroDialog({
   const [activeTab, setActiveTab] = useState<TabId>("create");
   const [allProjects, setAllProjects] = useState<ProjectIndexItem[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [openProjectError, setOpenProjectError] = useState<string | null>(null);
+  const [openingProject, setOpeningProject] = useState(false);
 
   const standaloneProjects = useAppStore((s) => s.standaloneProjects);
   const removeStandaloneProject = useAppStore((s) => s.removeStandaloneProject);
@@ -229,6 +232,24 @@ export default function IntroDialog({
     p: ProjectIndexItem | { id: string; moduleType: string }
   ): string => getModuleRoute(p.moduleType, p.id);
 
+  const handleOpenProjectFile = async () => {
+    setOpenProjectError(null);
+    setOpeningProject(true);
+    try {
+      const result = await openSynprojFileAndRegister();
+      if (!result) return;
+      refreshProjects();
+      setIntroDialogOpen(false);
+      onClose();
+      openInNewWindow(result.path);
+    } catch (e) {
+      console.error("[IntroDialog] Open project failed:", e);
+      setOpenProjectError(e instanceof Error ? e.message : "Failed to open project file.");
+    } finally {
+      setOpeningProject(false);
+    }
+  };
+
   const handleOpenProject = (
     p: ProjectIndexItem | { id: string; moduleType: string; name: string; lastOpened: number }
   ) => {
@@ -350,7 +371,23 @@ export default function IntroDialog({
           >
             Recent Projects
           </button>
+          {isTauri() && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleOpenProjectFile()}
+              disabled={openingProject}
+              className="ml-2"
+            >
+              {openingProject ? "Opening…" : "Open Project"}
+            </Button>
+          )}
         </div>
+        {openProjectError && (
+          <p className="px-6 pb-2 text-xs text-red-400" role="alert">
+            {openProjectError}
+          </p>
+        )}
 
         {/* Content - scrollable */}
         <div className="flex-1 overflow-y-auto px-6 pb-6 min-h-0">

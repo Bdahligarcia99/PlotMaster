@@ -12,6 +12,7 @@ interface BeatBlockProps {
   beat: TimelineBeat;
   selected: boolean;
   connected: boolean;
+  laneColor?: string;
   /** True while another beat is being dragged and would land on (swap with) this beat if dropped
    * right now. */
   highlightAsDropTarget?: boolean;
@@ -33,6 +34,7 @@ export default function BeatBlock({
   beat,
   selected,
   connected,
+  laneColor,
   highlightAsDropTarget = false,
   ghostInPlace = false,
   beatWidthPercent,
@@ -72,6 +74,12 @@ export default function BeatBlock({
     overflowX: "hidden",
     overflowY: "auto",
     fontSize: titleFontSizePx,
+    ...(laneColor
+      ? {
+          backgroundColor: `${laneColor}33`,
+          borderColor: selected ? undefined : laneColor,
+        }
+      : {}),
   };
 
   return (
@@ -87,13 +95,17 @@ export default function BeatBlock({
       onDoubleClick={onDoubleClick}
       data-beat-id={beat.id}
       className={`group relative flex-shrink-0 rounded-lg border px-3 py-2 text-left cursor-grab active:cursor-grabbing select-none ${
-        isAnchor
+        laneColor
           ? selected
-            ? "border-blue-500 bg-[#2a1f3d] text-dark-text ring-1 ring-blue-500/60"
-            : "border-violet-500/70 bg-[#231a33] text-dark-text hover:border-violet-400 hover:bg-[#2a1f3d]"
-          : selected
-            ? "border-blue-500 bg-[#1e2a3a] text-dark-text ring-1 ring-blue-500/60"
-            : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent hover:bg-dark-accent"
+            ? "text-dark-text ring-1 ring-blue-500/60 border-blue-500"
+            : "text-dark-text hover:brightness-110"
+          : isAnchor
+            ? selected
+              ? "border-blue-500 bg-[#2a1f3d] text-dark-text ring-1 ring-blue-500/60"
+              : "border-violet-500/70 bg-[#231a33] text-dark-text hover:border-violet-400 hover:bg-[#2a1f3d]"
+            : selected
+              ? "border-blue-500 bg-[#1e2a3a] text-dark-text ring-1 ring-blue-500/60"
+              : "border-dark-accent bg-dark-bg text-dark-text hover:border-dark-accent hover:bg-dark-accent"
       } ${highlightAsDropTarget ? "ring-2 ring-blue-400 shadow-[0_0_10px_2px_rgba(96,165,250,0.5)]" : ""}`}
     >
       <span className="block truncate font-medium">
@@ -157,7 +169,7 @@ export default function BeatBlock({
           aria-orientation="horizontal"
           aria-label="Resize beat height"
           onPointerDown={onHeightResizeStart}
-          className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 hover:bg-blue-500/30 rounded-b-lg touch-none"
+          className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 hover:bg-blue-500/30 rounded-t-lg touch-none"
         />
       )}
     </div>
