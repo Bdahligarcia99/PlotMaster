@@ -234,7 +234,9 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
 
   const handleFamilyTabClick = (familyId: string | null) => {
     setActiveFamilyTabId(familyId);
-    if (familyId != null) {
+    if (familyId == null) {
+      setIsolationModeActive(false);
+    } else {
       setPendingFocusFamilyId(familyId);
     }
   };

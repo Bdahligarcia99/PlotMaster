@@ -281,6 +281,7 @@ export interface FamilyTreeSavedState {
     scriptPanelLayout?: "split" | "codeOnly" | "viewOnly";
     showGenerationAnchors?: boolean;
     showGenInheritIndicator?: boolean;
+    genAnchorBandOpacity?: number;
   };
 }
 
@@ -1471,6 +1472,8 @@ interface FamilyTreeStore {
   scriptCompactDeclarations: boolean;
   showGenerationAnchors: boolean;
   showGenInheritIndicator: boolean;
+  /** Opacity (0-100) of the generation anchor band tint on the canvas. */
+  genAnchorBandOpacity: number;
   generationAnchors: GenerationAnchor[];
   connectionStyles: ConnectionStyleDef[];
   /** Anchor ids in edit mode (draggable, capture input). Confirmed anchors pass input through. */
@@ -1520,6 +1523,7 @@ interface FamilyTreeStore {
   setScriptCompactDeclarations: (v: boolean) => void;
   setShowGenerationAnchors: (v: boolean) => void;
   setShowGenInheritIndicator: (v: boolean) => void;
+  setGenAnchorBandOpacity: (v: number) => void;
   addGenerationAnchor: () => void;
   enterAnchorEditMode: (anchorId: string) => void;
   confirmAnchor: (anchorId: string) => void;
@@ -1637,6 +1641,7 @@ let prevPersistUnionSelectionOnChildCreate: boolean | null = null;
 let prevScriptPanelLayout: "split" | "codeOnly" | "viewOnly" | null = null;
 let prevShowGenerationAnchors: boolean | null = null;
 let prevShowGenInheritIndicator: boolean | null = null;
+let prevGenAnchorBandOpacity: number | null = null;
 let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
 let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
@@ -2548,6 +2553,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   scriptCompactDeclarations: false,
   showGenerationAnchors: true,
   showGenInheritIndicator: true,
+  genAnchorBandOpacity: 6,
   generationAnchors: [],
   connectionStyles: [],
   editingAnchorIds: [] as string[],
@@ -2687,6 +2693,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     set({ showGenerationAnchors: v, hasUnsavedChanges: true, lastSaveError: null }),
   setShowGenInheritIndicator: (v) =>
     set({ showGenInheritIndicator: v, hasUnsavedChanges: true, lastSaveError: null }),
+  setGenAnchorBandOpacity: (v) =>
+    set({ genAnchorBandOpacity: Math.min(100, Math.max(0, v)), hasUnsavedChanges: true, lastSaveError: null }),
   addGenerationAnchor: () =>
     set((s) => {
       const DEFAULT_HEIGHT = 224;
@@ -3812,6 +3820,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           : "split"),
       showGenerationAnchors: payload?.ui?.showGenerationAnchors ?? true,
       showGenInheritIndicator: payload?.ui?.showGenInheritIndicator ?? true,
+      genAnchorBandOpacity: payload?.ui?.genAnchorBandOpacity ?? 6,
       defaultUnionType:
         (payload?.ui?.defaultUnionType === "forward" || payload?.ui?.defaultUnionType === "backward")
           ? payload.ui.defaultUnionType
@@ -3855,6 +3864,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           genLabelMode: s.genLabelMode,
           showGenerationAnchors: s.showGenerationAnchors,
           showGenInheritIndicator: s.showGenInheritIndicator,
+          genAnchorBandOpacity: s.genAnchorBandOpacity,
           snapToGrid: s.snapToGrid,
           showNodeInfoEnabled: s.showNodeInfoEnabled,
           nodeInfoTopLeft: s.nodeInfoTopLeft,
@@ -3958,6 +3968,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           genLabelMode: "letters",
           showGenerationAnchors: true,
           showGenInheritIndicator: true,
+          genAnchorBandOpacity: 6,
           snapToGrid: true,
           showNodeInfoEnabled: false,
           nodeInfoTopLeft: true,
@@ -3990,6 +4001,7 @@ useFamilyTreeStore.subscribe((state) => {
     state.scriptPanelLayout !== prevScriptPanelLayout ||
     state.showGenerationAnchors !== prevShowGenerationAnchors ||
     state.showGenInheritIndicator !== prevShowGenInheritIndicator ||
+    state.genAnchorBandOpacity !== prevGenAnchorBandOpacity ||
     state.genLabelMode !== prevGenLabelMode ||
     JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson ||
     JSON.stringify(state.connectionStyles) !== prevConnectionStylesJson ||
@@ -4007,6 +4019,7 @@ useFamilyTreeStore.subscribe((state) => {
   prevScriptPanelLayout = state.scriptPanelLayout;
   prevShowGenerationAnchors = state.showGenerationAnchors;
   prevShowGenInheritIndicator = state.showGenInheritIndicator;
+  prevGenAnchorBandOpacity = state.genAnchorBandOpacity;
   prevGenLabelMode = state.genLabelMode;
   prevGenerationAnchorsJson = JSON.stringify(state.generationAnchors);
   prevConnectionStylesJson = JSON.stringify(state.connectionStyles);

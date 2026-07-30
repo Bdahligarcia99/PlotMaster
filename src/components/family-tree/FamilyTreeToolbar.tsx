@@ -56,6 +56,8 @@ export default function FamilyTreeToolbar() {
     setShowGenerationAnchors,
     showGenInheritIndicator,
     setShowGenInheritIndicator,
+    genAnchorBandOpacity,
+    setGenAnchorBandOpacity,
     generationAnchors,
     genLabelMode,
     setGenLabelMode,
@@ -684,7 +686,7 @@ export default function FamilyTreeToolbar() {
           createPortal(
             <div
               ref={genAnchorDropdownRef}
-              className="fixed py-1 min-w-[180px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
+              className="fixed py-1 min-w-[220px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
               style={{
                 top: genAnchorContainerRef.current
                   ? genAnchorContainerRef.current.getBoundingClientRect().bottom + 4
@@ -722,6 +724,18 @@ export default function FamilyTreeToolbar() {
                 />
                 <span>Show inherit indicator</span>
               </label>
+              <hr className="my-1 border-dark-accent/50" />
+              <div className="px-3 py-2">
+                <label className="block text-dark-muted text-xs mb-2">Band opacity</label>
+                <NumberSlider
+                  value={genAnchorBandOpacity}
+                  min={0}
+                  max={100}
+                  step={1}
+                  onChange={(v) => setGenAnchorBandOpacity(v)}
+                  className="!mb-0"
+                />
+              </div>
               <hr className="my-1 border-dark-accent/50" />
               <div className="px-3 py-1 text-[10px] font-medium text-dark-muted uppercase tracking-wide">
                 Label Mode

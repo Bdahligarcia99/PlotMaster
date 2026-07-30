@@ -12,6 +12,7 @@ type DragKind = "body" | "top" | "bottom";
 export default function GenerationAnchorsOverlay() {
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const showGenerationAnchors = useFamilyTreeStore((s) => s.showGenerationAnchors);
+  const genAnchorBandOpacity = useFamilyTreeStore((s) => s.genAnchorBandOpacity);
   const editingAnchorIds = useFamilyTreeStore((s) => s.editingAnchorIds);
   const viewportBounds = useFamilyTreeStore((s) => s.viewportBounds);
   const updateGenerationAnchorBounds = useFamilyTreeStore((s) => s.updateGenerationAnchorBounds);
@@ -127,7 +128,7 @@ export default function GenerationAnchorsOverlay() {
     height: 2,
   };
   const bandTintStyle = {
-    backgroundColor: "rgba(59,130,246,0.06)",
+    backgroundColor: `rgba(59,130,246,${Math.min(100, Math.max(0, genAnchorBandOpacity)) / 100})`,
   };
 
   const isEditing = (anchorId: string) => editingAnchorIds.includes(anchorId);
