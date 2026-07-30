@@ -59,6 +59,7 @@ export interface ProjectPayload {
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
   connectionStyles?: ConnectionStyleDef[];
+  customFamilyNames?: { unionIds: string[]; name: string }[];
   ui?: FamilyTreeUIFlags;
 }
 

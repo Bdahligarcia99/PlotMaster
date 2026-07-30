@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import type { Node } from "reactflow";
 import Modal from "../ui/Modal";
 import Button from "../ui/Button";
@@ -26,8 +26,13 @@ export default function FamilyTreeReviewSuggestionsModal({
   onApply,
   onOpen,
 }: FamilyTreeReviewSuggestionsModalProps) {
-  const [checked, setChecked] = useState<Set<number>>(() => new Set(suggestions.map((_, i) => i)));
+  const [checked, setChecked] = useState<Set<number>>(() => new Set());
   const [resolvedValues, setResolvedValues] = useState<Map<number, string>>(new Map());
+
+  const actionableIndices = useMemo(
+    () => suggestions.map((s, i) => (s.field === "unionHealth" ? -1 : i)).filter((i) => i >= 0),
+    [suggestions]
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -37,10 +42,10 @@ export default function FamilyTreeReviewSuggestionsModal({
 
   useEffect(() => {
     if (isOpen) {
-      setChecked(new Set(suggestions.map((_, i) => i)));
+      setChecked(new Set(actionableIndices));
       setResolvedValues(new Map());
     }
-  }, [isOpen, suggestions]);
+  }, [isOpen, suggestions, actionableIndices]);
 
   const getNodeName = useCallback(
     (nodeId: string) => {
@@ -55,6 +60,7 @@ export default function FamilyTreeReviewSuggestionsModal({
     s.field === "firstName" && s.proposedValue === "Mr./Mrs.";
   const needsFatherMotherChoice = (s: NameRoleSuggestion): boolean =>
     s.field === "role" && s.proposedValue === "father/mother";
+  const isInformational = (s: NameRoleSuggestion): boolean => s.field === "unionHealth";
 
   const getEffectiveProposed = (s: NameRoleSuggestion, idx: number): string => {
     const r = resolvedValues.get(idx);
@@ -81,17 +87,21 @@ export default function FamilyTreeReviewSuggestionsModal({
     });
   };
 
-  const selectAll = () => setChecked(new Set(suggestions.map((_, i) => i)));
+  const selectAll = () => setChecked(new Set(actionableIndices));
   const deselectAll = () => setChecked(new Set());
 
   const handleApplySelected = () => {
-    const items = suggestions.map((s, i) => ({ s, idx: i })).filter(({ idx }) => checked.has(idx));
+    const items = suggestions
+      .map((s, i) => ({ s, idx: i }))
+      .filter(({ s, idx }) => checked.has(idx) && !isInformational(s));
     onApply(items, resolvedValues);
     onClose();
   };
 
   const handleApplyAll = () => {
-    const items = suggestions.map((s, i) => ({ s, idx: i }));
+    const items = suggestions
+      .map((s, i) => ({ s, idx: i }))
+      .filter(({ s }) => !isInformational(s));
     onApply(items, resolvedValues);
     onClose();
   };
@@ -114,18 +124,36 @@ export default function FamilyTreeReviewSuggestionsModal({
             </thead>
             <tbody>
               {suggestions.map((s, idx) => (
-                <tr key={idx} className="border-b border-dark-accent/30 hover:bg-dark-accent/20">
+                <tr
+                  key={idx}
+                  className={`border-b border-dark-accent/30 hover:bg-dark-accent/20 ${
+                    isInformational(s) ? "bg-amber-500/5" : ""
+                  }`}
+                >
                   <td className="py-2 pr-2 align-top">
-                    <input
-                      type="checkbox"
-                      checked={checked.has(idx)}
-                      onChange={() => toggle(idx)}
-                      className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50 mt-0.5"
-                    />
+                    {isInformational(s) ? (
+                      <span className="text-dark-muted text-xs">—</span>
+                    ) : (
+                      <input
+                        type="checkbox"
+                        checked={checked.has(idx)}
+                        onChange={() => toggle(idx)}
+                        className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50 mt-0.5"
+                      />
+                    )}
                   </td>
                   <td className="py-2 pr-4 text-dark-text font-medium">
-                    {getNodeName(s.nodeId)}
-                    <span className="text-dark-muted font-normal ml-1">({s.nodeId})</span>
+                    {isInformational(s) && s.unionId ? (
+                      <>
+                        Union
+                        <span className="text-dark-muted font-normal ml-1">({s.unionId})</span>
+                      </>
+                    ) : (
+                      <>
+                        {getNodeName(s.nodeId)}
+                        <span className="text-dark-muted font-normal ml-1">({s.nodeId})</span>
+                      </>
+                    )}
                   </td>
                   <td className="py-2 pr-4 text-dark-muted">
                     {s.currentValue || "—"}
@@ -160,7 +188,7 @@ export default function FamilyTreeReviewSuggestionsModal({
           </table>
         )}
       </div>
-      {suggestions.length > 0 ? (
+      {actionableIndices.length > 0 ? (
         <div className="flex items-center justify-between gap-4 flex-shrink-0 pt-2 border-t border-dark-accent/50">
           <div className="flex gap-2">
             <button

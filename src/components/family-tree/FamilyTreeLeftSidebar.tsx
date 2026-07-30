@@ -92,11 +92,21 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
   const removeNodes = useFamilyTreeStore((s) => s.removeNodes);
+  const families = useFamilyTreeStore((s) => s.families);
+  const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
+  const setActiveFamilyTabId = useFamilyTreeStore((s) => s.setActiveFamilyTabId);
+  const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
+  const setIsolationModeActive = useFamilyTreeStore((s) => s.setIsolationModeActive);
+  const setPendingFocusFamilyId = useFamilyTreeStore((s) => s.setPendingFocusFamilyId);
+  const setFamilyCustomName = useFamilyTreeStore((s) => s.setFamilyCustomName);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
+  const [editingFamilyId, setEditingFamilyId] = useState<string | null>(null);
+  const [draftFamilyName, setDraftFamilyName] = useState("");
   const [draftName, setDraftName] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [collapseAllActive, setCollapseAllActive] = useState(false);
 
   const isSelected = (id: string) => selectedNodeIds.includes(id);
 
@@ -146,19 +156,35 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
     return { familyUnits: unitsWithSortedChildren, unlinkedPeople: unlinked };
   }, [nodes, edges]);
 
+  const activeFamily = useMemo(
+    () => (activeFamilyTabId != null ? families.find((f) => f.id === activeFamilyTabId) : null),
+    [families, activeFamilyTabId]
+  );
+
+  const filteredFamilyUnits = useMemo(() => {
+    if (!activeFamily) return familyUnits;
+    const unionSet = new Set(activeFamily.unionIds);
+    return familyUnits.filter((u) => unionSet.has(u.unionId));
+  }, [familyUnits, activeFamily]);
+
+  const filteredUnlinkedPeople = useMemo(() => {
+    if (activeFamilyTabId != null) return [];
+    return unlinkedPeople;
+  }, [unlinkedPeople, activeFamilyTabId]);
+
   const visibleEntityOrder = useMemo(() => {
     const order: string[] = [];
-    for (const unit of familyUnits) {
+    for (const unit of filteredFamilyUnits) {
       order.push(unit.unionId);
       if (!collapsedUnits.has(unit.unionId)) {
         order.push(unit.parents[0], unit.parents[1], ...unit.children);
       }
     }
-    for (const p of unlinkedPeople) {
+    for (const p of filteredUnlinkedPeople) {
       order.push(p.id);
     }
     return order;
-  }, [familyUnits, unlinkedPeople, collapsedUnits]);
+  }, [filteredFamilyUnits, filteredUnlinkedPeople, collapsedUnits]);
 
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
@@ -181,6 +207,52 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
       else next.add(unionId);
       return next;
     });
+  };
+
+  const visibleUnitIds = useMemo(
+    () => filteredFamilyUnits.map((u) => u.unionId),
+    [filteredFamilyUnits]
+  );
+
+  const handleCollapseExpandAll = () => {
+    if (collapseAllActive) {
+      setCollapsedUnits((prev) => {
+        const next = new Set(prev);
+        for (const id of visibleUnitIds) next.delete(id);
+        return next;
+      });
+      setCollapseAllActive(false);
+    } else {
+      setCollapsedUnits((prev) => {
+        const next = new Set(prev);
+        for (const id of visibleUnitIds) next.add(id);
+        return next;
+      });
+      setCollapseAllActive(true);
+    }
+  };
+
+  const handleFamilyTabClick = (familyId: string | null) => {
+    setActiveFamilyTabId(familyId);
+    if (familyId != null) {
+      setPendingFocusFamilyId(familyId);
+    }
+  };
+
+  const startEditingFamily = (e: React.MouseEvent, familyId: string, currentName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEditingFamilyId(familyId);
+    setDraftFamilyName(currentName);
+  };
+
+  const saveFamilyName = (familyId: string) => {
+    setFamilyCustomName(familyId, draftFamilyName);
+    setEditingFamilyId(null);
+  };
+
+  const cancelFamilyEditing = () => {
+    setEditingFamilyId(null);
   };
 
   const handleEntityClick = (e: React.MouseEvent, id: string) => {
@@ -270,19 +342,96 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
           readOnly
         />
       </div>
+      <div className="px-3 py-2 border-b border-dark-accent/50 flex items-center gap-2 min-w-0">
+        <button
+          type="button"
+          title={isolationModeActive ? "Exit isolation mode" : "Isolation mode — hide other families on canvas"}
+          disabled={activeFamilyTabId == null}
+          onClick={() => setIsolationModeActive(!isolationModeActive)}
+          className={`flex-shrink-0 px-2 py-1 rounded-md border text-xs font-medium transition-colors ${
+            isolationModeActive
+              ? "bg-blue-500/20 border-blue-500/50 text-blue-300"
+              : "border-dark-accent/50 text-dark-muted hover:text-dark-text hover:bg-dark-accent/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          }`}
+        >
+          Isolate
+        </button>
+        <div
+          role="tablist"
+          aria-label="Family tabs"
+          className="flex-1 min-w-0 overflow-x-auto flex gap-1 pb-0.5"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeFamilyTabId == null}
+            onClick={() => handleFamilyTabClick(null)}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              activeFamilyTabId == null
+                ? "bg-dark-accent text-dark-text"
+                : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+            }`}
+          >
+            All
+          </button>
+          {families.map((family) =>
+            editingFamilyId === family.id ? (
+              <input
+                key={family.id}
+                type="text"
+                value={draftFamilyName}
+                autoFocus
+                onChange={(e) => setDraftFamilyName(e.target.value)}
+                onBlur={() => saveFamilyName(family.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveFamilyName(family.id);
+                  if (e.key === "Escape") cancelFamilyEditing();
+                }}
+                className="flex-shrink-0 w-24 px-2 py-1 text-xs bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none"
+              />
+            ) : (
+              <button
+                key={family.id}
+                type="button"
+                role="tab"
+                aria-selected={activeFamilyTabId === family.id}
+                onClick={() => handleFamilyTabClick(family.id)}
+                onDoubleClick={(e) => startEditingFamily(e, family.id, family.name)}
+                title="Double-click to rename"
+                className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  activeFamilyTabId === family.id
+                    ? "bg-dark-accent text-dark-text"
+                    : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+                }`}
+              >
+                {family.name}
+              </button>
+            )
+          )}
+        </div>
+      </div>
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 overflow-y-auto p-2">
-        {familyUnits.length === 0 && unlinkedPeople.length === 0 ? (
+        {filteredFamilyUnits.length === 0 && filteredUnlinkedPeople.length === 0 ? (
           <p className="text-dark-muted text-sm py-4 text-center">No entities yet.</p>
         ) : (
           <div className="space-y-3">
-            {familyUnits.length > 0 && (
+            {filteredFamilyUnits.length > 0 && (
               <section>
-                <h3 className="text-xs font-medium text-dark-muted uppercase tracking-wide mb-2 px-1">
-                  Family Units
-                </h3>
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <h3 className="text-xs font-medium text-dark-muted uppercase tracking-wide">
+                    Family Units
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={handleCollapseExpandAll}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    {collapseAllActive ? "Expand All" : "Collapse All"}
+                  </button>
+                </div>
                 <div className="space-y-2">
-                  {familyUnits.map((unit) => {
+                  {filteredFamilyUnits.map((unit) => {
                     const [leftId, rightId] = unit.parents;
                     const leftName = getPersonName(nodes, leftId);
                     const rightName = getPersonName(nodes, rightId);
@@ -501,13 +650,13 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
               </section>
             )}
 
-            {unlinkedPeople.length > 0 && (
+            {filteredUnlinkedPeople.length > 0 && (
               <section>
                 <h3 className="text-xs font-medium text-dark-muted uppercase tracking-wide mb-2 px-1">
                   Unlinked
                 </h3>
                 <div className="space-y-1">
-                  {unlinkedPeople.map((node) => {
+                  {filteredUnlinkedPeople.map((node) => {
                     const name = node.data.name || "New Person";
                     return (
                       <div key={node.id}>

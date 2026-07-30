@@ -31,6 +31,7 @@ import {
   getAnchorAtY,
   formatGenerationAnchorLabel,
   getUnionFamilyMemberIds,
+  getFamilyMemberNodeIds,
 } from "../../store/familyTreeStore";
 import PersonNode from "./PersonNode";
 import UnionNode from "./UnionNode";
@@ -39,6 +40,7 @@ import GenerationRuler from "./GenerationRuler";
 import NodeSpacingOverlay from "./NodeSpacingOverlay";
 import ExportGuidesOverlay from "./ExportGuidesOverlay";
 import FamilyTreeLegend from "./FamilyTreeLegend";
+import FamilyTreeFamilyNamePromptModal from "./FamilyTreeFamilyNamePromptModal";
 import Modal from "../ui/Modal";
 
 function ViewportBoundsSync() {
@@ -79,6 +81,32 @@ function ExportViewportRegister() {
     setFitViewForExport(() => fitView);
     return () => setFitViewForExport(null);
   }, [fitView, setFitViewForExport]);
+  return null;
+}
+
+function FamilyFocusController() {
+  const { fitView } = useReactFlow();
+  const pendingFocusFamilyId = useFamilyTreeStore((s) => s.pendingFocusFamilyId);
+  const setPendingFocusFamilyId = useFamilyTreeStore((s) => s.setPendingFocusFamilyId);
+  const families = useFamilyTreeStore((s) => s.families);
+  const nodes = useFamilyTreeStore((s) => s.nodes);
+  const edges = useFamilyTreeStore((s) => s.edges);
+
+  useEffect(() => {
+    if (!pendingFocusFamilyId) return;
+    const family = families.find((f) => f.id === pendingFocusFamilyId);
+    if (!family) {
+      setPendingFocusFamilyId(null);
+      return;
+    }
+    const memberIds = new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
+    const subset = nodes.filter((n) => memberIds.has(n.id)).map((n) => ({ id: n.id }));
+    if (subset.length > 0) {
+      void fitView({ nodes: subset, padding: 0.25, duration: 400 });
+    }
+    setPendingFocusFamilyId(null);
+  }, [pendingFocusFamilyId, families, nodes, edges, fitView, setPendingFocusFamilyId]);
+
   return null;
 }
 
@@ -407,6 +435,28 @@ export default function FamilyTreeCanvas({
     setPendingGenChangePrompt,
     setNodeGenArmed,
   } = useFamilyTreeStore();
+  const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
+  const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
+  const families = useFamilyTreeStore((s) => s.families);
+  const pendingFamilyNamePrompt = useFamilyTreeStore((s) => s.pendingFamilyNamePrompt);
+  const resolveFamilyNamePrompt = useFamilyTreeStore((s) => s.resolveFamilyNamePrompt);
+
+  const visibleNodeIds = useMemo(() => {
+    if (!isolationModeActive || activeFamilyTabId == null) return null;
+    const family = families.find((f) => f.id === activeFamilyTabId);
+    if (!family) return null;
+    return new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
+  }, [isolationModeActive, activeFamilyTabId, families, nodes, edges]);
+
+  const canvasNodes = useMemo(() => {
+    if (!visibleNodeIds) return nodes;
+    return nodes.filter((n) => visibleNodeIds.has(n.id));
+  }, [nodes, visibleNodeIds]);
+
+  const canvasEdges = useMemo(() => {
+    if (!visibleNodeIds) return edges;
+    return edges.filter((e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target));
+  }, [edges, visibleNodeIds]);
 
   const dragStartRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const unionDragGroupRef = useRef<{
@@ -553,15 +603,15 @@ export default function FamilyTreeCanvas({
     return new Set(getUnionFamilyMemberIds(lockedUnion.id, nodes, edges));
   }, [selectedNodeIds, nodes, edges]);
 
-  const nodesWithSelection = nodes.map((n) => ({
+  const nodesWithSelection = canvasNodes.map((n) => ({
     ...n,
     selected: selectedNodeIds.includes(n.id),
     data: { ...n.data, isFamilyLocked: familyLockedMemberIds.has(n.id) },
   }));
 
   const displayEdges = useMemo(() => {
-    const withHandles = assignPartnerHandles(edges, nodes);
-    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+    const withHandles = assignPartnerHandles(canvasEdges, canvasNodes);
+    const nodeById = new Map(canvasNodes.map((n) => [n.id, n]));
     return withHandles.map((edge) => {
       const edgeType = (edge.data as { type?: string })?.type;
       let unionId: string | undefined;
@@ -580,7 +630,7 @@ export default function FamilyTreeCanvas({
         },
       };
     });
-  }, [edges, nodes, connectionStyles]);
+  }, [canvasEdges, canvasNodes, connectionStyles]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -708,6 +758,7 @@ export default function FamilyTreeCanvas({
         />
         <ViewportBoundsSync />
         <ExportViewportRegister />
+        <FamilyFocusController />
         <GenerationAnchorsOverlay />
         <GenerationRuler />
         <NodeSpacingOverlay />
@@ -715,6 +766,10 @@ export default function FamilyTreeCanvas({
         {showLegend && <FamilyTreeLegend />}
         {marqueeToolActive && <MarqueeOverlay isSpacePanning={isSpacePanning} />}
       </ReactFlow>
+      <FamilyTreeFamilyNamePromptModal
+        prompt={pendingFamilyNamePrompt}
+        onResolve={resolveFamilyNamePrompt}
+      />
       <Modal
         isOpen={!!pendingGenChangePrompt}
         onClose={() => resolveGenChangePrompt("cancel")}

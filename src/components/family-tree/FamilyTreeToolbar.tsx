@@ -71,6 +71,7 @@ export default function FamilyTreeToolbar() {
     applyParentAlignment,
     nameRoleSuggestions,
     runNameRoleAnalysis,
+    recomputeFamilies,
     updatePersonNameParts,
     updateUnionPartnerRole,
     flushSaveAndSave,
@@ -119,6 +120,11 @@ export default function FamilyTreeToolbar() {
     const t = setTimeout(() => runNameRoleAnalysis(), 300);
     return () => clearTimeout(t);
   }, [nodes, edges, runNameRoleAnalysis]);
+
+  useEffect(() => {
+    const t = setTimeout(() => recomputeFamilies(), 300);
+    return () => clearTimeout(t);
+  }, [nodes, edges, recomputeFamilies]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -382,6 +388,7 @@ export default function FamilyTreeToolbar() {
   ) => {
     const personNodes = nodes.filter((n) => (n.data as { kind?: string }).kind === "person");
     for (const { s, idx } of toApply) {
+      if (s.field === "unionHealth") continue;
       const resolved = resolvedValues.get(idx) ?? s.proposedValue;
       if (s.field === "firstName") {
         const node = personNodes.find((n) => n.id === s.nodeId);

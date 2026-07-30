@@ -224,6 +224,8 @@ export interface UnionNodeData {
   familyLocked?: boolean;
   /** Per-union arrange overrides: horizontal/vertical spacing and parent alignment relative to child row. */
   arrangeSpacing?: UnionArrangeSpacing;
+  /** Creation timestamp for stable family auto-numbering order. */
+  createdAt?: number;
 }
 
 export type UnionArrangeSpacing = {
@@ -237,12 +239,32 @@ export type UnionArrangeSpacingPatch = Partial<UnionArrangeSpacing>;
 
 export type FamilyTreeNodeData = PersonNodeData | UnionNodeData;
 
+export interface CustomFamilyNameRecord {
+  unionIds: string[];
+  name: string;
+}
+
+export interface FamilyGroup {
+  id: string;
+  unionIds: string[];
+  memberPersonIds: string[];
+  name: string;
+  isCustomName: boolean;
+}
+
+export type FamilyNamePrompt = {
+  kind: "merge" | "split";
+  candidates: { unionIds: string[]; suggestedName: string }[];
+  mergeRecords?: CustomFamilyNameRecord[];
+};
+
 export interface FamilyTreeSavedState {
   nodes: Node<FamilyTreeNodeData>[];
   edges: Edge[];
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
   connectionStyles?: ConnectionStyleDef[];
+  customFamilyNames?: CustomFamilyNameRecord[];
   uiFlags?: { snapToGrid?: boolean; showCoordinates?: boolean };
   ui?: {
     genLabelMode?: "letters" | "numbers" | "both";
@@ -597,10 +619,113 @@ export function getUnionIdsForPerson(personId: string, edges: Edge[]): Set<strin
   return ids;
 }
 
+export interface FamilyComponent {
+  unionIds: string[];
+}
+
+function unionIdsKey(ids: string[]): string {
+  return [...ids].sort().join("\0");
+}
+
+function setsOverlap(a: string[], b: string[]): boolean {
+  const setB = new Set(b);
+  return a.some((id) => setB.has(id));
+}
+
+/** Connected components of unions linked transitively via shared people. */
+export function computeFamilyComponents(
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): FamilyComponent[] {
+  const unionNodes = nodes.filter(
+    (n) => n.type === "union" && (n.data as UnionNodeData).kind === "union"
+  );
+  const unionIds = unionNodes.map((n) => n.id);
+  if (unionIds.length === 0) return [];
+
+  const parent = new Map<string, string>();
+  for (const id of unionIds) parent.set(id, id);
+
+  const find = (x: string): string => {
+    let p = parent.get(x)!;
+    while (true) {
+      const pp = parent.get(p)!;
+      if (p === pp) break;
+      parent.set(p, parent.get(pp)!);
+      p = parent.get(p)!;
+    }
+    parent.set(x, p);
+    return p;
+  };
+
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  const personNodes = nodes.filter((n) => (n.data as PersonNodeData).kind === "person");
+  for (const person of personNodes) {
+    const personUnionIds = Array.from(getUnionIdsForPerson(person.id, edges));
+    for (let i = 1; i < personUnionIds.length; i++) {
+      union(personUnionIds[0]!, personUnionIds[i]!);
+    }
+  }
+
+  const groups = new Map<string, string[]>();
+  for (const id of unionIds) {
+    const root = find(id);
+    const list = groups.get(root) ?? [];
+    list.push(id);
+    groups.set(root, list);
+  }
+
+  return Array.from(groups.values()).map((ids) => ({
+    unionIds: [...ids].sort(),
+  }));
+}
+
+/** All person ids belonging to a family (union members across all unions in the component). */
+export function getFamilyMemberPersonIds(
+  unionIds: string[],
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  const ids = new Set<string>();
+  for (const unionId of unionIds) {
+    for (const personId of getUnionFamilyMemberIds(unionId, nodes, edges)) {
+      ids.add(personId);
+    }
+  }
+  return Array.from(ids);
+}
+
+/** Union nodes + member person nodes for canvas/script filtering. */
+export function getFamilyMemberNodeIds(
+  unionIds: string[],
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  return [...unionIds, ...getFamilyMemberPersonIds(unionIds, nodes, edges)];
+}
+
+export function getUnionCreatedAt(unionId: string, nodes: Node<FamilyTreeNodeData>[]): number {
+  const idx = nodes.findIndex((n) => n.id === unionId);
+  if (idx < 0) return 0;
+  const data = nodes[idx]!.data as UnionNodeData;
+  if (data.createdAt != null) return data.createdAt;
+  return idx;
+}
+
+function getEarliestUnionCreatedAt(unionIds: string[], nodes: Node<FamilyTreeNodeData>[]): number {
+  if (unionIds.length === 0) return 0;
+  return Math.min(...unionIds.map((id) => getUnionCreatedAt(id, nodes)));
+}
+
 /** Suggestion from the name/role analysis engine. Exposed for consent UI. */
 export interface NameRoleSuggestion {
   nodeId: string;
-  field: "firstName" | "role";
+  field: "firstName" | "role" | "unionHealth";
   currentValue: string;
   proposedValue: string;
   reason: string;
@@ -775,6 +900,37 @@ export function analyzeNameAndRoleSuggestions(
           slot,
         });
       }
+    }
+  }
+
+  return suggestions;
+}
+
+/** Flag unions reduced to a single partner with no children for Review Suggestions. */
+export function analyzeDegenerateUnionSuggestions(
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): NameRoleSuggestion[] {
+  const suggestions: NameRoleSuggestion[] = [];
+  const unionNodes = nodes.filter(
+    (n): n is Node<UnionNodeData> =>
+      n.type === "union" && (n.data as UnionNodeData).kind === "union"
+  );
+
+  for (const u of unionNodes) {
+    const d = u.data as UnionNodeData;
+    const partnerIds = (d.partnerIds ?? []).filter((id): id is string => id != null);
+    const childCount = edges.filter((e) => e.source === u.id && isChildEdge(e)).length;
+    if (partnerIds.length === 1 && childCount === 0) {
+      suggestions.push({
+        nodeId: partnerIds[0]!,
+        field: "unionHealth",
+        currentValue: "1 partner, 0 children",
+        proposedValue: "—",
+        reason:
+          "This union has only one partner and no children. Consider adding a partner, adding children, or removing the union.",
+        unionId: u.id,
+      });
     }
   }
 
@@ -1424,6 +1580,22 @@ interface FamilyTreeStore {
   /** When true, the Review names modal is open. Used by Inspector to open it. */
   reviewNamesModalOpen: boolean;
   setReviewNamesModalOpen: (v: boolean) => void;
+  /** Derived connected union groups, recomputed on graph changes. */
+  families: FamilyGroup[];
+  /** Persisted custom names keyed by union-id sets. */
+  customFamilyNames: CustomFamilyNameRecord[];
+  /** null = "All" tab; otherwise family id. */
+  activeFamilyTabId: string | null;
+  isolationModeActive: boolean;
+  /** Set when a family tab is clicked to trigger canvas focus. */
+  pendingFocusFamilyId: string | null;
+  pendingFamilyNamePrompt: FamilyNamePrompt | null;
+  recomputeFamilies: () => void;
+  setActiveFamilyTabId: (id: string | null) => void;
+  setIsolationModeActive: (v: boolean) => void;
+  setPendingFocusFamilyId: (id: string | null) => void;
+  setFamilyCustomName: (familyId: string, name: string) => void;
+  resolveFamilyNamePrompt: (names: string[] | null) => void;
   loadTree: (projectId: string) => Promise<{ hadData: boolean }>;
   saveTree: () => Promise<boolean>;
   flushSaveAndSave: () => Promise<boolean>;
@@ -1468,6 +1640,7 @@ let prevShowGenInheritIndicator: boolean | null = null;
 let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
 let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
+let prevCustomFamilyNamesJson: string | null = null;
 
 function applyNodePositionUpdates(
   get: () => FamilyTreeStore,
@@ -2253,6 +2426,106 @@ function runLayoutImpl(get: () => FamilyTreeStore): boolean {
   return true;
 }
 
+function recomputeFamiliesImpl(
+  get: () => FamilyTreeStore,
+  set: (partial: Partial<FamilyTreeStore> | ((s: FamilyTreeStore) => Partial<FamilyTreeStore>)) => void,
+  options?: { skipPrompt?: boolean }
+) {
+  const s = get();
+  const { nodes, edges, families: prevFamilies, customFamilyNames, pendingFamilyNamePrompt, activeFamilyTabId } = s;
+  const components = computeFamilyComponents(nodes, edges);
+
+  let pendingPrompt: FamilyNamePrompt | null = pendingFamilyNamePrompt;
+  if (!options?.skipPrompt && !pendingPrompt) {
+    for (const record of customFamilyNames) {
+      const matching = components.filter((c) => setsOverlap(record.unionIds, c.unionIds));
+      if (matching.length > 1) {
+        pendingPrompt = {
+          kind: "split",
+          candidates: matching.map((c) => ({
+            unionIds: c.unionIds,
+            suggestedName: record.name,
+          })),
+        };
+        break;
+      }
+    }
+    if (!pendingPrompt) {
+      for (const component of components) {
+        const matchingRecords = customFamilyNames.filter((r) => setsOverlap(r.unionIds, component.unionIds));
+        if (matchingRecords.length > 1) {
+          pendingPrompt = {
+            kind: "merge",
+            candidates: [{ unionIds: component.unionIds, suggestedName: matchingRecords[0]!.name }],
+            mergeRecords: matchingRecords,
+          };
+          break;
+        }
+      }
+    }
+  }
+
+  type DraftFamily = {
+    id: string;
+    unionIds: string[];
+    memberPersonIds: string[];
+    name: string;
+    isCustomName: boolean;
+  };
+
+  const draftFamilies: DraftFamily[] = [];
+
+  for (const component of components) {
+    const memberPersonIds = getFamilyMemberPersonIds(component.unionIds, nodes, edges);
+    const id = unionIdsKey(component.unionIds);
+    const matchingRecords = customFamilyNames.filter((r) => setsOverlap(r.unionIds, component.unionIds));
+
+    let name = "";
+    let isCustomName = false;
+
+    if (!pendingPrompt) {
+      if (matchingRecords.length === 1) {
+        const record = matchingRecords[0]!;
+        if (unionIdsKey(record.unionIds) === id) {
+          name = record.name;
+          isCustomName = true;
+        } else if (record.unionIds.every((uid) => component.unionIds.includes(uid))) {
+          name = record.name;
+          isCustomName = true;
+        }
+      } else if (matchingRecords.length === 0) {
+        const prevMatch = prevFamilies.find((f) => unionIdsKey(f.unionIds) === id);
+        if (prevMatch?.isCustomName) {
+          name = prevMatch.name;
+          isCustomName = true;
+        }
+      }
+    }
+
+    draftFamilies.push({ id, unionIds: component.unionIds, memberPersonIds, name, isCustomName });
+  }
+
+  const autoNamed = draftFamilies.filter((f) => !f.isCustomName);
+  autoNamed.sort(
+    (a, b) => getEarliestUnionCreatedAt(a.unionIds, nodes) - getEarliestUnionCreatedAt(b.unionIds, nodes)
+  );
+  let counter = 1;
+  for (const f of autoNamed) {
+    f.name = `Family ${counter++}`;
+  }
+
+  let newActiveTabId = activeFamilyTabId;
+  if (activeFamilyTabId != null && !draftFamilies.some((f) => f.id === activeFamilyTabId)) {
+    newActiveTabId = null;
+  }
+
+  set({
+    families: draftFamilies,
+    pendingFamilyNamePrompt: pendingPrompt,
+    activeFamilyTabId: newActiveTabId,
+  });
+}
+
 export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   nodes: [],
   edges: [],
@@ -2304,6 +2577,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   exportCaptureFlags: null as { includeNotes: boolean } | null,
   nameRoleSuggestions: [] as NameRoleSuggestion[],
   reviewNamesModalOpen: false,
+  families: [] as FamilyGroup[],
+  customFamilyNames: [] as CustomFamilyNameRecord[],
+  activeFamilyTabId: null as string | null,
+  isolationModeActive: false,
+  pendingFocusFamilyId: null as string | null,
+  pendingFamilyNamePrompt: null as FamilyNamePrompt | null,
 
   setExportViewportEl: (el) => set({ exportViewportEl: el }),
   setFitViewForExport: (fn) => set({ fitViewForExport: fn }),
@@ -2312,9 +2591,70 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   sortUnion: (unionId) => sortUnionImpl(get, unionId),
   runNameRoleAnalysis: () => {
     const s = get();
-    set({ nameRoleSuggestions: analyzeNameAndRoleSuggestions(s.nodes, s.edges) });
+    set({
+      nameRoleSuggestions: [
+        ...analyzeNameAndRoleSuggestions(s.nodes, s.edges),
+        ...analyzeDegenerateUnionSuggestions(s.nodes, s.edges),
+      ],
+    });
   },
   setReviewNamesModalOpen: (v) => set({ reviewNamesModalOpen: v }),
+  recomputeFamilies: () => recomputeFamiliesImpl(get, set),
+  setActiveFamilyTabId: (id) => set({ activeFamilyTabId: id }),
+  setIsolationModeActive: (v) => set({ isolationModeActive: v }),
+  setPendingFocusFamilyId: (id) => set({ pendingFocusFamilyId: id }),
+  setFamilyCustomName: (familyId, name) => {
+    const s = get();
+    const family = s.families.find((f) => f.id === familyId);
+    if (!family) return;
+    const trimmed = name.trim();
+    const newRecords = s.customFamilyNames.filter((r) => !setsOverlap(r.unionIds, family.unionIds));
+    if (trimmed) {
+      newRecords.push({ unionIds: family.unionIds, name: trimmed });
+    }
+    set({ customFamilyNames: newRecords, hasUnsavedChanges: true, lastSaveError: null });
+    recomputeFamiliesImpl(get, set, { skipPrompt: true });
+  },
+  resolveFamilyNamePrompt: (names) => {
+    const s = get();
+    const prompt = s.pendingFamilyNamePrompt;
+    if (!prompt) return;
+
+    let newRecords = [...s.customFamilyNames];
+
+    if (names && names.length === prompt.candidates.length) {
+      const affectedUnionIds = new Set(prompt.candidates.flatMap((c) => c.unionIds));
+      newRecords = newRecords.filter((r) => !r.unionIds.some((id) => affectedUnionIds.has(id)));
+      for (let i = 0; i < prompt.candidates.length; i++) {
+        const trimmed = names[i]?.trim();
+        if (trimmed) {
+          newRecords.push({ unionIds: prompt.candidates[i]!.unionIds, name: trimmed });
+        }
+      }
+    } else {
+      const toRemove = new Set<string>();
+      if (prompt.kind === "split") {
+        for (const record of s.customFamilyNames) {
+          if (prompt.candidates.some((c) => setsOverlap(record.unionIds, c.unionIds))) {
+            toRemove.add(unionIdsKey(record.unionIds));
+          }
+        }
+      } else if (prompt.mergeRecords) {
+        for (const record of prompt.mergeRecords) {
+          toRemove.add(unionIdsKey(record.unionIds));
+        }
+      }
+      newRecords = newRecords.filter((r) => !toRemove.has(unionIdsKey(r.unionIds)));
+    }
+
+    set({
+      customFamilyNames: newRecords,
+      pendingFamilyNamePrompt: null,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    recomputeFamiliesImpl(get, set, { skipPrompt: true });
+  },
   setSnapToGrid: (v) => set({ snapToGrid: v }),
   setShowNodeInfoEnabled: (v) =>
     set({ showNodeInfoEnabled: v, hasUnsavedChanges: true, lastSaveError: null }),
@@ -2775,6 +3115,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         rightPartnerId: rightId,
         notes: "",
         unionType: "forward",
+        createdAt: Date.now(),
       },
     };
 
@@ -2871,6 +3212,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         partnerIds: [null, null],
         notes: "",
         unionType: "backward",
+        createdAt: Date.now(),
       },
     };
 
@@ -3441,6 +3783,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       anchorNodeId: payload?.anchorNodeId ?? null,
       generationAnchors: (payload as { generationAnchors?: GenerationAnchor[] })?.generationAnchors ?? [],
       connectionStyles: payload?.connectionStyles ?? [],
+      customFamilyNames: (payload as { customFamilyNames?: CustomFamilyNameRecord[] })?.customFamilyNames ?? [],
       snapToGrid: payload?.ui?.snapToGrid ?? true,
       genLabelMode:
         (payload?.ui?.genLabelMode === "numbers" || payload?.ui?.genLabelMode === "both"
@@ -3483,8 +3826,13 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       pendingGenChangePrompt: null,
       reviewNamesModalOpen: false,
       editingAnchorIds: [],
+      activeFamilyTabId: null,
+      isolationModeActive: false,
+      pendingFocusFamilyId: null,
+      pendingFamilyNamePrompt: null,
     });
     get().runNameRoleAnalysis();
+    get().recomputeFamilies();
     return { hadData };
   },
 
@@ -3502,6 +3850,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         anchorNodeId: s.anchorNodeId,
         generationAnchors: s.generationAnchors,
         connectionStyles: s.connectionStyles,
+        customFamilyNames: s.customFamilyNames,
         ui: {
           genLabelMode: s.genLabelMode,
           showGenerationAnchors: s.showGenerationAnchors,
@@ -3577,6 +3926,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       edges: [],
       generationAnchors: [],
       connectionStyles: [],
+      customFamilyNames: [],
       editingAnchorIds: [],
       selectedNodeIds: [],
       primarySelectedNodeId: null,
@@ -3587,6 +3937,11 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       pendingGenChangePrompt: null,
       nameRoleSuggestions: [],
       reviewNamesModalOpen: false,
+      families: [],
+      activeFamilyTabId: null,
+      isolationModeActive: false,
+      pendingFocusFamilyId: null,
+      pendingFamilyNamePrompt: null,
     });
     if (pid) {
       const driver = getStorageDriver();
@@ -3598,6 +3953,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         anchorNodeId: null,
         generationAnchors: [],
         connectionStyles: [],
+        customFamilyNames: [],
         ui: {
           genLabelMode: "letters",
           showGenerationAnchors: true,
@@ -3636,7 +3992,8 @@ useFamilyTreeStore.subscribe((state) => {
     state.showGenInheritIndicator !== prevShowGenInheritIndicator ||
     state.genLabelMode !== prevGenLabelMode ||
     JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson ||
-    JSON.stringify(state.connectionStyles) !== prevConnectionStylesJson;
+    JSON.stringify(state.connectionStyles) !== prevConnectionStylesJson ||
+    JSON.stringify(state.customFamilyNames) !== prevCustomFamilyNamesJson;
   prevNodes = state.nodes;
   prevEdges = state.edges;
   prevShowNodeInfoEnabled = state.showNodeInfoEnabled;
@@ -3653,6 +4010,7 @@ useFamilyTreeStore.subscribe((state) => {
   prevGenLabelMode = state.genLabelMode;
   prevGenerationAnchorsJson = JSON.stringify(state.generationAnchors);
   prevConnectionStylesJson = JSON.stringify(state.connectionStyles);
+  prevCustomFamilyNamesJson = JSON.stringify(state.customFamilyNames);
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&
     state.activeProjectId &&

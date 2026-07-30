@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
-import { generateFamilyTreeScript } from "../../store/familyTreeStore";
+import { generateFamilyTreeScript, getFamilyMemberNodeIds } from "../../store/familyTreeStore";
 
 /** Escape string for use in RegExp. */
 function escapeRegex(s: string): string {
@@ -18,6 +18,9 @@ function lineReferencesNode(line: string, nodeId: string): boolean {
 export default function FamilyTreeScriptPane() {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
+  const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
+  const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
+  const families = useFamilyTreeStore((s) => s.families);
   const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
@@ -32,9 +35,22 @@ export default function FamilyTreeScriptPane() {
   const [copied, setCopied] = useState(false);
   const [compactDeclarations, setCompactDeclarations] = useState(false);
 
+  const { scriptNodes, scriptEdges } = useMemo(() => {
+    if (!isolationModeActive || activeFamilyTabId == null) {
+      return { scriptNodes: nodes, scriptEdges: edges };
+    }
+    const family = families.find((f) => f.id === activeFamilyTabId);
+    if (!family) return { scriptNodes: nodes, scriptEdges: edges };
+    const memberIds = new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
+    return {
+      scriptNodes: nodes.filter((n) => memberIds.has(n.id)),
+      scriptEdges: edges.filter((e) => memberIds.has(e.source) && memberIds.has(e.target)),
+    };
+  }, [nodes, edges, isolationModeActive, activeFamilyTabId, families]);
+
   const script = useMemo(
     () =>
-      generateFamilyTreeScript(nodes, edges, {
+      generateFamilyTreeScript(scriptNodes, scriptEdges, {
         compactDeclarations,
         showNodeInfo: showNodeInfoEnabled,
         nodeInfoTopLeft,
@@ -45,7 +61,7 @@ export default function FamilyTreeScriptPane() {
         genLabelMode,
         connectionStyles,
       }),
-    [nodes, edges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById, generationAnchors, genLabelMode, connectionStyles]
+    [scriptNodes, scriptEdges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById, generationAnchors, genLabelMode, connectionStyles]
   );
 
   const scriptLines = useMemo(() => script.split("\n"), [script]);
