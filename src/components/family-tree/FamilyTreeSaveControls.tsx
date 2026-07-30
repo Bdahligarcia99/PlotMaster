@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Button from "../ui/Button";
+import SaveAsSynprojButton from "../project/SaveAsSynprojButton";
 import Modal from "../ui/Modal";
 import {
   getExportGuideScaleSteps,
@@ -233,6 +234,7 @@ export default function FamilyTreeSaveControls() {
         >
           Reload
         </Button>
+        <SaveAsSynprojButton projectId={activeProjectId} projectName="Family Tree" />
         {message && <span className="text-amber-400 text-xs">{message}</span>}
       </div>
 

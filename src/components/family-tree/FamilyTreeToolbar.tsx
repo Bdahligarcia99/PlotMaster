@@ -58,6 +58,8 @@ export default function FamilyTreeToolbar() {
     setShowGenInheritIndicator,
     genAnchorBandOpacity,
     setGenAnchorBandOpacity,
+    genAnchorLineOpacity,
+    setGenAnchorLineOpacity,
     generationAnchors,
     genLabelMode,
     setGenLabelMode,
@@ -733,6 +735,17 @@ export default function FamilyTreeToolbar() {
                   max={100}
                   step={1}
                   onChange={(v) => setGenAnchorBandOpacity(v)}
+                  className="!mb-0"
+                />
+              </div>
+              <div className="px-3 py-2">
+                <label className="block text-dark-muted text-xs mb-2">Line opacity</label>
+                <NumberSlider
+                  value={genAnchorLineOpacity}
+                  min={0}
+                  max={100}
+                  step={1}
+                  onChange={(v) => setGenAnchorLineOpacity(v)}
                   className="!mb-0"
                 />
               </div>

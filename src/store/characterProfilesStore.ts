@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import {
+  isFileBackedProject,
+  loadModulePayloadFromFile,
+  saveModulePayloadToFile,
+} from "../storage/synproj/synprojProjectService";
+import { isCharacterProfilesPayload } from "../storage/synproj/synprojFormat";
 
 const PROFILES_STORAGE_KEY = (projectId: string) =>
   `synapse-iwe:profiles:${projectId}`;
@@ -311,6 +317,7 @@ function saveToStorage(projectId: string, characters: CharacterEntity[]) {
   } catch (e) {
     console.warn("[CharacterProfilesStore] Save failed:", e);
   }
+  void persistProfilesModuleToFile(projectId);
 }
 
 function loadChartSectionLayoutMode(projectId: string): ChartSectionLayoutMode {
@@ -329,6 +336,7 @@ function saveChartSectionLayoutMode(projectId: string, mode: ChartSectionLayoutM
   } catch {
     /* ignore */
   }
+  void persistProfilesModuleToFile(projectId);
 }
 
 function loadTemplatesFromStorage(projectId: string): ChartLayoutTemplate[] {
@@ -349,6 +357,23 @@ function saveTemplatesToStorage(projectId: string, templates: ChartLayoutTemplat
     );
   } catch (e) {
     console.warn("[CharacterProfilesStore] Template save failed:", e);
+  }
+  void persistProfilesModuleToFile(projectId);
+}
+
+async function persistProfilesModuleToFile(projectId: string): Promise<void> {
+  if (!(await isFileBackedProject(projectId))) return;
+  try {
+    const payload = {
+      version: 1 as const,
+      moduleType: "characterProfiles" as const,
+      characters: loadFromStorage(projectId),
+      templates: loadTemplatesFromStorage(projectId),
+      chartSectionLayout: loadChartSectionLayoutMode(projectId),
+    };
+    await saveModulePayloadToFile(projectId, payload);
+  } catch (e) {
+    console.warn("[CharacterProfilesStore] File save failed:", e);
   }
 }
 
@@ -1041,9 +1066,33 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     },
 
     loadCharacters: (projectId) => {
-      const chars = loadFromStorage(projectId);
-      const layoutMode = loadChartSectionLayoutMode(projectId);
-      set({ characters: chars, activeProjectId: projectId, chartSectionLayoutMode: layoutMode });
+      void (async () => {
+        if (await isFileBackedProject(projectId)) {
+          try {
+            const payload = await loadModulePayloadFromFile(projectId);
+            if (payload && isCharacterProfilesPayload(payload)) {
+              try {
+                localStorage.setItem(PROFILES_STORAGE_KEY(projectId), JSON.stringify(payload.characters));
+                localStorage.setItem(TEMPLATES_STORAGE_KEY(projectId), JSON.stringify(payload.templates));
+                if (payload.chartSectionLayout) {
+                  localStorage.setItem(CHART_SECTION_LAYOUT_KEY(projectId), payload.chartSectionLayout);
+                }
+              } catch { /* mirror best-effort */ }
+              set({
+                characters: payload.characters,
+                activeProjectId: projectId,
+                chartSectionLayoutMode: payload.chartSectionLayout ?? "list",
+              });
+              return;
+            }
+          } catch (e) {
+            console.warn("[CharacterProfilesStore] File load failed, using localStorage:", e);
+          }
+        }
+        const chars = loadFromStorage(projectId);
+        const layoutMode = loadChartSectionLayoutMode(projectId);
+        set({ characters: chars, activeProjectId: projectId, chartSectionLayoutMode: layoutMode });
+      })();
     },
 
     addCharacter: (projectId, name) => {

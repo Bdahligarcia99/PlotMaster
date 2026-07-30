@@ -16,6 +16,8 @@
     "core:menu:allow-append",
     "core:menu:allow-items",
     "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "dialog:default",
+    "fs:default"
   ]
 }

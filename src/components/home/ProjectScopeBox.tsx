@@ -13,7 +13,7 @@ type ProjectScopeBoxVariant = "multi" | "quick";
 interface ProjectScopeBoxProps {
   variant: ProjectScopeBoxVariant;
   label: string;
-  onCreate?: (projectName: string, enabledModules: string[]) => void;
+  onCreate?: (projectName: string, enabledModules: string[], storageMode?: "localStorage" | "file") => void;
   /** Optional ref for the Project Name input (e.g. for initial focus in modal) */
   inputRef?: React.RefObject<HTMLInputElement | null>;
   /** When true, this box is expanded (content visible); when false, minimized */
@@ -34,6 +34,7 @@ export default function ProjectScopeBox({
   const [projectName, setProjectName] = useState("");
   const [selectedModules, setSelectedModules] = useState<Set<string>>(new Set());
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [storageMode, setStorageMode] = useState<"localStorage" | "file">("localStorage");
   const inputElRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -71,7 +72,7 @@ export default function ProjectScopeBox({
       const modules = Array.from(selectedModules).filter((id) =>
         CREATEABLE_MODULES.includes(id as (typeof CREATEABLE_MODULES)[number])
       );
-      onCreate?.(projectName.trim(), modules);
+      onCreate?.(projectName.trim(), modules, storageMode);
     }
   };
 
@@ -221,6 +222,34 @@ export default function ProjectScopeBox({
             </p>
           )}
         </div>
+
+        {variant === "multi" && (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-dark-muted">Storage</span>
+            <div className="flex flex-wrap gap-3">
+              <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer">
+                <input
+                  type="radio"
+                  name="storage-mode"
+                  checked={storageMode === "localStorage"}
+                  onChange={() => setStorageMode("localStorage")}
+                  className="text-blue-500 focus:ring-blue-500/50"
+                />
+                Keep in app storage
+              </label>
+              <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer">
+                <input
+                  type="radio"
+                  name="storage-mode"
+                  checked={storageMode === "file"}
+                  onChange={() => setStorageMode("file")}
+                  className="text-blue-500 focus:ring-blue-500/50"
+                />
+                Save to a .synproj file
+              </label>
+            </div>
+          </div>
+        )}
 
         {/* Module tiles grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

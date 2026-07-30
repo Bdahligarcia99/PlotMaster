@@ -1,5 +1,7 @@
 import type { Node, Edge } from "reactflow";
 import type { ConnectionStyleDef } from "../store/familyTreeStore";
+import { resolveFileRefForProject } from "./synproj/synprojProjectService";
+import { FileBackedStorageDriver } from "./synproj/FileBackedStorageDriver";
 
 /** Module types for project index. */
 export type ProjectModuleType =
@@ -15,6 +17,10 @@ export interface ProjectIndexItem {
   moduleType: ProjectModuleType;
   createdAt: number;
   updatedAt: number;
+  /** When "file", module data is stored in a .synproj file at fileRef. */
+  storageMode?: "localStorage" | "file";
+  /** Path (Tauri) or web handle token for the .synproj file. */
+  fileRef?: string;
 }
 
 /** Family tree UI flags. */
@@ -39,6 +45,7 @@ export interface FamilyTreeUIFlags {
   showGenerationAnchors?: boolean;
   showGenInheritIndicator?: boolean;
   genAnchorBandOpacity?: number;
+  genAnchorLineOpacity?: number;
   defaultUnionType?: "forward" | "backward";
 }
 
@@ -60,7 +67,7 @@ export interface ProjectPayload {
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
   connectionStyles?: ConnectionStyleDef[];
-  customFamilyNames?: { unionIds: string[]; name: string }[];
+  customFamilyNames?: { unionIds: string[]; name: string; description?: string }[];
   ui?: FamilyTreeUIFlags;
 }
 
@@ -149,7 +156,7 @@ export interface StorageDriver {
   createProject(item: ProjectIndexItem): Promise<void>;
   updateProjectMeta(
     projectId: string,
-    patch: Partial<Pick<ProjectIndexItem, "name" | "updatedAt">>
+    patch: Partial<Pick<ProjectIndexItem, "name" | "updatedAt" | "storageMode" | "fileRef">>
   ): Promise<void>;
   saveProjectData(projectId: string, payload: ProjectData): Promise<void>;
   loadProjectData(projectId: string): Promise<ProjectData | null>;
@@ -181,7 +188,7 @@ class LocalStorageDriver implements StorageDriver {
 
   async updateProjectMeta(
     projectId: string,
-    patch: Partial<Pick<ProjectIndexItem, "name" | "updatedAt">>
+    patch: Partial<Pick<ProjectIndexItem, "name" | "updatedAt" | "storageMode" | "fileRef">>
   ): Promise<void> {
     const list = await this.listProjects();
     const idx = list.findIndex((p) => p.id === projectId);
@@ -224,10 +231,53 @@ class LocalStorageDriver implements StorageDriver {
   }
 }
 
+/** Delegates to file-backed or localStorage driver per project. */
+class HybridStorageDriver implements StorageDriver {
+  private local = new LocalStorageDriver();
+  private file = new FileBackedStorageDriver();
+
+  private async isFileBacked(projectId: string): Promise<boolean> {
+    return (await resolveFileRefForProject(projectId)) != null;
+  }
+
+  listProjects(): Promise<ProjectIndexItem[]> {
+    return this.local.listProjects();
+  }
+
+  createProject(item: ProjectIndexItem): Promise<void> {
+    return this.local.createProject(item);
+  }
+
+  updateProjectMeta(
+    projectId: string,
+    patch: Partial<Pick<ProjectIndexItem, "name" | "updatedAt" | "storageMode" | "fileRef">>
+  ): Promise<void> {
+    return this.local.updateProjectMeta(projectId, patch);
+  }
+
+  async saveProjectData(projectId: string, payload: ProjectData): Promise<void> {
+    if (await this.isFileBacked(projectId)) {
+      return this.file.saveProjectData(projectId, payload);
+    }
+    return this.local.saveProjectData(projectId, payload);
+  }
+
+  async loadProjectData(projectId: string): Promise<ProjectData | null> {
+    if (await this.isFileBacked(projectId)) {
+      return this.file.loadProjectData(projectId);
+    }
+    return this.local.loadProjectData(projectId);
+  }
+
+  deleteProject(projectId: string): Promise<void> {
+    return this.local.deleteProject(projectId);
+  }
+}
+
 let driver: StorageDriver | null = null;
 
-/** Get the storage driver (LocalStorage for now, Tauri-ready later). */
+/** Get the storage driver (Hybrid: localStorage + .synproj file-backed). */
 export function getStorageDriver(): StorageDriver {
-  if (!driver) driver = new LocalStorageDriver();
+  if (!driver) driver = new HybridStorageDriver();
   return driver;
 }

@@ -2,6 +2,8 @@
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_clipboard_manager::init())
+    .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_fs::init())
     .invoke_handler(tauri::generate_handler![consolidate_windows])
     .setup(|app| {
       if cfg!(debug_assertions) {

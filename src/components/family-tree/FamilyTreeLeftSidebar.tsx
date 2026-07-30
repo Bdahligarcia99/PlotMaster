@@ -85,7 +85,7 @@ function getDisplayName(
   return `${leftName} ↔ ${rightName}`;
 }
 
-export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: FamilyTreeLeftSidebarProps) {
+export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSidebarProps) {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
@@ -98,12 +98,10 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
   const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
   const setIsolationModeActive = useFamilyTreeStore((s) => s.setIsolationModeActive);
   const setPendingFocusFamilyId = useFamilyTreeStore((s) => s.setPendingFocusFamilyId);
-  const setFamilyCustomName = useFamilyTreeStore((s) => s.setFamilyCustomName);
+  const setInspectorFamilyId = useFamilyTreeStore((s) => s.setInspectorFamilyId);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
-  const [editingFamilyId, setEditingFamilyId] = useState<string | null>(null);
-  const [draftFamilyName, setDraftFamilyName] = useState("");
   const [draftName, setDraftName] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [collapseAllActive, setCollapseAllActive] = useState(false);
@@ -241,20 +239,13 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
     }
   };
 
-  const startEditingFamily = (e: React.MouseEvent, familyId: string, currentName: string) => {
+  const handleFamilyTabDoubleClick = (e: React.MouseEvent, familyId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setEditingFamilyId(familyId);
-    setDraftFamilyName(currentName);
-  };
-
-  const saveFamilyName = (familyId: string) => {
-    setFamilyCustomName(familyId, draftFamilyName);
-    setEditingFamilyId(null);
-  };
-
-  const cancelFamilyEditing = () => {
-    setEditingFamilyId(null);
+    setActiveFamilyTabId(familyId);
+    setPendingFocusFamilyId(familyId);
+    setInspectorFamilyId(familyId);
+    onSelectNode?.();
   };
 
   const handleEntityClick = (e: React.MouseEvent, id: string) => {
@@ -376,30 +367,15 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
           >
             All
           </button>
-          {families.map((family) =>
-            editingFamilyId === family.id ? (
-              <input
-                key={family.id}
-                type="text"
-                value={draftFamilyName}
-                autoFocus
-                onChange={(e) => setDraftFamilyName(e.target.value)}
-                onBlur={() => saveFamilyName(family.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveFamilyName(family.id);
-                  if (e.key === "Escape") cancelFamilyEditing();
-                }}
-                className="flex-shrink-0 w-24 px-2 py-1 text-xs bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none"
-              />
-            ) : (
+          {families.map((family) => (
               <button
                 key={family.id}
                 type="button"
                 role="tab"
                 aria-selected={activeFamilyTabId === family.id}
                 onClick={() => handleFamilyTabClick(family.id)}
-                onDoubleClick={(e) => startEditingFamily(e, family.id, family.name)}
-                title="Double-click to rename"
+                onDoubleClick={(e) => handleFamilyTabDoubleClick(e, family.id)}
+                title="Double-click to open in Inspector"
                 className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   activeFamilyTabId === family.id
                     ? "bg-dark-accent text-dark-text"
@@ -408,8 +384,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode: _onSelectNode }: F
               >
                 {family.name}
               </button>
-            )
-          )}
+            ))}
         </div>
       </div>
       <div className="flex-1 min-h-0 flex flex-col">

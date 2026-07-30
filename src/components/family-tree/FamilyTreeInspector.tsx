@@ -9,10 +9,17 @@ import {
   useDraggable,
   useDroppable,
 } from "@dnd-kit/core";
-import { useFamilyTreeStore, resolveUnionConnectionStyle } from "../../store/familyTreeStore";
-import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import type { ParentRole } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, getPersonNameParts, getUnionIdsForPerson, isChildEdge } from "../../store/familyTreeStore";
+import {
+  useFamilyTreeStore,
+  resolveUnionConnectionStyle,
+  getConnectionStyleName,
+  formatGenerationAnchorLabel,
+  getPersonDisplayName,
+  getPersonNameParts,
+  getUnionIdsForPerson,
+  isChildEdge,
+} from "../../store/familyTreeStore";
+import type { PersonNodeData, UnionNodeData, ParentRole } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
 
 function ParentsSection({
@@ -706,8 +713,32 @@ export default function FamilyTreeInspector() {
     setReviewNamesModalOpen,
   } = useFamilyTreeStore();
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
+  const families = useFamilyTreeStore((s) => s.families);
+  const inspectorFamilyId = useFamilyTreeStore((s) => s.inspectorFamilyId);
+  const setFamilyCustomName = useFamilyTreeStore((s) => s.setFamilyCustomName);
+  const setFamilyDescription = useFamilyTreeStore((s) => s.setFamilyDescription);
 
-  const selectedNode = primarySelectedNodeId
+  const inspectorFamily = inspectorFamilyId
+    ? families.find((f) => f.id === inspectorFamilyId)
+    : null;
+
+  const [familyNameDraft, setFamilyNameDraft] = useState("");
+  const [familyDescriptionDraft, setFamilyDescriptionDraft] = useState("");
+  const familyNameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (inspectorFamily) {
+      setFamilyNameDraft(inspectorFamily.name);
+      setFamilyDescriptionDraft(inspectorFamily.description ?? "");
+      const t = setTimeout(() => {
+        familyNameRef.current?.focus();
+        familyNameRef.current?.select();
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [inspectorFamily?.id, inspectorFamily?.name, inspectorFamily?.description]);
+
+  const selectedNode = !inspectorFamily && primarySelectedNodeId
     ? nodes.find((n) => n.id === primarySelectedNodeId)
     : null;
 
@@ -764,6 +795,99 @@ export default function FamilyTreeInspector() {
     const nextIndex = shift ? (index - 1 + n) % n : (index + 1) % n;
     refs[nextIndex]?.current?.focus();
   };
+
+  if (inspectorFamily) {
+    const styleCounts = new Map<string, number>();
+    for (const unionId of inspectorFamily.unionIds) {
+      const unionNode = nodes.find((n) => n.id === unionId);
+      if (!unionNode || (unionNode.data as { kind?: string }).kind !== "union") continue;
+      const styleName = getConnectionStyleName(unionNode.data as UnionNodeData, connectionStyles);
+      styleCounts.set(styleName, (styleCounts.get(styleName) ?? 0) + 1);
+    }
+
+    const anchorIndices: number[] = [];
+    for (const personId of inspectorFamily.memberPersonIds) {
+      const personNode = nodes.find((n) => n.id === personId);
+      if (!personNode || (personNode.data as { kind?: string }).kind !== "person") continue;
+      const genAnchorId = (personNode.data as PersonNodeData).genAnchorId;
+      if (!genAnchorId) continue;
+      const anchor = generationAnchors.find((a) => a.id === genAnchorId);
+      if (anchor != null) anchorIndices.push(anchor.index);
+    }
+    let genRangeLabel = "—";
+    if (anchorIndices.length > 0) {
+      const minIdx = Math.min(...anchorIndices);
+      const maxIdx = Math.max(...anchorIndices);
+      const minAnchor = generationAnchors.find((a) => a.index === minIdx);
+      const maxAnchor = generationAnchors.find((a) => a.index === maxIdx);
+      if (minAnchor && maxAnchor) {
+        const minLabel = formatGenerationAnchorLabel(minAnchor, genLabelMode);
+        const maxLabel = formatGenerationAnchorLabel(maxAnchor, genLabelMode);
+        genRangeLabel = minIdx === maxIdx ? minLabel : `${minLabel} to ${maxLabel}`;
+      }
+    }
+
+    return (
+      <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
+        <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide mb-3">
+          Inspector — Family
+        </h3>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-2">Name</label>
+          <input
+            ref={familyNameRef}
+            type="text"
+            value={familyNameDraft}
+            onChange={(e) => setFamilyNameDraft(e.target.value)}
+            onBlur={() => setFamilyCustomName(inspectorFamily.id, familyNameDraft)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setFamilyCustomName(inspectorFamily.id, familyNameDraft);
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-2">Description</label>
+          <textarea
+            value={familyDescriptionDraft}
+            onChange={(e) => setFamilyDescriptionDraft(e.target.value)}
+            onBlur={() => setFamilyDescription(inspectorFamily.id, familyDescriptionDraft)}
+            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm resize-y min-h-[80px] focus:outline-none focus:border-blue-500"
+            placeholder="Family description..."
+          />
+        </div>
+        <div className="mb-3">
+          <label className="block text-dark-muted text-sm mb-1">Gen Range</label>
+          <div className="text-dark-text text-sm">{genRangeLabel}</div>
+        </div>
+        <div className="mb-3">
+          <label className="block text-dark-muted text-sm mb-1">Number of Unions</label>
+          <div className="text-dark-text text-sm">{inspectorFamily.unionIds.length}</div>
+        </div>
+        <div className="mb-3">
+          <label className="block text-dark-muted text-sm mb-1">Number of family members</label>
+          <div className="text-dark-text text-sm">{inspectorFamily.memberPersonIds.length}</div>
+        </div>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-2">Connection styles present</label>
+          {styleCounts.size === 0 ? (
+            <div className="text-dark-muted text-sm">—</div>
+          ) : (
+            <ul className="text-dark-text text-sm space-y-1">
+              {[...styleCounts.entries()].map(([name, count]) => (
+                <li key={name}>
+                  {name}: {count}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (!selectedNode) {
     return (
@@ -969,10 +1093,7 @@ export default function FamilyTreeInspector() {
           {(() => {
             const unionData = nodeData as UnionNodeData;
             const effectiveStyle = resolveUnionConnectionStyle(unionData, connectionStyles);
-            const libraryStyle = unionData.connectionStyleId
-              ? connectionStyles.find((s) => s.id === unionData.connectionStyleId)
-              : undefined;
-            const styleName = unionData.connectionStyleOverride ? "Custom" : libraryStyle?.name ?? "Default";
+            const styleName = getConnectionStyleName(unionData, connectionStyles);
             if (!effectiveStyle.description && styleName === "Default") return null;
             return (
               <div className="mb-4">

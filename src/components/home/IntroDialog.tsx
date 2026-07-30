@@ -9,7 +9,13 @@ import type { ProjectIndexItem } from "../../storage/StorageDriver";
 import { createProject, createTimelineProject } from "../../home/createProject";
 import { MODULE_ID_TO_TYPE } from "../../home/moduleRegistry";
 import { getModuleRoute, moduleIdToTypeName } from "../../home/moduleRoutes";
-import { useAppStore } from "../../store/appStore";
+import { getSynprojFileIO } from "../../storage/synproj/synprojFileIO";
+import {
+  initializeFileBackedModularProject,
+  initializeFileBackedStandaloneProject,
+  registerProjectFileRef,
+} from "../../storage/synproj/synprojProjectService";
+import { useAppStore, type Project } from "../../store/appStore";
 import {
   isTauri,
   openProjectInNewWindow,
@@ -123,9 +129,24 @@ export default function IntroDialog({
     }
   };
 
-  const handleCreateProject = async (projectName: string, enabledModules: string[]) => {
+  const handleCreateProject = async (
+    projectName: string,
+    enabledModules: string[],
+    storageMode: "localStorage" | "file" = "localStorage"
+  ) => {
     const name = projectName.trim();
     if (!name || enabledModules.length === 0) return;
+
+    let fileRef: string | null = null;
+    if (storageMode === "file") {
+      try {
+        fileRef = await getSynprojFileIO().pickSaveLocation(name);
+        if (!fileRef) return;
+      } catch (e) {
+        console.error("[IntroDialog] File picker failed:", e);
+        return;
+      }
+    }
 
     refreshProjects();
     setIntroDialogOpen(false);
@@ -134,15 +155,33 @@ export default function IntroDialog({
     if (enabledModules.length === 1) {
       if (enabledModules[0] === "familyTree") {
         const id = await createProject(name, ["familyTree"]);
+        if (fileRef) {
+          const driver = getStorageDriver();
+          await driver.updateProjectMeta(id, { storageMode: "file", fileRef });
+          registerProjectFileRef(id, fileRef);
+          await initializeFileBackedStandaloneProject(id, name, "familyTree", fileRef);
+        }
         openInNewWindow(`/family-tree/${id}`);
       } else if (enabledModules[0] === "characters") {
         const id = createStandaloneProject(name, "Profiles");
+        if (fileRef) {
+          await initializeFileBackedStandaloneProject(id, name, "Profiles", fileRef);
+        }
         openInNewWindow(`/project/${id}`);
       } else if (enabledModules[0] === "timeline") {
         const id = await createTimelineProject(name);
+        if (fileRef) {
+          const driver = getStorageDriver();
+          await driver.updateProjectMeta(id, { storageMode: "file", fileRef });
+          registerProjectFileRef(id, fileRef);
+          await initializeFileBackedStandaloneProject(id, name, "timeline", fileRef);
+        }
         openInNewWindow(`/timeline/${id}`);
       } else if (enabledModules[0] === "ideaPlayground") {
         const id = createStandaloneProject(name, "Ideas");
+        if (fileRef) {
+          await initializeFileBackedStandaloneProject(id, name, "Ideas", fileRef);
+        }
         openInNewWindow(`/project/${id}`);
       }
     } else {
@@ -162,7 +201,20 @@ export default function IntroDialog({
         }
       }
 
-      createModularProject(name, moduleNames, subProjects);
+      const modularId = createModularProject(name, moduleNames, subProjects);
+
+      if (fileRef) {
+        const modularProject: Project = {
+          id: modularId,
+          name,
+          enabledModules: moduleNames,
+          subProjects,
+          lastOpened: Date.now(),
+          storageMode: "file",
+          fileRef,
+        };
+        await initializeFileBackedModularProject(modularProject, fileRef);
+      }
 
       const firstModuleId = enabledModules[0];
       const firstTypeName = MODULE_ID_TO_TYPE[firstModuleId] ?? moduleIdToTypeName(firstModuleId);

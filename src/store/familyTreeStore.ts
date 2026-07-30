@@ -205,6 +205,19 @@ export function resolveUnionConnectionStyle(
   return DEFAULT_CONNECTION_STYLE;
 }
 
+/** Resolve the display name for a union's connection style. */
+export function getConnectionStyleName(
+  data: Pick<UnionNodeData, "connectionStyleId" | "connectionStyleOverride">,
+  connectionStyles: ConnectionStyleDef[]
+): string {
+  if (data.connectionStyleOverride) return "Custom";
+  if (data.connectionStyleId) {
+    const found = connectionStyles.find((s) => s.id === data.connectionStyleId);
+    if (found) return found.name;
+  }
+  return "Default";
+}
+
 export interface UnionNodeData {
   kind: "union";
   partnerIds: [string | null, string | null]; // Parent IDs; null = slot not yet filled (backward union in progress)
@@ -242,6 +255,7 @@ export type FamilyTreeNodeData = PersonNodeData | UnionNodeData;
 export interface CustomFamilyNameRecord {
   unionIds: string[];
   name: string;
+  description?: string;
 }
 
 export interface FamilyGroup {
@@ -250,6 +264,7 @@ export interface FamilyGroup {
   memberPersonIds: string[];
   name: string;
   isCustomName: boolean;
+  description: string;
 }
 
 export type FamilyNamePrompt = {
@@ -282,6 +297,7 @@ export interface FamilyTreeSavedState {
     showGenerationAnchors?: boolean;
     showGenInheritIndicator?: boolean;
     genAnchorBandOpacity?: number;
+    genAnchorLineOpacity?: number;
   };
 }
 
@@ -1474,6 +1490,8 @@ interface FamilyTreeStore {
   showGenInheritIndicator: boolean;
   /** Opacity (0-100) of the generation anchor band tint on the canvas. */
   genAnchorBandOpacity: number;
+  /** Opacity (0-100) of the generation anchor dividing lines on the canvas. */
+  genAnchorLineOpacity: number;
   generationAnchors: GenerationAnchor[];
   connectionStyles: ConnectionStyleDef[];
   /** Anchor ids in edit mode (draggable, capture input). Confirmed anchors pass input through. */
@@ -1524,6 +1542,7 @@ interface FamilyTreeStore {
   setShowGenerationAnchors: (v: boolean) => void;
   setShowGenInheritIndicator: (v: boolean) => void;
   setGenAnchorBandOpacity: (v: number) => void;
+  setGenAnchorLineOpacity: (v: number) => void;
   addGenerationAnchor: () => void;
   enterAnchorEditMode: (anchorId: string) => void;
   confirmAnchor: (anchorId: string) => void;
@@ -1594,11 +1613,15 @@ interface FamilyTreeStore {
   /** Set when a family tab is clicked to trigger canvas focus. */
   pendingFocusFamilyId: string | null;
   pendingFamilyNamePrompt: FamilyNamePrompt | null;
+  /** When set, Inspector shows family-level properties instead of node properties. */
+  inspectorFamilyId: string | null;
   recomputeFamilies: () => void;
   setActiveFamilyTabId: (id: string | null) => void;
   setIsolationModeActive: (v: boolean) => void;
   setPendingFocusFamilyId: (id: string | null) => void;
+  setInspectorFamilyId: (id: string | null) => void;
   setFamilyCustomName: (familyId: string, name: string) => void;
+  setFamilyDescription: (familyId: string, description: string) => void;
   resolveFamilyNamePrompt: (names: string[] | null) => void;
   loadTree: (projectId: string) => Promise<{ hadData: boolean }>;
   saveTree: () => Promise<boolean>;
@@ -1642,6 +1665,7 @@ let prevScriptPanelLayout: "split" | "codeOnly" | "viewOnly" | null = null;
 let prevShowGenerationAnchors: boolean | null = null;
 let prevShowGenInheritIndicator: boolean | null = null;
 let prevGenAnchorBandOpacity: number | null = null;
+let prevGenAnchorLineOpacity: number | null = null;
 let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
 let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
@@ -2476,6 +2500,7 @@ function recomputeFamiliesImpl(
     memberPersonIds: string[];
     name: string;
     isCustomName: boolean;
+    description: string;
   };
 
   const draftFamilies: DraftFamily[] = [];
@@ -2487,6 +2512,7 @@ function recomputeFamiliesImpl(
 
     let name = "";
     let isCustomName = false;
+    let description = "";
 
     if (!pendingPrompt) {
       if (matchingRecords.length === 1) {
@@ -2494,9 +2520,11 @@ function recomputeFamiliesImpl(
         if (unionIdsKey(record.unionIds) === id) {
           name = record.name;
           isCustomName = true;
+          description = record.description ?? "";
         } else if (record.unionIds.every((uid) => component.unionIds.includes(uid))) {
           name = record.name;
           isCustomName = true;
+          description = record.description ?? "";
         }
       } else if (matchingRecords.length === 0) {
         const prevMatch = prevFamilies.find((f) => unionIdsKey(f.unionIds) === id);
@@ -2504,10 +2532,14 @@ function recomputeFamiliesImpl(
           name = prevMatch.name;
           isCustomName = true;
         }
+        if (prevMatch) {
+          description = prevMatch.description ?? "";
+        }
       }
+      // merge (matchingRecords.length > 1): name via prompt; description stays blank
     }
 
-    draftFamilies.push({ id, unionIds: component.unionIds, memberPersonIds, name, isCustomName });
+    draftFamilies.push({ id, unionIds: component.unionIds, memberPersonIds, name, isCustomName, description });
   }
 
   const autoNamed = draftFamilies.filter((f) => !f.isCustomName);
@@ -2554,6 +2586,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   showGenerationAnchors: true,
   showGenInheritIndicator: true,
   genAnchorBandOpacity: 6,
+  genAnchorLineOpacity: 35,
   generationAnchors: [],
   connectionStyles: [],
   editingAnchorIds: [] as string[],
@@ -2589,6 +2622,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   isolationModeActive: false,
   pendingFocusFamilyId: null as string | null,
   pendingFamilyNamePrompt: null as FamilyNamePrompt | null,
+  inspectorFamilyId: null as string | null,
 
   setExportViewportEl: (el) => set({ exportViewportEl: el }),
   setFitViewForExport: (fn) => set({ fitViewForExport: fn }),
@@ -2609,15 +2643,35 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setActiveFamilyTabId: (id) => set({ activeFamilyTabId: id }),
   setIsolationModeActive: (v) => set({ isolationModeActive: v }),
   setPendingFocusFamilyId: (id) => set({ pendingFocusFamilyId: id }),
+  setInspectorFamilyId: (id) => set({ inspectorFamilyId: id }),
   setFamilyCustomName: (familyId, name) => {
     const s = get();
     const family = s.families.find((f) => f.id === familyId);
     if (!family) return;
     const trimmed = name.trim();
+    const existing = s.customFamilyNames.find((r) => setsOverlap(r.unionIds, family.unionIds));
     const newRecords = s.customFamilyNames.filter((r) => !setsOverlap(r.unionIds, family.unionIds));
     if (trimmed) {
-      newRecords.push({ unionIds: family.unionIds, name: trimmed });
+      newRecords.push({
+        unionIds: family.unionIds,
+        name: trimmed,
+        description: existing?.description ?? family.description ?? "",
+      });
     }
+    set({ customFamilyNames: newRecords, hasUnsavedChanges: true, lastSaveError: null });
+    recomputeFamiliesImpl(get, set, { skipPrompt: true });
+  },
+  setFamilyDescription: (familyId, description) => {
+    const s = get();
+    const family = s.families.find((f) => f.id === familyId);
+    if (!family) return;
+    const existing = s.customFamilyNames.find((r) => setsOverlap(r.unionIds, family.unionIds));
+    const newRecords = s.customFamilyNames.filter((r) => !setsOverlap(r.unionIds, family.unionIds));
+    newRecords.push({
+      unionIds: family.unionIds,
+      name: existing?.name ?? family.name,
+      description,
+    });
     set({ customFamilyNames: newRecords, hasUnsavedChanges: true, lastSaveError: null });
     recomputeFamiliesImpl(get, set, { skipPrompt: true });
   },
@@ -2656,6 +2710,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     set({
       customFamilyNames: newRecords,
       pendingFamilyNamePrompt: null,
+      inspectorFamilyId: null,
       hasUnsavedChanges: true,
       lastSaveError: null,
     });
@@ -2695,6 +2750,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     set({ showGenInheritIndicator: v, hasUnsavedChanges: true, lastSaveError: null }),
   setGenAnchorBandOpacity: (v) =>
     set({ genAnchorBandOpacity: Math.min(100, Math.max(0, v)), hasUnsavedChanges: true, lastSaveError: null }),
+  setGenAnchorLineOpacity: (v) =>
+    set({ genAnchorLineOpacity: Math.min(100, Math.max(0, v)), hasUnsavedChanges: true, lastSaveError: null }),
   addGenerationAnchor: () =>
     set((s) => {
       const DEFAULT_HEIGHT = 224;
@@ -3121,6 +3178,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         partnerIds: [idA, idB],
         leftPartnerId: leftId,
         rightPartnerId: rightId,
+        leftPartnerRole: leftId === idA ? "father" : "mother",
+        rightPartnerRole: rightId === idA ? "father" : "mother",
         notes: "",
         unionType: "forward",
         createdAt: Date.now(),
@@ -3270,6 +3329,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     };
 
     const idx = partnerIds[0] == null ? 0 : 1;
+    const role: ParentRole = idx === 0 ? "father" : "mother";
     const newPartnerIds: [string | null, string | null] = [...partnerIds];
     newPartnerIds[idx] = parentId;
 
@@ -3286,11 +3346,23 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const rightId = newPartnerIds[1];
     const leftPartnerId = leftId ?? undefined;
     const rightPartnerId = rightId ?? undefined;
+    const newLeftPartnerRole = idx === 0 ? role : unionData.leftPartnerRole;
+    const newRightPartnerRole = idx === 1 ? role : unionData.rightPartnerRole;
 
     set((s) => ({
       nodes: s.nodes.map((n) =>
         n.id === unionNodeId
-          ? { ...n, data: { ...unionData, partnerIds: newPartnerIds, leftPartnerId, rightPartnerId } }
+          ? {
+              ...n,
+              data: {
+                ...unionData,
+                partnerIds: newPartnerIds,
+                leftPartnerId,
+                rightPartnerId,
+                leftPartnerRole: newLeftPartnerRole,
+                rightPartnerRole: newRightPartnerRole,
+              },
+            }
           : n
       ).concat(newPersonNode),
       edges: [...s.edges, partnerEdge],
@@ -3821,6 +3893,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       showGenerationAnchors: payload?.ui?.showGenerationAnchors ?? true,
       showGenInheritIndicator: payload?.ui?.showGenInheritIndicator ?? true,
       genAnchorBandOpacity: payload?.ui?.genAnchorBandOpacity ?? 6,
+      genAnchorLineOpacity: payload?.ui?.genAnchorLineOpacity ?? 35,
       defaultUnionType:
         (payload?.ui?.defaultUnionType === "forward" || payload?.ui?.defaultUnionType === "backward")
           ? payload.ui.defaultUnionType
@@ -3839,6 +3912,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       isolationModeActive: false,
       pendingFocusFamilyId: null,
       pendingFamilyNamePrompt: null,
+      inspectorFamilyId: null,
     });
     get().runNameRoleAnalysis();
     get().recomputeFamilies();
@@ -3865,6 +3939,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           showGenerationAnchors: s.showGenerationAnchors,
           showGenInheritIndicator: s.showGenInheritIndicator,
           genAnchorBandOpacity: s.genAnchorBandOpacity,
+          genAnchorLineOpacity: s.genAnchorLineOpacity,
           snapToGrid: s.snapToGrid,
           showNodeInfoEnabled: s.showNodeInfoEnabled,
           nodeInfoTopLeft: s.nodeInfoTopLeft,
@@ -3952,6 +4027,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       isolationModeActive: false,
       pendingFocusFamilyId: null,
       pendingFamilyNamePrompt: null,
+      inspectorFamilyId: null,
     });
     if (pid) {
       const driver = getStorageDriver();
@@ -3969,6 +4045,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           showGenerationAnchors: true,
           showGenInheritIndicator: true,
           genAnchorBandOpacity: 6,
+          genAnchorLineOpacity: 35,
           snapToGrid: true,
           showNodeInfoEnabled: false,
           nodeInfoTopLeft: true,
@@ -4002,6 +4079,7 @@ useFamilyTreeStore.subscribe((state) => {
     state.showGenerationAnchors !== prevShowGenerationAnchors ||
     state.showGenInheritIndicator !== prevShowGenInheritIndicator ||
     state.genAnchorBandOpacity !== prevGenAnchorBandOpacity ||
+    state.genAnchorLineOpacity !== prevGenAnchorLineOpacity ||
     state.genLabelMode !== prevGenLabelMode ||
     JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson ||
     JSON.stringify(state.connectionStyles) !== prevConnectionStylesJson ||
@@ -4020,6 +4098,7 @@ useFamilyTreeStore.subscribe((state) => {
   prevShowGenerationAnchors = state.showGenerationAnchors;
   prevShowGenInheritIndicator = state.showGenInheritIndicator;
   prevGenAnchorBandOpacity = state.genAnchorBandOpacity;
+  prevGenAnchorLineOpacity = state.genAnchorLineOpacity;
   prevGenLabelMode = state.genLabelMode;
   prevGenerationAnchorsJson = JSON.stringify(state.generationAnchors);
   prevConnectionStylesJson = JSON.stringify(state.connectionStyles);

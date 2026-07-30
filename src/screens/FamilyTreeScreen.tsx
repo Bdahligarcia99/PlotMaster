@@ -38,13 +38,20 @@ export default function FamilyTreeScreen() {
   const loadTree = useFamilyTreeStore((s) => s.loadTree);
   const marqueeToolActive = useFamilyTreeStore((s) => s.marqueeToolActive);
   const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
+  const inspectorFamilyId = useFamilyTreeStore((s) => s.inspectorFamilyId);
+  const setInspectorFamilyId = useFamilyTreeStore((s) => s.setInspectorFamilyId);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
   const isSpacePanning = useFamilyTreeStore((s) => s.isSpacePanning);
 
-  // Close properties pane when the selected node is deselected
+  // Close Inspector when neither a node nor a family is selected
   useEffect(() => {
-    if (!primarySelectedNodeId) setInspectorOpen(false);
-  }, [primarySelectedNodeId]);
+    if (!primarySelectedNodeId && !inspectorFamilyId) setInspectorOpen(false);
+  }, [primarySelectedNodeId, inspectorFamilyId]);
+
+  // Node selection clears family inspector target
+  useEffect(() => {
+    if (primarySelectedNodeId) setInspectorFamilyId(null);
+  }, [primarySelectedNodeId, setInspectorFamilyId]);
 
   useWindowTitle(projectName ? `${projectName} - Synapse IWE` : "Synapse IWE");
 

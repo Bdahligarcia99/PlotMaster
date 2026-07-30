@@ -11,6 +11,8 @@ export interface Project {
   /** Maps module type name (e.g. "Timeline") to sub-project id. */
   subProjects?: Record<string, string>;
   lastOpened: number;
+  storageMode?: "localStorage" | "file";
+  fileRef?: string;
 }
 
 export interface StandaloneProject {
@@ -18,6 +20,8 @@ export interface StandaloneProject {
   name: string;
   moduleType: string;
   lastOpened: number;
+  storageMode?: "localStorage" | "file";
+  fileRef?: string;
 }
 
 /** Maps driver moduleType to WorkspaceShell moduleType. */
