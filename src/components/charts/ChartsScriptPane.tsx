@@ -1,10 +1,10 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import {
-  useCharacterProfilesStore,
-  generateProfilesScript,
-} from "../../store/characterProfilesStore";
-import { parseProfilesScript } from "../../parseProfilesScript";
+  useChartsStore,
+  generateChartsScript,
+} from "../../store/chartsStore";
+import { parseChartsScript } from "../../parseChartsScript";
 
 const INDENT = "  ";
 
@@ -47,34 +47,34 @@ function getSmartIndent(lines: string[], cursorLineIndex: number): string {
   return currentIndent;
 }
 
-export default function ProfilesScriptPane() {
+export default function ChartsScriptPane() {
   const { id: projectId } = useParams<{ id: string }>();
-  const characters = useCharacterProfilesStore((s) => s.characters);
-  const selectedCharacterId = useCharacterProfilesStore((s) => s.selectedCharacterId);
-  const chartLayoutMode = useCharacterProfilesStore((s) => s.chartLayoutMode);
-  const createLayoutDraftSections = useCharacterProfilesStore(
+  const characters = useChartsStore((s) => s.characters);
+  const selectedCharacterId = useChartsStore((s) => s.selectedCharacterId);
+  const chartLayoutMode = useChartsStore((s) => s.chartLayoutMode);
+  const createLayoutDraftSections = useChartsStore(
     (s) => s.createLayoutDraftSections
   );
-  const createLayoutDraftDataTypes = useCharacterProfilesStore(
+  const createLayoutDraftDataTypes = useChartsStore(
     (s) => s.createLayoutDraftDataTypes
   );
-  const scriptPanelLayout = useCharacterProfilesStore((s) => s.scriptPanelLayout);
-  const setScriptPanelLayout = useCharacterProfilesStore(
+  const scriptPanelLayout = useChartsStore((s) => s.scriptPanelLayout);
+  const setScriptPanelLayout = useChartsStore(
     (s) => s.setScriptPanelLayout
   );
-  const applyProfilesFromScript = useCharacterProfilesStore(
+  const applyProfilesFromScript = useChartsStore(
     (s) => s.applyProfilesFromScript
   );
-  const setCreateLayoutDraftSections = useCharacterProfilesStore(
+  const setCreateLayoutDraftSections = useChartsStore(
     (s) => s.setCreateLayoutDraftSections
   );
-  const setCreateLayoutDraftDataTypes = useCharacterProfilesStore(
+  const setCreateLayoutDraftDataTypes = useChartsStore(
     (s) => s.setCreateLayoutDraftDataTypes
   );
-  const setCreateLayoutDraftBuiltinDataTypes = useCharacterProfilesStore(
+  const setCreateLayoutDraftBuiltinDataTypes = useChartsStore(
     (s) => s.setCreateLayoutDraftBuiltinDataTypes
   );
-  const createLayoutDraftBuiltinDataTypes = useCharacterProfilesStore(
+  const createLayoutDraftBuiltinDataTypes = useChartsStore(
     (s) => s.createLayoutDraftBuiltinDataTypes
   );
   const [copied, setCopied] = useState(false);
@@ -87,7 +87,7 @@ export default function ProfilesScriptPane() {
 
   const generatedScript = useMemo(() => {
     if (chartLayoutMode === "createLayout") {
-      return generateProfilesScript(createLayoutDraftSections, {
+      return generateChartsScript(createLayoutDraftSections, {
         compact: compactDeclarations,
         characterName: "New Layout",
         source: "template",
@@ -99,7 +99,7 @@ export default function ProfilesScriptPane() {
     const selectedChar = selectedCharacterId
       ? characters.find((c) => c.id === selectedCharacterId)
       : null;
-    return generateProfilesScript(selectedChar ? [selectedChar] : [], {
+    return generateChartsScript(selectedChar ? [selectedChar] : [], {
       compact: compactDeclarations,
       source: "characters",
     });
@@ -134,7 +134,7 @@ export default function ProfilesScriptPane() {
   const handleRun = useCallback(() => {
     setParseError(null);
     setRunSuccess(false);
-    const result = parseProfilesScript(editorContent);
+    const result = parseChartsScript(editorContent);
 
     if (!result.ok) {
       setParseError(
@@ -158,7 +158,7 @@ export default function ProfilesScriptPane() {
       const first = result.characters[0];
       if (first) {
         setCreateLayoutDraftSections(first.sections ?? []);
-        const normalized = generateProfilesScript(first.sections ?? [], {
+        const normalized = generateChartsScript(first.sections ?? [], {
           compact: compactDeclarations,
           characterName: "New Layout",
           source: "template",
@@ -169,7 +169,7 @@ export default function ProfilesScriptPane() {
       } else {
         setCreateLayoutDraftSections([]);
         setEditorContent(
-          generateProfilesScript([], {
+          generateChartsScript([], {
             compact: compactDeclarations,
             source: "template",
             customDataTypes,
@@ -179,7 +179,7 @@ export default function ProfilesScriptPane() {
       }
     } else {
       applyProfilesFromScript(projectId, result.characters);
-      const normalized = generateProfilesScript(result.characters, {
+      const normalized = generateChartsScript(result.characters, {
         compact: compactDeclarations,
         source: "characters",
       });
@@ -350,7 +350,7 @@ export default function ProfilesScriptPane() {
                 onKeyDown={handleKeyDown}
                 className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
                 spellCheck={false}
-                placeholder="@profiles&#10;&#10;[CharacterName] {&#10;  h1 &quot;Section&quot;&#10;    note &quot;...&quot;&#10;}"
+                placeholder="@charts&#10;&#10;[CharacterName] {&#10;  h1 &quot;Section&quot;&#10;    note &quot;...&quot;&#10;}"
               />
             ) : (
               <div className="w-full h-full px-3 py-2 bg-dark-bg/50 border border-dark-accent/50 rounded-lg flex items-center justify-center text-center">

@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import type { AttributeMetaItem, CustomDataType } from "../../store/characterProfilesStore";
+import type { AttributeMetaItem, CustomDataType } from "../../store/chartsStore";
 
 function NumberScrollWheel({
   value,

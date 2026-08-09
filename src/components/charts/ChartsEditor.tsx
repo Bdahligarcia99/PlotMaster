@@ -12,7 +12,7 @@ import { CSS } from "@dnd-kit/utilities";
 import AttributeValueInput from "./AttributeValueInput";
 import CreateLayoutEditor from "./CreateLayoutEditor";
 import {
-  useCharacterProfilesStore,
+  useChartsStore,
   getOrderedSections,
   type NoteBlock,
   type AttributeBlock,
@@ -21,7 +21,7 @@ import {
   type SectionHeadingLevel,
   type AttributeMetaItem,
   type AttributeType,
-} from "../../store/characterProfilesStore";
+} from "../../store/chartsStore";
 import {
   addSectionToDraft,
   updateSectionInDraft,
@@ -36,7 +36,7 @@ import {
   removeAttributeKeyFromDraft,
   renameAttributeKeyInDraft,
   updateAttributeMetaInDraft,
-} from "../../utils/profileSectionDraftHelpers";
+} from "../../utils/chartSectionDraftHelpers";
 import Button from "../ui/Button";
 import NoteTextarea from "../ui/NoteTextarea";
 
@@ -568,35 +568,35 @@ function CharacterLayoutReadOnlyView({
   );
 }
 
-export default function ProfilesChartEditor() {
+export default function ChartsEditor() {
   const { id: projectId } = useParams<{ id: string }>();
-  const characters = useCharacterProfilesStore((s) => s.characters);
-  const selectedCharacterId = useCharacterProfilesStore((s) => s.selectedCharacterId);
-  const comparisonCharacterId = useCharacterProfilesStore((s) => s.comparisonCharacterId);
-  const exitComparison = useCharacterProfilesStore((s) => s.exitComparison);
-  const updateSectionLabel = useCharacterProfilesStore((s) => s.updateSectionLabel);
-  const updateSectionHeadingLevel = useCharacterProfilesStore((s) => s.updateSectionHeadingLevel);
-  const removeSection = useCharacterProfilesStore((s) => s.removeSection);
-  const reorderSections = useCharacterProfilesStore((s) => s.reorderSections);
-  const moveSectionTo = useCharacterProfilesStore((s) => s.moveSectionTo);
-  const addContentBlock = useCharacterProfilesStore((s) => s.addContentBlock);
-  const addAttributeToSection = useCharacterProfilesStore((s) => s.addAttributeToSection);
-  const updateContentBlock = useCharacterProfilesStore((s) => s.updateContentBlock);
-  const reorderContentBlocks = useCharacterProfilesStore((s) => s.reorderContentBlocks);
-  const updateAttributeKey = useCharacterProfilesStore((s) => s.updateAttributeKey);
-  const renameAttributeKey = useCharacterProfilesStore((s) => s.renameAttributeKey);
-  const updateAttributeMeta = useCharacterProfilesStore((s) => s.updateAttributeMeta);
-  const createTemplateFromSections = useCharacterProfilesStore((s) => s.createTemplateFromSections);
-  const saveTemplateFromCharacter = useCharacterProfilesStore((s) => s.saveTemplateFromCharacter);
-  const chartLayoutMode = useCharacterProfilesStore((s) => s.chartLayoutMode);
-  const setChartLayoutMode = useCharacterProfilesStore((s) => s.setChartLayoutMode);
-  const editLayoutDirty = useCharacterProfilesStore((s) => s.editLayoutDirty);
-  const editLayoutDraftSections = useCharacterProfilesStore((s) => s.editLayoutDraftSections);
-  const setEditLayoutDraftSections = useCharacterProfilesStore((s) => s.setEditLayoutDraftSections);
-  const applyEditLayoutDraftToCharacter = useCharacterProfilesStore((s) => s.applyEditLayoutDraftToCharacter);
-  const chartSectionLayoutMode = useCharacterProfilesStore((s) => s.chartSectionLayoutMode);
-  const unlinkCharacterFromTemplate = useCharacterProfilesStore((s) => s.unlinkCharacterFromTemplate);
-  const getTemplateById = useCharacterProfilesStore((s) => s.getTemplateById);
+  const characters = useChartsStore((s) => s.characters);
+  const selectedCharacterId = useChartsStore((s) => s.selectedCharacterId);
+  const comparisonCharacterId = useChartsStore((s) => s.comparisonCharacterId);
+  const exitComparison = useChartsStore((s) => s.exitComparison);
+  const updateSectionLabel = useChartsStore((s) => s.updateSectionLabel);
+  const updateSectionHeadingLevel = useChartsStore((s) => s.updateSectionHeadingLevel);
+  const removeSection = useChartsStore((s) => s.removeSection);
+  const reorderSections = useChartsStore((s) => s.reorderSections);
+  const moveSectionTo = useChartsStore((s) => s.moveSectionTo);
+  const addContentBlock = useChartsStore((s) => s.addContentBlock);
+  const addAttributeToSection = useChartsStore((s) => s.addAttributeToSection);
+  const updateContentBlock = useChartsStore((s) => s.updateContentBlock);
+  const reorderContentBlocks = useChartsStore((s) => s.reorderContentBlocks);
+  const updateAttributeKey = useChartsStore((s) => s.updateAttributeKey);
+  const renameAttributeKey = useChartsStore((s) => s.renameAttributeKey);
+  const updateAttributeMeta = useChartsStore((s) => s.updateAttributeMeta);
+  const createTemplateFromSections = useChartsStore((s) => s.createTemplateFromSections);
+  const saveTemplateFromCharacter = useChartsStore((s) => s.saveTemplateFromCharacter);
+  const chartLayoutMode = useChartsStore((s) => s.chartLayoutMode);
+  const setChartLayoutMode = useChartsStore((s) => s.setChartLayoutMode);
+  const editLayoutDirty = useChartsStore((s) => s.editLayoutDirty);
+  const editLayoutDraftSections = useChartsStore((s) => s.editLayoutDraftSections);
+  const setEditLayoutDraftSections = useChartsStore((s) => s.setEditLayoutDraftSections);
+  const applyEditLayoutDraftToCharacter = useChartsStore((s) => s.applyEditLayoutDraftToCharacter);
+  const chartSectionLayoutMode = useChartsStore((s) => s.chartSectionLayoutMode);
+  const unlinkCharacterFromTemplate = useChartsStore((s) => s.unlinkCharacterFromTemplate);
+  const getTemplateById = useChartsStore((s) => s.getTemplateById);
 
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
   const linkedTemplate = projectId && selectedCharacter?.linkedTemplateId

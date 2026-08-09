@@ -10,7 +10,7 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  useCharacterProfilesStore,
+  useChartsStore,
   getOrderedSections,
   type ProfileSection,
   type AttributeBlock,
@@ -18,7 +18,7 @@ import {
   type AttributeMetaItem,
   type AttributeType,
   type CustomDataType,
-} from "../../store/characterProfilesStore";
+} from "../../store/chartsStore";
 import {
   addSectionToDraft,
   updateSectionInDraft,
@@ -31,7 +31,7 @@ import {
   updateAttributeMetaInDraft,
   removeAttributeKeyFromDraft,
   renameAttributeKeyInDraft,
-} from "../../utils/profileSectionDraftHelpers";
+} from "../../utils/chartSectionDraftHelpers";
 import AttributeValueInput from "./AttributeValueInput";
 import Button from "../ui/Button";
 import NoteTextarea from "../ui/NoteTextarea";
@@ -269,18 +269,18 @@ function AttributeMetaEditorPopover({
 
 export default function CreateLayoutEditor({ onClose }: { onClose: () => void }) {
   const { id: projectId } = useParams<{ id: string }>();
-  const setChartLayoutMode = useCharacterProfilesStore((s) => s.setChartLayoutMode);
-  const createTemplateFromSections = useCharacterProfilesStore((s) => s.createTemplateFromSections);
-  const updateTemplate = useCharacterProfilesStore((s) => s.updateTemplate);
-  const listTemplates = useCharacterProfilesStore((s) => s.listTemplates);
-  const sections = useCharacterProfilesStore((s) => s.createLayoutDraftSections);
-  const setCreateLayoutDraftSections = useCharacterProfilesStore((s) => s.setCreateLayoutDraftSections);
-  const createLayoutDraftDataTypes = useCharacterProfilesStore((s) => s.createLayoutDraftDataTypes);
-  const setCreateLayoutDraftDataTypes = useCharacterProfilesStore((s) => s.setCreateLayoutDraftDataTypes);
-  const createLayoutDraftBuiltinDataTypes = useCharacterProfilesStore((s) => s.createLayoutDraftBuiltinDataTypes);
-  const editingTemplateId = useCharacterProfilesStore((s) => s.editingTemplateId);
-  const createLayoutDirty = useCharacterProfilesStore((s) => s.createLayoutDirty);
-  const chartSectionLayoutMode = useCharacterProfilesStore((s) => s.chartSectionLayoutMode);
+  const setChartLayoutMode = useChartsStore((s) => s.setChartLayoutMode);
+  const createTemplateFromSections = useChartsStore((s) => s.createTemplateFromSections);
+  const updateTemplate = useChartsStore((s) => s.updateTemplate);
+  const listTemplates = useChartsStore((s) => s.listTemplates);
+  const sections = useChartsStore((s) => s.createLayoutDraftSections);
+  const setCreateLayoutDraftSections = useChartsStore((s) => s.setCreateLayoutDraftSections);
+  const createLayoutDraftDataTypes = useChartsStore((s) => s.createLayoutDraftDataTypes);
+  const setCreateLayoutDraftDataTypes = useChartsStore((s) => s.setCreateLayoutDraftDataTypes);
+  const createLayoutDraftBuiltinDataTypes = useChartsStore((s) => s.createLayoutDraftBuiltinDataTypes);
+  const editingTemplateId = useChartsStore((s) => s.editingTemplateId);
+  const createLayoutDirty = useChartsStore((s) => s.createLayoutDirty);
+  const chartSectionLayoutMode = useChartsStore((s) => s.chartSectionLayoutMode);
 
   const editingTemplateName = projectId && editingTemplateId
     ? listTemplates(projectId).find((t) => t.id === editingTemplateId)?.name
@@ -342,7 +342,7 @@ export default function CreateLayoutEditor({ onClose }: { onClose: () => void })
   const handleSaveChanges = () => {
     if (!editingTemplateId) return;
     setSaveError(null);
-    const pid = projectId ?? useCharacterProfilesStore.getState().activeProjectId ?? "";
+    const pid = projectId ?? useChartsStore.getState().activeProjectId ?? "";
     if (!pid) {
       setSaveError("No project selected. Cannot save template.");
       return;

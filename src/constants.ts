@@ -1,7 +1,7 @@
 export const MODULE_TYPES = [
   "Timeline",
   "Family Tree",
-  "Profiles",
+  "Charts",
   "Ideas",
 ] as const;
 

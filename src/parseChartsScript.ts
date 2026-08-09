@@ -1,6 +1,6 @@
 /**
- * Parser for the profile DSL (script → store format).
- * Parses @profiles, [CharacterName] { ... }, h1-h4, note, attributes, image.
+ * Parser for the Charts DSL (script → store format).
+ * Parses @charts (and legacy @profiles), [CharacterName] { ... }, h1-h4, note, attributes, image.
  */
 
 import type {
@@ -13,7 +13,7 @@ import type {
   CustomDataType,
   AttributeMetaItem,
   AttributeType,
-} from "./store/characterProfilesStore";
+} from "./store/chartsStore";
 
 function generateId() {
   return `_${Math.random().toString(36).slice(2, 11)}`;
@@ -121,7 +121,7 @@ function parseDataTypesBlock(lines: string[], startIdx: number): {
   return { dataTypes, builtinLines, nextIdx: i };
 }
 
-export function parseProfilesScript(input: string): ParseResult {
+export function parseChartsScript(input: string): ParseResult {
   const lines = input.split(/\r?\n/);
   const characters: CharacterEntity[] = [];
   let i = 0;
@@ -129,10 +129,10 @@ export function parseProfilesScript(input: string): ParseResult {
   let currentCharContent: string[] = [];
   let customDataTypes: CustomDataType[] = [];
 
-  // Skip @profiles and blank lines at start
+  // Skip @charts / legacy @profiles and blank lines at start
   while (i < lines.length) {
     const trimmed = lines[i].trim();
-    if (trimmed === "" || trimmed === "@profiles") {
+    if (trimmed === "" || trimmed === "@charts" || trimmed === "@profiles") {
       i++;
       continue;
     }

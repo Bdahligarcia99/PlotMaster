@@ -4,6 +4,9 @@ const MODULE_TYPE_TO_ROUTE: Record<string, string> = {
   familyTree: "/family-tree",
   Timeline: "/timeline",
   timeline: "/timeline",
+  Charts: "/project",
+  charts: "/project",
+  /** @deprecated legacy type names — read-side migration only */
   Profiles: "/project",
   characterProfiles: "/project",
   Ideas: "/project",
@@ -20,7 +23,7 @@ export function getModuleRoute(moduleType: string, projectId: string): string {
 export function moduleIdToTypeName(moduleId: string): string {
   const map: Record<string, string> = {
     familyTree: "Family Tree",
-    characters: "Profiles",
+    charts: "Charts",
     timeline: "Timeline",
     ideaPlayground: "Ideas",
   };

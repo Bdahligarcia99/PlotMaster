@@ -3,27 +3,37 @@ import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import Button from "../ui/Button";
 import Modal from "../ui/Modal";
+import ModeSwitchNavbar from "../ui/ModeSwitchNavbar";
 import ProjectScopeBox from "./ProjectScopeBox";
 import { getStorageDriver } from "../../storage/StorageDriver";
 import type { ProjectIndexItem } from "../../storage/StorageDriver";
 import { createProject, createTimelineProject } from "../../home/createProject";
-import { MODULE_ID_TO_TYPE } from "../../home/moduleRegistry";
+import { getRegistryItemForModuleKey, MODULE_ID_TO_TYPE } from "../../home/moduleRegistry";
 import { getModuleRoute, moduleIdToTypeName } from "../../home/moduleRoutes";
 import { getSynprojFileIO } from "../../storage/synproj/synprojFileIO";
 import {
   initializeFileBackedModularProject,
   initializeFileBackedStandaloneProject,
   registerProjectFileRef,
+  unregisterProjectFileRef,
   openSynprojFileAndRegister,
 } from "../../storage/synproj/synprojProjectService";
 import { useAppStore, type Project } from "../../store/appStore";
+import {
+  buildRecentsList,
+  getModuleCount,
+  type RecentModularEntry,
+} from "../../home/recentsGrouping";
+import { getRecentsFilter, setRecentsFilter, type RecentsFilter } from "../../home/recentsFilterPrefs";
 import {
   isTauri,
   openProjectInNewWindow,
 } from "../../tauri/openProjectInNewWindow";
 import { APP_RELEASE_CHANNEL, APP_VERSION } from "../../constants/appMeta";
 
-type DeleteTarget = { id: string; name: string; source: "driver" | "standalone" };
+type DeleteTarget =
+  | { id: string; name: string; source: "driver" | "standalone" }
+  | { id: string; name: string; source: "modular"; subProjectIds: string[] };
 type TabId = "create" | "recent";
 
 function formatLastOpened(timestamp: number) {
@@ -50,8 +60,10 @@ const MODULE_LABELS: Record<string, string> = {
   familyTree: "Family Tree",
   timeline: "Timeline Outliner",
   Timeline: "Timeline Outliner",
-  characterProfiles: "Character Profiles",
-  Profiles: "Character Profiles",
+  charts: "Charts",
+  characterProfiles: "Charts",
+  Charts: "Charts",
+  Profiles: "Charts",
   ideaPlayground: "Ideas Playground",
   ideas: "Ideas Playground",
   Ideas: "Ideas Playground",
@@ -80,12 +92,29 @@ export default function IntroDialog({
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [openProjectError, setOpenProjectError] = useState<string | null>(null);
   const [openingProject, setOpeningProject] = useState(false);
+  const [recentsFilter, setRecentsFilterState] = useState<RecentsFilter>(() => getRecentsFilter());
 
   const standaloneProjects = useAppStore((s) => s.standaloneProjects);
+  const modularProjects = useAppStore((s) => s.modularProjects);
   const removeStandaloneProject = useAppStore((s) => s.removeStandaloneProject);
+  const removeModularProject = useAppStore((s) => s.removeModularProject);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
   const createStandaloneProject = useAppStore((s) => s.createStandaloneProject);
   const createModularProject = useAppStore((s) => s.createModularProject);
+
+  const recentEntries = buildRecentsList(modularProjects, allProjects, standaloneProjects);
+
+  const filteredRecentEntries = recentEntries.filter((entry) => {
+    const count = getModuleCount(entry);
+    if (recentsFilter === "single") return count === 1;
+    if (recentsFilter === "multi") return count >= 2;
+    return true;
+  });
+
+  const handleRecentsFilterChange = (filter: RecentsFilter) => {
+    setRecentsFilterState(filter);
+    setRecentsFilter(filter);
+  };
 
   const tabCreateRef = useRef<HTMLButtonElement>(null);
   const tabRecentRef = useRef<HTMLButtonElement>(null);
@@ -165,10 +194,10 @@ export default function IntroDialog({
           await initializeFileBackedStandaloneProject(id, name, "familyTree", fileRef);
         }
         openInNewWindow(`/family-tree/${id}`);
-      } else if (enabledModules[0] === "characters") {
-        const id = createStandaloneProject(name, "Profiles");
+      } else if (enabledModules[0] === "charts") {
+        const id = createStandaloneProject(name, "Charts");
         if (fileRef) {
-          await initializeFileBackedStandaloneProject(id, name, "Profiles", fileRef);
+          await initializeFileBackedStandaloneProject(id, name, "Charts", fileRef);
         }
         openInNewWindow(`/project/${id}`);
       } else if (enabledModules[0] === "timeline") {
@@ -199,8 +228,8 @@ export default function IntroDialog({
           subProjects[typeName] = await createProject(name, ["familyTree"]);
         } else if (moduleId === "timeline") {
           subProjects[typeName] = await createTimelineProject(name);
-        } else if (moduleId === "characters") {
-          subProjects[typeName] = createStandaloneProject(name, "Profiles");
+        } else if (moduleId === "charts") {
+          subProjects[typeName] = createStandaloneProject(name, "Charts");
         }
       }
 
@@ -228,10 +257,6 @@ export default function IntroDialog({
     }
   };
 
-  const getProjectPath = (
-    p: ProjectIndexItem | { id: string; moduleType: string }
-  ): string => getModuleRoute(p.moduleType, p.id);
-
   const handleOpenProjectFile = async () => {
     setOpenProjectError(null);
     setOpeningProject(true);
@@ -250,26 +275,50 @@ export default function IntroDialog({
     }
   };
 
-  const handleOpenProject = (
-    p: ProjectIndexItem | { id: string; moduleType: string; name: string; lastOpened: number }
-  ) => {
+  /** Opens a specific module of a modular (multi-module) project directly. */
+  const handleOpenModule = (typeName: string, subProjectId: string) => {
     setIntroDialogOpen(false);
     onClose();
-    openInNewWindow(getProjectPath(p));
+    openInNewWindow(getModuleRoute(typeName, subProjectId));
   };
+
+  /** Card's primary "Open" — opens the first module in canonical order. */
+  const handleOpenModular = (entry: RecentModularEntry) => {
+    const first = entry.modules[0];
+    if (!first) return;
+    handleOpenModule(first.typeName, first.subProjectId);
+  };
+
+  const isProjectRoute = (id: string) =>
+    location.pathname === `/project/${id}` ||
+    location.pathname === `/family-tree/${id}` ||
+    location.pathname === `/timeline/${id}`;
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
-    const { id, source } = deleteTarget;
+    const target = deleteTarget;
+    const { id } = target;
     setDeleteTarget(null);
-    if (source === "driver") {
+    let deletedIds = [id];
+    if (target.source === "driver") {
       await getStorageDriver().deleteProject(id);
       refreshProjects();
-    } else {
+    } else if (target.source === "standalone") {
       removeStandaloneProject(id);
       await getStorageDriver().deleteProject(id);
+    } else if (target.source === "modular") {
+      // Modular: cascade-delete every sub-project, then the modular entry itself.
+      for (const subId of target.subProjectIds) {
+        await getStorageDriver().deleteProject(subId);
+        removeStandaloneProject(subId);
+        unregisterProjectFileRef(subId);
+      }
+      removeModularProject(id);
+      unregisterProjectFileRef(id);
+      deletedIds = [id, ...target.subProjectIds];
+      refreshProjects();
     }
-    if (location.pathname === `/project/${id}` || location.pathname === `/family-tree/${id}` || location.pathname === `/timeline/${id}`) {
+    if (deletedIds.some(isProjectRoute)) {
       navigate("/");
     }
   };
@@ -416,96 +465,172 @@ export default function IntroDialog({
             hidden={activeTab !== "recent"}
             className="space-y-3"
           >
-            {allProjects.length === 0 && standaloneProjects.length === 0 ? (
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span className="text-xs font-medium uppercase tracking-wide text-dark-muted">
+                Recent Projects
+              </span>
+              <ModeSwitchNavbar
+                slots={(
+                  [
+                    { id: "all", label: "All" },
+                    { id: "single", label: "Single-module" },
+                    { id: "multi", label: "Multi-module" },
+                  ] as const
+                ).map(({ id, label }) => ({
+                  id,
+                  label,
+                  active: recentsFilter === id,
+                  onClick: () => handleRecentsFilterChange(id),
+                }))}
+              />
+            </div>
+
+            {filteredRecentEntries.length === 0 ? (
               <div className="py-16 text-center">
-                <p className="text-dark-muted text-sm">No recent projects yet.</p>
+                <p className="text-dark-muted text-sm">
+                  {recentEntries.length === 0
+                    ? "No recent projects yet."
+                    : "No projects match this filter."}
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {allProjects.map((p) => (
-                  <div
-                    key={`d-${p.id}`}
-                    className="flex items-center gap-3 px-4 py-4 rounded-xl bg-dark-bg/50 border border-dark-accent/50 hover:border-dark-accent/80 transition-colors group"
-                  >
-                    <ModuleIconPlaceholder />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-dark-text font-medium truncate">{p.name}</p>
-                      <p className="text-dark-muted text-xs mt-0.5">{formatLastOpened(p.updatedAt)}</p>
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        <span className="text-xs text-dark-muted bg-dark-surface px-2 py-0.5 rounded">
-                          {MODULE_LABELS[p.moduleType] ?? p.moduleType}
-                        </span>
+                {filteredRecentEntries.map((entry) => {
+                  if (entry.kind === "modular") {
+                    return (
+                      <div
+                        key={`m-${entry.id}`}
+                        className="flex items-center gap-3 px-4 py-4 rounded-xl bg-dark-bg/50 border border-dark-accent/50 hover:border-dark-accent/80 transition-colors group"
+                      >
+                        <div className="flex flex-wrap gap-1 flex-shrink-0 max-w-[120px]">
+                          {entry.modules.map((mod) => (
+                            <button
+                              key={mod.subProjectId}
+                              type="button"
+                              title={mod.label}
+                              aria-label={`Open ${mod.label}`}
+                              onClick={() => handleOpenModule(mod.typeName, mod.subProjectId)}
+                              className="w-9 h-9 flex items-center justify-center rounded-lg border border-dark-accent/50 text-lg transition-colors text-dark-muted hover:text-dark-text hover:bg-dark-accent/40 hover:border-dark-accent"
+                            >
+                              {mod.icon}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-dark-text font-medium truncate">{entry.name}</p>
+                          <p className="text-dark-muted text-xs mt-0.5">
+                            {formatLastOpened(entry.lastOpened)}
+                          </p>
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {entry.modules.map((mod) => (
+                              <span
+                                key={mod.subProjectId}
+                                className="text-xs text-dark-muted bg-dark-surface px-2 py-0.5 rounded"
+                              >
+                                {mod.label}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => handleOpenModular(entry)}
+                            className="flex items-center gap-1.5"
+                          >
+                            Open
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </Button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteTarget({
+                                id: entry.id,
+                                name: entry.name,
+                                source: "modular",
+                                subProjectIds: entry.modules.map((m) => m.subProjectId),
+                              });
+                            }}
+                            className="p-2 rounded-lg text-dark-muted hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-60 group-hover:opacity-100"
+                            title="Delete project and all modules"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const registryItem = getRegistryItemForModuleKey(entry.moduleType);
+                  const moduleLabel = MODULE_LABELS[entry.moduleType] ?? registryItem?.label ?? entry.moduleType;
+
+                  return (
+                    <div
+                      key={`${entry.kind}-${entry.id}`}
+                      className="flex items-center gap-3 px-4 py-4 rounded-xl bg-dark-bg/50 border border-dark-accent/50 hover:border-dark-accent/80 transition-colors group"
+                    >
+                      {registryItem ? (
+                        <div
+                          className="w-9 h-9 flex items-center justify-center rounded-lg border border-dark-accent/50 bg-dark-accent/30 text-lg flex-shrink-0"
+                          title={registryItem.label}
+                        >
+                          {registryItem.icon}
+                        </div>
+                      ) : (
+                        <ModuleIconPlaceholder />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-dark-text font-medium truncate">{entry.name}</p>
+                        <p className="text-dark-muted text-xs mt-0.5">
+                          {formatLastOpened(entry.lastOpened)}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          <span className="text-xs text-dark-muted bg-dark-surface px-2 py-0.5 rounded">
+                            {moduleLabel}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => {
+                            setIntroDialogOpen(false);
+                            onClose();
+                            openInNewWindow(getModuleRoute(entry.moduleType, entry.id));
+                          }}
+                          className="flex items-center gap-1.5"
+                        >
+                          Open
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </Button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteTarget({
+                              id: entry.id,
+                              name: entry.name,
+                              source: entry.kind,
+                            });
+                          }}
+                          className="p-2 rounded-lg text-dark-muted hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-60 group-hover:opacity-100"
+                          title="Delete project"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => handleOpenProject(p)}
-                        className="flex items-center gap-1.5"
-                      >
-                        Open
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </Button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteTarget({ id: p.id, name: p.name, source: "driver" });
-                        }}
-                        className="p-2 rounded-lg text-dark-muted hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-60 group-hover:opacity-100"
-                        title="Delete project"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {standaloneProjects.map((p) => (
-                  <div
-                    key={`s-${p.id}`}
-                    className="flex items-center gap-3 px-4 py-4 rounded-xl bg-dark-bg/50 border border-dark-accent/50 hover:border-dark-accent/80 transition-colors group"
-                  >
-                    <ModuleIconPlaceholder />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-dark-text font-medium truncate">{p.name}</p>
-                      <p className="text-dark-muted text-xs mt-0.5">{formatLastOpened(p.lastOpened)}</p>
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        <span className="text-xs text-dark-muted bg-dark-surface px-2 py-0.5 rounded">
-                          {MODULE_LABELS[p.moduleType] ?? p.moduleType}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => handleOpenProject(p)}
-                        className="flex items-center gap-1.5"
-                      >
-                        Open
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </Button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteTarget({ id: p.id, name: p.name, source: "standalone" });
-                        }}
-                        className="p-2 rounded-lg text-dark-muted hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-60 group-hover:opacity-100"
-                        title="Delete project"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

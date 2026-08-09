@@ -4,7 +4,7 @@ import ComingSoonTooltip from "./ComingSoonTooltip";
 
 type ModuleTileVariant = "multi" | "quick";
 
-type AvailableId = "familyTree" | "characters" | "timeline" | "ideaPlayground";
+type AvailableId = "familyTree" | "charts" | "timeline" | "ideaPlayground";
 
 interface ModuleTileProps {
   module: ModuleRegistryItem;

@@ -2,10 +2,10 @@ import { getStorageDriver, type ProjectIndexItem, type ProjectModuleType } from 
 import { useAppStore, type Project, type StandaloneProject } from "../../store/appStore";
 import { getModuleRoute } from "../../home/moduleRoutes";
 import {
-  isCharacterProfilesPayload,
+  isChartsPayload,
   serializeSynprojFile,
   type AnyModulePayload,
-  type CharacterProfilesPayload,
+  type ChartsPayload,
   type SynprojFile,
 } from "./synprojFormat";
 import { getSynprojFileIO } from "./synprojFileIO";
@@ -103,29 +103,44 @@ export async function saveModulePayloadToFile(
   await io.write(fileRef, file);
 }
 
-/** Build profiles payload from localStorage (for conversion). */
-export function buildProfilesPayloadFromLocalStorage(projectId: string): CharacterProfilesPayload {
-  const charsKey = `synapse-iwe:profiles:${projectId}`;
-  const templatesKey = `synapse-iwe:profiles:templates:${projectId}`;
-  const layoutKey = `synapse-iwe:profiles:chartSectionLayout:${projectId}`;
-  let characters: CharacterProfilesPayload["characters"] = [];
-  let templates: CharacterProfilesPayload["templates"] = [];
-  let chartSectionLayout: CharacterProfilesPayload["chartSectionLayout"];
+/** Build Charts payload from localStorage (for conversion). */
+export function buildChartsPayloadFromLocalStorage(projectId: string): ChartsPayload {
+  const charsKey = `synapse-iwe:charts:${projectId}`;
+  const legacyCharsKey = `synapse-iwe:profiles:${projectId}`;
+  const superLegacyCharsKey = `plotmaster:profiles:${projectId}`;
+  const templatesKey = `synapse-iwe:charts:templates:${projectId}`;
+  const legacyTemplatesKey = `synapse-iwe:profiles:templates:${projectId}`;
+  const superLegacyTemplatesKey = `plotmaster:profiles:templates:${projectId}`;
+  const layoutKey = `synapse-iwe:charts:chartSectionLayout:${projectId}`;
+  const legacyLayoutKey = `synapse-iwe:profiles:chartSectionLayout:${projectId}`;
+  const superLegacyLayoutKey = `plotmaster:profiles:chartSectionLayout:${projectId}`;
+  let characters: ChartsPayload["characters"] = [];
+  let templates: ChartsPayload["templates"] = [];
+  let chartSectionLayout: ChartsPayload["chartSectionLayout"];
   try {
-    const rawChars = localStorage.getItem(charsKey) ?? localStorage.getItem(`plotmaster:profiles:${projectId}`);
+    const rawChars =
+      localStorage.getItem(charsKey) ??
+      localStorage.getItem(legacyCharsKey) ??
+      localStorage.getItem(superLegacyCharsKey);
     characters = rawChars ? JSON.parse(rawChars) : [];
   } catch { /* empty */ }
   try {
-    const rawTemplates = localStorage.getItem(templatesKey) ?? localStorage.getItem(`plotmaster:profiles:templates:${projectId}`);
+    const rawTemplates =
+      localStorage.getItem(templatesKey) ??
+      localStorage.getItem(legacyTemplatesKey) ??
+      localStorage.getItem(superLegacyTemplatesKey);
     templates = rawTemplates ? JSON.parse(rawTemplates) : [];
   } catch { /* empty */ }
   try {
-    const rawLayout = localStorage.getItem(layoutKey) ?? localStorage.getItem(`plotmaster:profiles:chartSectionLayout:${projectId}`);
+    const rawLayout =
+      localStorage.getItem(layoutKey) ??
+      localStorage.getItem(legacyLayoutKey) ??
+      localStorage.getItem(superLegacyLayoutKey);
     if (rawLayout === "grid" || rawLayout === "list") chartSectionLayout = rawLayout;
   } catch { /* empty */ }
   return {
     version: 1,
-    moduleType: "characterProfiles",
+    moduleType: "charts",
     characters,
     templates,
     chartSectionLayout,
@@ -143,9 +158,9 @@ export async function buildSynprojSnapshotForModularProject(
     if (payload) {
       modules[moduleId] = payload;
     } else {
-      const profilesPayload = buildProfilesPayloadFromLocalStorage(moduleId);
-      if (profilesPayload.characters.length > 0 || profilesPayload.templates.length > 0) {
-        modules[moduleId] = profilesPayload;
+      const chartsPayload = buildChartsPayloadFromLocalStorage(moduleId);
+      if (chartsPayload.characters.length > 0 || chartsPayload.templates.length > 0) {
+        modules[moduleId] = chartsPayload;
       }
     }
   }
@@ -173,8 +188,8 @@ export async function buildSynprojSnapshotForStandalone(
   const payload = await driver.loadProjectData(projectId);
   if (payload) {
     modules[projectId] = payload;
-  } else if (moduleType === "Profiles" || moduleType === "characterProfiles") {
-    modules[projectId] = buildProfilesPayloadFromLocalStorage(projectId);
+  } else if (moduleType === "Charts" || moduleType === "Profiles" || moduleType === "characterProfiles" || moduleType === "charts") {
+    modules[projectId] = buildChartsPayloadFromLocalStorage(projectId);
   }
   return {
     formatVersion: 1,
@@ -312,8 +327,11 @@ const TYPE_NAME_TO_DRIVER: Record<string, ProjectModuleType> = {
   familyTree: "familyTree",
   Timeline: "timeline",
   timeline: "timeline",
-  Profiles: "characterProfiles",
-  characterProfiles: "characterProfiles",
+  Charts: "charts",
+  charts: "charts",
+  /** @deprecated legacy type names — read-side migration only */
+  Profiles: "charts",
+  characterProfiles: "charts",
   Ideas: "ideas",
   ideas: "ideas",
 };
@@ -441,9 +459,9 @@ async function hydrateSynprojFromFile(
         await registerDriverBackedModule(subId, project.name, driverType, fileRef, driverIndex);
       } else if (
         payload &&
-        (isCharacterProfilesPayload(payload) || driverType === "characterProfiles")
+        (isChartsPayload(payload) || driverType === "charts")
       ) {
-        registerStandaloneModule(subId, project.name, "Profiles", fileRef);
+        registerStandaloneModule(subId, project.name, "Charts", fileRef);
       } else if (driverType === "ideas") {
         registerStandaloneModule(subId, project.name, "Ideas", fileRef);
       }
@@ -484,9 +502,9 @@ async function hydrateSynprojFromFile(
     await registerDriverBackedModule(moduleId, project.name, "timeline", fileRef, driverIndex);
     return getModuleRoute("timeline", moduleId);
   }
-  if (payload && isCharacterProfilesPayload(payload)) {
-    registerStandaloneModule(moduleId, project.name, "Profiles", fileRef);
-    return getModuleRoute("Profiles", moduleId);
+  if (payload && isChartsPayload(payload)) {
+    registerStandaloneModule(moduleId, project.name, "Charts", fileRef);
+    return getModuleRoute("Charts", moduleId);
   }
   registerStandaloneModule(moduleId, project.name, "Ideas", fileRef);
   return getModuleRoute("Ideas", moduleId);

@@ -1,4 +1,4 @@
-export default function ProfilesInspector() {
+export default function ChartsInspector() {
   return (
     <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
       <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide mb-3">

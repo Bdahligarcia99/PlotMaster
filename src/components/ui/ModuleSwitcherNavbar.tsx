@@ -1,19 +1,12 @@
 import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store/appStore";
-import { MODULE_REGISTRY } from "../../home/moduleRegistry";
+import { MODULE_REGISTRY, MODULE_TYPE_NAME_TO_REGISTRY_ID } from "../../home/moduleRegistry";
 import { getModuleRoute } from "../../home/moduleRoutes";
 
 interface ModuleSwitcherNavbarProps {
   /** Current sub-project id (the route param for the active module). */
   currentProjectId: string;
 }
-
-const MODULE_TYPE_TO_REGISTRY_ID: Record<string, string> = {
-  "Family Tree": "familyTree",
-  Profiles: "characters",
-  Timeline: "timeline",
-  Ideas: "ideaPlayground",
-};
 
 export default function ModuleSwitcherNavbar({ currentProjectId }: ModuleSwitcherNavbarProps) {
   const navigate = useNavigate();
@@ -34,7 +27,7 @@ export default function ModuleSwitcherNavbar({ currentProjectId }: ModuleSwitche
       aria-label="Switch module"
     >
       {entries.map(([moduleType, subId]) => {
-        const registryId = MODULE_TYPE_TO_REGISTRY_ID[moduleType];
+        const registryId = MODULE_TYPE_NAME_TO_REGISTRY_ID[moduleType];
         const moduleMeta = MODULE_REGISTRY.find((m) => m.id === registryId);
         const isActive = subId === currentProjectId;
         const label = moduleMeta?.label ?? moduleType;

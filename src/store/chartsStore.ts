@@ -4,21 +4,27 @@ import {
   loadModulePayloadFromFile,
   saveModulePayloadToFile,
 } from "../storage/synproj/synprojProjectService";
-import { isCharacterProfilesPayload } from "../storage/synproj/synprojFormat";
+import { isChartsPayload } from "../storage/synproj/synprojFormat";
 
-const PROFILES_STORAGE_KEY = (projectId: string) =>
-  `synapse-iwe:profiles:${projectId}`;
+const CHARTS_STORAGE_KEY = (projectId: string) =>
+  `synapse-iwe:charts:${projectId}`;
 const LEGACY_PROFILES_STORAGE_KEY = (projectId: string) =>
+  `synapse-iwe:profiles:${projectId}`;
+const SUPER_LEGACY_PROFILES_STORAGE_KEY = (projectId: string) =>
   `plotmaster:profiles:${projectId}`;
 
 const TEMPLATES_STORAGE_KEY = (projectId: string) =>
-  `synapse-iwe:profiles:templates:${projectId}`;
+  `synapse-iwe:charts:templates:${projectId}`;
 const LEGACY_TEMPLATES_STORAGE_KEY = (projectId: string) =>
+  `synapse-iwe:profiles:templates:${projectId}`;
+const SUPER_LEGACY_TEMPLATES_STORAGE_KEY = (projectId: string) =>
   `plotmaster:profiles:templates:${projectId}`;
 
 const CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
-  `synapse-iwe:profiles:chartSectionLayout:${projectId}`;
+  `synapse-iwe:charts:chartSectionLayout:${projectId}`;
 const LEGACY_CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
+  `synapse-iwe:profiles:chartSectionLayout:${projectId}`;
+const SUPER_LEGACY_CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
   `plotmaster:profiles:chartSectionLayout:${projectId}`;
 
 export type SectionHeadingLevel = "h1" | "h2" | "h3" | "h4";
@@ -110,7 +116,7 @@ export type ScriptPanelLayout = "split" | "codeOnly" | "viewOnly";
 
 export type ChartSectionLayoutMode = "list" | "grid";
 
-interface CharacterProfilesStore {
+interface ChartsStore {
   activeProjectId: string | null;
   characters: CharacterEntity[];
   selectedCharacterId: string | null;
@@ -300,7 +306,10 @@ function migrateCharacter(c: {
 
 function loadFromStorage(projectId: string): CharacterEntity[] {
   try {
-    const raw = localStorage.getItem(PROFILES_STORAGE_KEY(projectId)) ?? localStorage.getItem(LEGACY_PROFILES_STORAGE_KEY(projectId));
+    const raw =
+      localStorage.getItem(CHARTS_STORAGE_KEY(projectId)) ??
+      localStorage.getItem(LEGACY_PROFILES_STORAGE_KEY(projectId)) ??
+      localStorage.getItem(SUPER_LEGACY_PROFILES_STORAGE_KEY(projectId));
     const parsed = raw ? JSON.parse(raw) : [];
     return parsed.map(migrateCharacter);
   } catch {
@@ -311,18 +320,21 @@ function loadFromStorage(projectId: string): CharacterEntity[] {
 function saveToStorage(projectId: string, characters: CharacterEntity[]) {
   try {
     localStorage.setItem(
-      PROFILES_STORAGE_KEY(projectId),
+      CHARTS_STORAGE_KEY(projectId),
       JSON.stringify(characters)
     );
   } catch (e) {
-    console.warn("[CharacterProfilesStore] Save failed:", e);
+    console.warn("[ChartsStore] Save failed:", e);
   }
-  void persistProfilesModuleToFile(projectId);
+  void persistChartsModuleToFile(projectId);
 }
 
 function loadChartSectionLayoutMode(projectId: string): ChartSectionLayoutMode {
   try {
-    const raw = localStorage.getItem(CHART_SECTION_LAYOUT_KEY(projectId)) ?? localStorage.getItem(LEGACY_CHART_SECTION_LAYOUT_KEY(projectId));
+    const raw =
+      localStorage.getItem(CHART_SECTION_LAYOUT_KEY(projectId)) ??
+      localStorage.getItem(LEGACY_CHART_SECTION_LAYOUT_KEY(projectId)) ??
+      localStorage.getItem(SUPER_LEGACY_CHART_SECTION_LAYOUT_KEY(projectId));
     if (raw === "grid") return "grid";
   } catch {
     /* ignore */
@@ -336,12 +348,15 @@ function saveChartSectionLayoutMode(projectId: string, mode: ChartSectionLayoutM
   } catch {
     /* ignore */
   }
-  void persistProfilesModuleToFile(projectId);
+  void persistChartsModuleToFile(projectId);
 }
 
 function loadTemplatesFromStorage(projectId: string): ChartLayoutTemplate[] {
   try {
-    const raw = localStorage.getItem(TEMPLATES_STORAGE_KEY(projectId)) ?? localStorage.getItem(LEGACY_TEMPLATES_STORAGE_KEY(projectId));
+    const raw =
+      localStorage.getItem(TEMPLATES_STORAGE_KEY(projectId)) ??
+      localStorage.getItem(LEGACY_TEMPLATES_STORAGE_KEY(projectId)) ??
+      localStorage.getItem(SUPER_LEGACY_TEMPLATES_STORAGE_KEY(projectId));
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -356,24 +371,24 @@ function saveTemplatesToStorage(projectId: string, templates: ChartLayoutTemplat
       JSON.stringify(templates)
     );
   } catch (e) {
-    console.warn("[CharacterProfilesStore] Template save failed:", e);
+    console.warn("[ChartsStore] Template save failed:", e);
   }
-  void persistProfilesModuleToFile(projectId);
+  void persistChartsModuleToFile(projectId);
 }
 
-async function persistProfilesModuleToFile(projectId: string): Promise<void> {
+async function persistChartsModuleToFile(projectId: string): Promise<void> {
   if (!(await isFileBackedProject(projectId))) return;
   try {
     const payload = {
       version: 1 as const,
-      moduleType: "characterProfiles" as const,
+      moduleType: "charts" as const,
       characters: loadFromStorage(projectId),
       templates: loadTemplatesFromStorage(projectId),
       chartSectionLayout: loadChartSectionLayoutMode(projectId),
     };
     await saveModulePayloadToFile(projectId, payload);
   } catch (e) {
-    console.warn("[CharacterProfilesStore] File save failed:", e);
+    console.warn("[ChartsStore] File save failed:", e);
   }
 }
 
@@ -702,7 +717,7 @@ export interface GenerateProfilesScriptOptions {
  * DSL keywords: h1/h2/h3/h4, note, attributes, image.
  * Extensible: future phases can add @options, arrays (e.g. key: [a, b, c]).
  */
-export function generateProfilesScript(
+export function generateChartsScript(
   input: CharacterEntity[] | ProfileSection[],
   options: GenerateProfilesScriptOptions = {}
 ): string {
@@ -843,7 +858,7 @@ export function generateProfilesScript(
     return builtinLines;
   }
 
-  const lines: string[] = ["@profiles", ""];
+  const lines: string[] = ["@charts", ""];
 
   const sections =
     Array.isArray(input) && input.length > 0
@@ -900,7 +915,7 @@ export function generateProfilesScript(
   return lines.join("\n").trimEnd();
 }
 
-export const useCharacterProfilesStore = create<CharacterProfilesStore>(
+export const useChartsStore = create<ChartsStore>(
   (set, get) => ({
     activeProjectId: null,
     characters: [],
@@ -1070,9 +1085,9 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
         if (await isFileBackedProject(projectId)) {
           try {
             const payload = await loadModulePayloadFromFile(projectId);
-            if (payload && isCharacterProfilesPayload(payload)) {
+            if (payload && isChartsPayload(payload)) {
               try {
-                localStorage.setItem(PROFILES_STORAGE_KEY(projectId), JSON.stringify(payload.characters));
+                localStorage.setItem(CHARTS_STORAGE_KEY(projectId), JSON.stringify(payload.characters));
                 localStorage.setItem(TEMPLATES_STORAGE_KEY(projectId), JSON.stringify(payload.templates));
                 if (payload.chartSectionLayout) {
                   localStorage.setItem(CHART_SECTION_LAYOUT_KEY(projectId), payload.chartSectionLayout);
@@ -1086,7 +1101,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
               return;
             }
           } catch (e) {
-            console.warn("[CharacterProfilesStore] File load failed, using localStorage:", e);
+            console.warn("[ChartsStore] File load failed, using localStorage:", e);
           }
         }
         const chars = loadFromStorage(projectId);
@@ -1672,7 +1687,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
     updateTemplate: (projectId, templateId) => {
       const pid = projectId || get().activeProjectId;
       if (!pid) {
-        console.warn("[CharacterProfilesStore] updateTemplate: no projectId or activeProjectId");
+        console.warn("[ChartsStore] updateTemplate: no projectId or activeProjectId");
         return false;
       }
       const sections = get().createLayoutDraftSections;
@@ -1681,11 +1696,11 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
       const templates = loadTemplatesFromStorage(pid);
       const template = templates.find((t) => t.id === templateId);
       if (!template) {
-        console.warn("[CharacterProfilesStore] updateTemplate: template not found", { projectId: pid, templateId });
+        console.warn("[ChartsStore] updateTemplate: template not found", { projectId: pid, templateId });
         return false;
       }
       if (!sections || sections.length === 0) {
-        console.warn("[CharacterProfilesStore] updateTemplate: createLayoutDraftSections is empty");
+        console.warn("[ChartsStore] updateTemplate: createLayoutDraftSections is empty");
       }
       try {
         const templateSections = sectionsToTemplateFormat(sections);
@@ -1710,7 +1725,7 @@ export const useCharacterProfilesStore = create<CharacterProfilesStore>(
         set({ createLayoutDirty: false });
         return true;
       } catch (e) {
-        console.warn("[CharacterProfilesStore] updateTemplate failed:", e);
+        console.warn("[ChartsStore] updateTemplate failed:", e);
         return false;
       }
     },

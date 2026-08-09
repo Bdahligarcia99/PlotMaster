@@ -23,11 +23,11 @@ import IdeasEntitiesPanel from "../components/ideas/IdeasEntitiesPanel";
 import IdeasCanvasPlaceholder from "../components/ideas/IdeasCanvasPlaceholder";
 import IdeasScriptPane from "../components/ideas/IdeasScriptPane";
 import IdeasInspector from "../components/ideas/IdeasInspector";
-import ProfilesEntitiesPanel from "../components/profiles/ProfilesEntitiesPanel";
-import ProfilesToolbar from "../components/profiles/ProfilesToolbar";
-import ProfilesChartEditor from "../components/profiles/ProfilesChartEditor";
-import ProfilesScriptPane from "../components/profiles/ProfilesScriptPane";
-import ProfilesInspector from "../components/profiles/ProfilesInspector";
+import ChartsEntitiesPanel from "../components/charts/ChartsEntitiesPanel";
+import ChartsToolbar from "../components/charts/ChartsToolbar";
+import ChartsEditor from "../components/charts/ChartsEditor";
+import ChartsScriptPane from "../components/charts/ChartsScriptPane";
+import ChartsInspector from "../components/charts/ChartsInspector";
 
 export default function WorkspaceShell() {
   const { id } = useParams<{ id: string }>();
@@ -54,7 +54,7 @@ export default function WorkspaceShell() {
     }
   }, [project?.moduleType, primarySelectedNodeId]);
 
-  // When project not found, try hydrating from driver (e.g. characterProfiles from driver list)
+  // When project not found, try hydrating from driver (e.g. charts from driver list)
   useEffect(() => {
     if (!id || project || hydrating) return;
     setHydrating(true);
@@ -75,8 +75,8 @@ export default function WorkspaceShell() {
   const isFamilyTree = project?.moduleType === "Family Tree";
   const isTimeline = project?.moduleType === "Timeline";
   const isIdeas = project?.moduleType === "Ideas";
-  const isProfiles = project?.moduleType === "Profiles";
-  const hasPanelLayout = isFamilyTree || isTimeline || isIdeas || isProfiles;
+  const isCharts = project?.moduleType === "Charts" || project?.moduleType === "Profiles";
+  const hasPanelLayout = isFamilyTree || isTimeline || isIdeas || isCharts;
 
   useWindowTitle(project ? `${project.name} - Synapse IWE` : "Synapse IWE");
 
@@ -121,14 +121,14 @@ export default function WorkspaceShell() {
             <div className="h-4 w-px bg-dark-accent" />
             <span className="text-dark-text font-medium truncate max-w-[200px]">{project.name}</span>
             <ModuleBadge label={project.moduleType} />
-            {(isFamilyTree || isProfiles) && (
+            {(isFamilyTree || isCharts) && (
               <>
                 <div className="h-4 w-px bg-dark-accent" />
                 <ModeSwitchNavbar
                   slots={[
                     {
                       id: "primary",
-                      label: isFamilyTree ? "Family Tree" : "Characters",
+                      label: isFamilyTree ? "Family Tree" : "Charts",
                       active: true,
                     },
                     { id: "textEditor", label: "Text Editor", disabled: true },
@@ -140,7 +140,7 @@ export default function WorkspaceShell() {
           </div>
         }
         children={
-          id && (isProfiles || project?.moduleType === "Profiles") ? (
+          id && isCharts ? (
             <ModuleSwitcherNavbar currentProjectId={id} />
           ) : undefined
         }
@@ -326,15 +326,15 @@ export default function WorkspaceShell() {
             </div>
             {inspectorOpen && <IdeasInspector />}
           </div>
-        ) : isProfiles ? (
+        ) : isCharts ? (
           <>
-            <ProfilesToolbar />
+            <ChartsToolbar />
             <div className="flex-1 flex min-h-0">
               <div
                 className="flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out flex"
                 style={{ width: leftSidebarOpen ? 260 : 0 }}
               >
-                <ProfilesEntitiesPanel />
+                <ChartsEntitiesPanel />
               </div>
               {!leftSidebarOpen && (
               <button
@@ -348,12 +348,12 @@ export default function WorkspaceShell() {
               </button>
             )}
             <div className="flex-1 flex flex-col min-h-0 min-w-0">
-              <ProfilesChartEditor />
+              <ChartsEditor />
               <div
                 className="flex-shrink-0 overflow-hidden transition-[height] duration-200 ease-in-out"
                 style={{ height: scriptPaneOpen ? 240 : 0 }}
               >
-                <ProfilesScriptPane />
+                <ChartsScriptPane />
               </div>
               {!scriptPaneOpen && (
                 <button
@@ -365,7 +365,7 @@ export default function WorkspaceShell() {
                 </button>
               )}
             </div>
-            {inspectorOpen && <ProfilesInspector />}
+            {inspectorOpen && <ChartsInspector />}
           </div>
           </>
         ) : (

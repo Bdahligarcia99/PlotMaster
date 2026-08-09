@@ -1,20 +1,20 @@
 import { useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { useCharacterProfilesStore } from "../../store/characterProfilesStore";
+import { useChartsStore } from "../../store/chartsStore";
 import Button from "../ui/Button";
 
-export default function ProfilesEntitiesPanel() {
+export default function ChartsEntitiesPanel() {
   const { id: projectId } = useParams<{ id: string }>();
-  const characters = useCharacterProfilesStore((s) => s.characters);
-  const selectedCharacterId = useCharacterProfilesStore((s) => s.selectedCharacterId);
-  const comparisonCharacterId = useCharacterProfilesStore((s) => s.comparisonCharacterId);
-  const setSelectedCharacter = useCharacterProfilesStore((s) => s.setSelectedCharacter);
-  const removeCharacter = useCharacterProfilesStore((s) => s.removeCharacter);
-  const updateCharacterName = useCharacterProfilesStore((s) => s.updateCharacterName);
-  const chartLayoutMode = useCharacterProfilesStore((s) => s.chartLayoutMode);
-  const editLayoutDirty = useCharacterProfilesStore((s) => s.editLayoutDirty);
-  const getTemplateById = useCharacterProfilesStore((s) => s.getTemplateById);
+  const characters = useChartsStore((s) => s.characters);
+  const selectedCharacterId = useChartsStore((s) => s.selectedCharacterId);
+  const comparisonCharacterId = useChartsStore((s) => s.comparisonCharacterId);
+  const setSelectedCharacter = useChartsStore((s) => s.setSelectedCharacter);
+  const removeCharacter = useChartsStore((s) => s.removeCharacter);
+  const updateCharacterName = useChartsStore((s) => s.updateCharacterName);
+  const chartLayoutMode = useChartsStore((s) => s.chartLayoutMode);
+  const editLayoutDirty = useChartsStore((s) => s.editLayoutDirty);
+  const getTemplateById = useChartsStore((s) => s.getTemplateById);
   const [editingCharacterId, setEditingCharacterId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [pendingCharacterId, setPendingCharacterId] = useState<string | null>(null);
@@ -31,12 +31,12 @@ export default function ProfilesEntitiesPanel() {
     e.preventDefault();
     e.stopPropagation();
     setEditingCharacterId(characterId);
-    setDraftName(currentName || "New Character");
+    setDraftName(currentName || "New Chart");
   };
 
   const saveEdit = (characterId: string) => {
     if (!projectId) return;
-    const trimmed = draftName.trim() || "New Character";
+    const trimmed = draftName.trim() || "New Chart";
     updateCharacterName(projectId, characterId, trimmed);
     setEditingCharacterId(null);
   };
@@ -98,7 +98,7 @@ export default function ProfilesEntitiesPanel() {
         <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
           Sub Entities
         </h2>
-        <p className="text-dark-muted text-xs mt-1">Character profiles</p>
+        <p className="text-dark-muted text-xs mt-1">Charts</p>
       </div>
       <div className="p-3 border-b border-dark-accent/50">
         <input

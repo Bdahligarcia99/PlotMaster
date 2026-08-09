@@ -7,7 +7,7 @@ import { FileBackedStorageDriver } from "./synproj/FileBackedStorageDriver";
 export type ProjectModuleType =
   | "familyTree"
   | "timeline"
-  | "characterProfiles"
+  | "charts"
   | "ideas";
 
 /** Project index entry. */

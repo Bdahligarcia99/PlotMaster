@@ -10,7 +10,7 @@ import { createTimelineProject } from "../home/createProject";
 const MODULE_STATS: Record<string, { stat1: string; stat2: string; stat3?: string }> = {
   Timeline: { stat1: "0 lanes", stat2: "0 anchors", stat3: "0 nodes" },
   "Family Tree": { stat1: "0 unions", stat2: "0 people" },
-  Profiles: { stat1: "0 profiles", stat2: "0 states" },
+  Charts: { stat1: "0 charts", stat2: "0 states" },
   Ideas: { stat1: "0 bubbles", stat2: "0 merges" },
 };
 

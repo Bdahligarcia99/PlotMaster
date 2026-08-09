@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useCharacterProfilesStore } from "../../store/characterProfilesStore";
+import { useChartsStore } from "../../store/chartsStore";
 
 export type TemplateModalMode = "save" | "load" | "manage" | null;
 
-interface ProfileTemplatesModalProps {
+interface ChartTemplatesModalProps {
   projectId: string | null;
   selectedCharacterId: string | null;
   mode: TemplateModalMode;
@@ -12,20 +12,20 @@ interface ProfileTemplatesModalProps {
   anchorRef: React.RefObject<HTMLElement | null>;
 }
 
-export default function ProfileTemplatesModal({
+export default function ChartTemplatesModal({
   projectId,
   selectedCharacterId,
   mode,
   onClose,
   anchorRef,
-}: ProfileTemplatesModalProps) {
-  const characters = useCharacterProfilesStore((s) => s.characters);
-  const listTemplates = useCharacterProfilesStore((s) => s.listTemplates);
-  const saveTemplateFromCharacter = useCharacterProfilesStore((s) => s.saveTemplateFromCharacter);
-  const applyTemplateToCharacter = useCharacterProfilesStore((s) => s.applyTemplateToCharacter);
-  const loadTemplateForEditing = useCharacterProfilesStore((s) => s.loadTemplateForEditing);
-  const renameTemplate = useCharacterProfilesStore((s) => s.renameTemplate);
-  const deleteTemplate = useCharacterProfilesStore((s) => s.deleteTemplate);
+}: ChartTemplatesModalProps) {
+  const characters = useChartsStore((s) => s.characters);
+  const listTemplates = useChartsStore((s) => s.listTemplates);
+  const saveTemplateFromCharacter = useChartsStore((s) => s.saveTemplateFromCharacter);
+  const applyTemplateToCharacter = useChartsStore((s) => s.applyTemplateToCharacter);
+  const loadTemplateForEditing = useChartsStore((s) => s.loadTemplateForEditing);
+  const renameTemplate = useChartsStore((s) => s.renameTemplate);
+  const deleteTemplate = useChartsStore((s) => s.deleteTemplate);
 
   const [saveName, setSaveName] = useState("");
   const [loadTemplateId, setLoadTemplateId] = useState<string | null>(null);
@@ -188,7 +188,7 @@ export default function ProfileTemplatesModal({
                 type="text"
                 value={saveName}
                 onChange={(e) => setSaveName(e.target.value)}
-                placeholder="e.g. Standard Character Profile"
+                placeholder="e.g. Standard Chart"
                 className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded text-dark-text text-sm placeholder:text-dark-muted focus:outline-none focus:border-blue-500"
                 onKeyDown={(e) => e.key === "Enter" && handleSave()}
               />

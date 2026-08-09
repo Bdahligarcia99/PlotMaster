@@ -85,7 +85,7 @@ export default function ProjectScopeBox({
       inputElRef.current?.focus();
       return;
     }
-    if (!AVAILABLE_MODULES.includes(moduleId as "familyTree" | "characters" | "timeline" | "ideaPlayground")) return;
+    if (!AVAILABLE_MODULES.includes(moduleId as "familyTree" | "charts" | "timeline" | "ideaPlayground")) return;
     onCreate?.(trimmed, [moduleId]);
   };
 
@@ -257,7 +257,7 @@ export default function ProjectScopeBox({
             const isCreateable =
               variant === "multi"
                 ? CREATEABLE_MODULES.includes(module.id as (typeof CREATEABLE_MODULES)[number])
-                : AVAILABLE_MODULES.includes(module.id as "familyTree" | "characters" | "timeline" | "ideaPlayground");
+                : AVAILABLE_MODULES.includes(module.id as "familyTree" | "charts" | "timeline" | "ideaPlayground");
             const isGreyedOut =
               variant === "multi"
                 ? !isCreateable

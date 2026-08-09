@@ -1,8 +1,17 @@
 import type { ProjectPayload, TimelineProjectPayload } from "../StorageDriver";
-import type { CharacterEntity, ChartLayoutTemplate, ChartSectionLayoutMode } from "../../store/characterProfilesStore";
+import type { CharacterEntity, ChartLayoutTemplate, ChartSectionLayoutMode } from "../../store/chartsStore";
 
-/** Character Profiles module payload for .synproj files. */
-export interface CharacterProfilesPayload {
+/** Charts module payload for .synproj files. */
+export interface ChartsPayload {
+  version: 1;
+  moduleType: "charts";
+  characters: CharacterEntity[];
+  templates: ChartLayoutTemplate[];
+  chartSectionLayout?: ChartSectionLayoutMode;
+}
+
+/** @deprecated Use ChartsPayload — legacy persisted moduleType value. */
+export interface LegacyCharacterProfilesPayload {
   version: 1;
   moduleType: "characterProfiles";
   characters: CharacterEntity[];
@@ -10,12 +19,29 @@ export interface CharacterProfilesPayload {
   chartSectionLayout?: ChartSectionLayoutMode;
 }
 
-export type AnyModulePayload = ProjectPayload | TimelineProjectPayload | CharacterProfilesPayload;
+export type AnyModulePayload = ProjectPayload | TimelineProjectPayload | ChartsPayload;
 
-export function isCharacterProfilesPayload(
+export function isChartsPayload(
   payload: AnyModulePayload | null | undefined
-): payload is CharacterProfilesPayload {
-  return payload?.moduleType === "characterProfiles";
+): payload is ChartsPayload {
+  const moduleType = (payload as { moduleType?: string } | null | undefined)?.moduleType;
+  return moduleType === "charts" || moduleType === "characterProfiles";
+}
+
+/** Normalizes a loaded payload to ChartsPayload (migrates legacy moduleType on read). */
+export function normalizeChartsPayload(
+  payload: AnyModulePayload | null | undefined
+): ChartsPayload | null {
+  if (!payload || !isChartsPayload(payload)) return null;
+  if (payload.moduleType === "charts") return payload;
+  const legacy = payload as LegacyCharacterProfilesPayload;
+  return {
+    version: legacy.version,
+    moduleType: "charts",
+    characters: legacy.characters,
+    templates: legacy.templates,
+    chartSectionLayout: legacy.chartSectionLayout,
+  };
 }
 
 /** Top-level .synproj file envelope. */

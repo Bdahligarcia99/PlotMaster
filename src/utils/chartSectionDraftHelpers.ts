@@ -6,7 +6,7 @@ import type {
   AttributeBlock,
   ImageBlock,
   AttributeMetaItem,
-} from "../store/characterProfilesStore";
+} from "../store/chartsStore";
 
 function generateId() {
   return `_${Math.random().toString(36).slice(2, 11)}`;

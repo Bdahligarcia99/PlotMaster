@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import Button from "../ui/Button";
-import { useCharacterProfilesStore } from "../../store/characterProfilesStore";
+import { useChartsStore } from "../../store/chartsStore";
 import { useParams } from "react-router-dom";
-import ProfileTemplatesModal, { type TemplateModalMode } from "./ProfileTemplatesModal";
+import ChartTemplatesModal, { type TemplateModalMode } from "./ChartTemplatesModal";
 
-export default function ProfilesToolbar() {
+export default function ChartsToolbar() {
   const { id } = useParams<{ id: string }>();
   const {
     activeProjectId,
@@ -16,7 +16,7 @@ export default function ProfilesToolbar() {
     addCharacter,
     chartSectionLayoutMode,
     setChartSectionLayoutMode,
-  } = useCharacterProfilesStore();
+  } = useChartsStore();
 
   const canEditStructure = chartLayoutMode === "edit";
   const isComparisonMode = Boolean(comparisonCharacterId);
@@ -55,7 +55,7 @@ export default function ProfilesToolbar() {
         disabled={!activeProjectId}
         title={
           activeProjectId
-            ? "Add a new character to the entity panel"
+            ? "Add a new chart to the entity panel"
             : "No project loaded"
         }
       >
@@ -72,7 +72,7 @@ export default function ProfilesToolbar() {
             d="M12 4v16m8-8H4"
           />
         </svg>
-        Character
+        Chart
       </Button>
 
       <div ref={templateButtonRef} className="relative flex rounded-lg overflow-hidden border border-dark-accent/50">
@@ -143,7 +143,7 @@ export default function ProfilesToolbar() {
         </button>
       </div>
 
-      <ProfileTemplatesModal
+      <ChartTemplatesModal
         projectId={id ?? null}
         selectedCharacterId={selectedCharacterId}
         mode={templateModalMode}
