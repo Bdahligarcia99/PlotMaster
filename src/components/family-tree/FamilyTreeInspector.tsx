@@ -461,9 +461,7 @@ function PersonUnionsSection({
   updateUnionPartnerRole,
   swapPersonUnionSides,
   moveChildToUnion,
-  removePartnerFromUnion,
-  removeChildFromUnion,
-  removeNodes,
+  requestRemoveConnection,
 }: {
   personId: string;
   nodes: { id: string; type?: string; data: unknown }[];
@@ -472,9 +470,7 @@ function PersonUnionsSection({
   updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
   swapPersonUnionSides: (personId: string) => boolean;
   moveChildToUnion: (childId: string, fromUnionId: string, toUnionId: string) => boolean;
-  removePartnerFromUnion: (unionId: string, personId: string) => string | null;
-  removeChildFromUnion: (unionId: string, childId: string) => string | null;
-  removeNodes: (nodeIds: string[]) => void;
+  requestRemoveConnection: (target: import("../../store/familyTreeStore").RemoveConnectionTarget) => string | null;
 }) {
   const parentUnions = getParentUnionsForPerson(personId, nodes, edges);
   if (parentUnions.length === 0) return null;
@@ -493,7 +489,7 @@ function PersonUnionsSection({
     if (unionIds.size <= 1) {
       setOrphanModal({ open: true, personId: partnerId, displayName, unionId, kind: "partner" });
     } else {
-      const err = removePartnerFromUnion(unionId, partnerId);
+      const err = requestRemoveConnection({ kind: "partnerEdge", unionId, personId: partnerId });
       if (err) alert(err);
     }
   };
@@ -504,25 +500,25 @@ function PersonUnionsSection({
     if (unionIds.size <= 1) {
       setOrphanModal({ open: true, personId: childId, displayName, unionId, kind: "child" });
     } else {
-      removeChildFromUnion(unionId, childId);
+      const err = requestRemoveConnection({ kind: "childEdge", unionId, personId: childId });
+      if (err) alert(err);
     }
   };
 
   const confirmOrphanRemove = () => {
-    if (orphanModal.kind === "partner") {
-      const err = removePartnerFromUnion(orphanModal.unionId, orphanModal.personId);
-      if (err) {
-        alert(err);
-        return;
-      }
-    } else {
-      const err = removeChildFromUnion(orphanModal.unionId, orphanModal.personId);
-      if (err) {
-        alert(err);
-        return;
-      }
+    const edgeTarget =
+      orphanModal.kind === "partner"
+        ? ({ kind: "partnerEdge" as const, unionId: orphanModal.unionId, personId: orphanModal.personId })
+        : ({ kind: "childEdge" as const, unionId: orphanModal.unionId, personId: orphanModal.personId });
+    const err = requestRemoveConnection(edgeTarget);
+    if (err) {
+      alert(err);
+      return;
     }
-    removeNodes([orphanModal.personId]);
+    if (!useFamilyTreeStore.getState().pendingBloodlineWarning) {
+      const personErr = requestRemoveConnection({ kind: "person", personId: orphanModal.personId });
+      if (personErr) alert(personErr);
+    }
     setOrphanModal((o) => ({ ...o, open: false }));
   };
 
@@ -703,9 +699,7 @@ export default function FamilyTreeInspector() {
     swapPersonUnionSides,
     updateUnionPartnerRole,
     moveChildToUnion,
-    removePartnerFromUnion,
-    removeChildFromUnion,
-    removeNodes,
+    requestRemoveConnection,
     generationAnchors,
     genLabelMode,
     updateNodeGenAnchor,
@@ -1006,9 +1000,7 @@ export default function FamilyTreeInspector() {
             updateUnionPartnerRole={updateUnionPartnerRole}
             swapPersonUnionSides={swapPersonUnionSides}
             moveChildToUnion={moveChildToUnion}
-            removePartnerFromUnion={removePartnerFromUnion}
-            removeChildFromUnion={removeChildFromUnion}
-            removeNodes={removeNodes}
+            requestRemoveConnection={requestRemoveConnection}
           />
           <div className="mb-4">
             <div className="space-y-2">

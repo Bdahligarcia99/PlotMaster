@@ -40,7 +40,7 @@ import GenerationRuler from "./GenerationRuler";
 import NodeSpacingOverlay from "./NodeSpacingOverlay";
 import ExportGuidesOverlay from "./ExportGuidesOverlay";
 import FamilyTreeLegend from "./FamilyTreeLegend";
-import FamilyTreeFamilyNamePromptModal from "./FamilyTreeFamilyNamePromptModal";
+import FamilyBloodlineWarningModal from "./FamilyBloodlineWarningModal";
 import Modal from "../ui/Modal";
 
 function ViewportBoundsSync() {
@@ -438,8 +438,9 @@ export default function FamilyTreeCanvas({
   const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const families = useFamilyTreeStore((s) => s.families);
-  const pendingFamilyNamePrompt = useFamilyTreeStore((s) => s.pendingFamilyNamePrompt);
-  const resolveFamilyNamePrompt = useFamilyTreeStore((s) => s.resolveFamilyNamePrompt);
+  const pendingBloodlineWarning = useFamilyTreeStore((s) => s.pendingBloodlineWarning);
+  const resolveBloodlineWarning = useFamilyTreeStore((s) => s.resolveBloodlineWarning);
+  const familyConnectionNotice = useFamilyTreeStore((s) => s.familyConnectionNotice);
 
   const visibleNodeIds = useMemo(() => {
     if (!isolationModeActive || activeFamilyTabId == null) return null;
@@ -704,7 +705,7 @@ export default function FamilyTreeCanvas({
   return (
     <div
       ref={viewportRef}
-      className={`flex-1 min-h-0 ${showSpacePanCursor ? "cursor-grab [&.panning]:cursor-grabbing" : ""}`}
+      className={`relative flex-1 min-h-0 ${showSpacePanCursor ? "cursor-grab [&.panning]:cursor-grabbing" : ""}`}
       onPointerDown={(e) => {
         if (showSpacePanCursor && e.button === 0) {
           (e.currentTarget as HTMLElement).classList.add("panning");
@@ -766,10 +767,17 @@ export default function FamilyTreeCanvas({
         {showLegend && <FamilyTreeLegend />}
         {marqueeToolActive && <MarqueeOverlay isSpacePanning={isSpacePanning} />}
       </ReactFlow>
-      <FamilyTreeFamilyNamePromptModal
-        prompt={pendingFamilyNamePrompt}
-        onResolve={resolveFamilyNamePrompt}
+      <FamilyBloodlineWarningModal
+        isOpen={!!pendingBloodlineWarning}
+        familyName={pendingBloodlineWarning?.familyName ?? ""}
+        onResolve={resolveBloodlineWarning}
+        onClose={() => useFamilyTreeStore.setState({ pendingBloodlineWarning: null })}
       />
+      {familyConnectionNotice && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-dark-surface border border-dark-accent text-dark-text text-sm shadow-lg pointer-events-none">
+          {familyConnectionNotice}
+        </div>
+      )}
       <Modal
         isOpen={!!pendingGenChangePrompt}
         onClose={() => resolveGenChangePrompt("cancel")}

@@ -91,7 +91,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
-  const removeNodes = useFamilyTreeStore((s) => s.removeNodes);
+  const requestRemoveConnection = useFamilyTreeStore((s) => s.requestRemoveConnection);
   const families = useFamilyTreeStore((s) => s.families);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const setActiveFamilyTabId = useFamilyTreeStore((s) => s.setActiveFamilyTabId);
@@ -304,7 +304,17 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
   };
 
   const handleConfirmDelete = () => {
-    removeNodes(selectedNodeIds);
+    for (const id of selectedNodeIds) {
+      const node = nodes.find((n) => n.id === id);
+      const kind = (node?.data as { kind?: string })?.kind;
+      const target =
+        kind === "union"
+          ? ({ kind: "union" as const, unionId: id })
+          : ({ kind: "person" as const, personId: id });
+      const err = requestRemoveConnection(target);
+      if (err) alert(err);
+      if (useFamilyTreeStore.getState().pendingBloodlineWarning) break;
+    }
     setDeleteConfirmOpen(false);
   };
 

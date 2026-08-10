@@ -111,6 +111,8 @@ A comprehensive inventory of all UI elements (buttons, dropdowns, inputs, etc.) 
 | **Ctrl/Cmd+click node** | Toggle selection |
 | **Marquee drag** (when Marquee Select active) | Box-select multiple nodes; Shift=add, Alt=subtract |
 | **Double-click PersonNode** | Inline-edit person name |
+| **Person node top unlink** | Hover button above person; detaches from parent union (disabled when none) |
+| **Person node bottom unlink** | Hover button below person; detaches from partner union (disabled when none; with 2+ unions requires selecting target union first) |
 | **Generation ruler label** | Click to edit custom label; Enter to save, Escape to cancel |
 
 ### 5.3 Overlays (informational, mostly non-interactive)
@@ -210,6 +212,7 @@ A comprehensive inventory of all UI elements (buttons, dropdowns, inputs, etc.) 
 
 | Modal | Trigger | Contents |
 |-------|---------|----------|
+| **Bloodline warning** | Deleting a bridge connection inside a family (union delete, unlink, or person delete) | "Delete all descendants?" — No / Yes, delete descendants |
 | **Reload?** | Reload button when unsaved | Confirm discarding unsaved changes; Cancel / Continue |
 | **Intro/Projects** | Projects button in top bar | Create project, recent projects (outside Family Tree component) |
 

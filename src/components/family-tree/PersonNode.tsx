@@ -15,6 +15,8 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const anchorNodeId = useFamilyTreeStore((s) => s.anchorNodeId);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
+  const requestRemoveConnection = useFamilyTreeStore((s) => s.requestRemoveConnection);
   const isAnchor = anchorNodeId === id;
   const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
   const nodes = useFamilyTreeStore((s) => s.nodes);
@@ -83,8 +85,87 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const centerX = Math.round(x + size.width / 2);
   const centerY = Math.round(y + size.height / 2);
 
+  const parentUnionEdges = edges.filter(
+    (e) => e.target === id && (e.data as { type?: string })?.type === "child"
+  );
+  const parentUnionId = parentUnionEdges[0]?.source ?? null;
+  const partnerUnionEdges = edges.filter(
+    (e) => e.source === id && (e.data as { type?: string })?.type === "partner"
+  );
+  const partnerUnionIds = partnerUnionEdges.map((e) => e.target);
+  const selectedPartnerUnionId =
+    partnerUnionIds.length >= 2
+      ? partnerUnionIds.find((uid) => selectedNodeIds.includes(uid)) ?? null
+      : partnerUnionIds[0] ?? null;
+  const bottomUnlinkEnabled =
+    partnerUnionIds.length === 1 ||
+    (partnerUnionIds.length >= 2 && selectedPartnerUnionId != null);
+
+  const unlinkButtonClass = (enabled: boolean) =>
+    `absolute left-1/2 -translate-x-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-dark-surface border transition-opacity z-20 ${
+      enabled
+        ? "border-dark-accent text-dark-muted hover:text-dark-text hover:border-red-500 opacity-0 group-hover:opacity-100 cursor-pointer"
+        : "border-dark-accent/40 text-dark-muted/40 opacity-0 group-hover:opacity-40 cursor-not-allowed"
+    }`;
+
+  const handleUnlinkParent = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!parentUnionId) return;
+    const err = requestRemoveConnection({
+      kind: "childEdge",
+      unionId: parentUnionId,
+      personId: id,
+    });
+    if (err) alert(err);
+  };
+
+  const handleUnlinkPartner = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!bottomUnlinkEnabled || !selectedPartnerUnionId) return;
+    const err = requestRemoveConnection({
+      kind: "partnerEdge",
+      unionId: selectedPartnerUnionId,
+      personId: id,
+    });
+    if (err) alert(err);
+  };
+
   return (
     <div className="relative group" onPointerDown={handleRootPointerDown}>
+      <button
+        type="button"
+        title={
+          parentUnionId
+            ? "Unlink from parent union"
+            : "No parent union to unlink"
+        }
+        disabled={!parentUnionId}
+        onClick={handleUnlinkParent}
+        onPointerDown={(e) => e.stopPropagation()}
+        className={`${unlinkButtonClass(!!parentUnionId)} -top-6`}
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        title={
+          partnerUnionIds.length === 0
+            ? "No partner union to unlink"
+            : partnerUnionIds.length >= 2 && !selectedPartnerUnionId
+              ? "Select a union below to unlink"
+              : "Unlink from partner union"
+        }
+        disabled={!bottomUnlinkEnabled}
+        onClick={handleUnlinkPartner}
+        onPointerDown={(e) => e.stopPropagation()}
+        className={`${unlinkButtonClass(bottomUnlinkEnabled)} -bottom-6`}
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
+        </svg>
+      </button>
       {/* Hover tooltip */}
       <div className={tooltipClass}>
         Click to select and edit in properties panel

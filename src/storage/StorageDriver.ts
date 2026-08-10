@@ -58,6 +58,16 @@ export interface GenerationAnchor {
   customLabel?: string;
 }
 
+/** Persisted family tab — union membership frozen until explicitly changed. */
+export interface PersistedFamilyRecord {
+  id: string;
+  unionIds: string[];
+  name: string;
+  isCustomName: boolean;
+  description: string;
+  parentFamilyIds?: [string, string];
+}
+
 /** Project payload (family tree). */
 export interface ProjectPayload {
   version: 1;
@@ -68,6 +78,9 @@ export interface ProjectPayload {
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
   connectionStyles?: ConnectionStyleDef[];
+  /** Persisted family tabs with frozen union membership. */
+  families?: PersistedFamilyRecord[];
+  /** @deprecated Read-only migration source; use `families` instead. */
   customFamilyNames?: { unionIds: string[]; name: string; description?: string }[];
   ui?: FamilyTreeUIFlags;
 }
