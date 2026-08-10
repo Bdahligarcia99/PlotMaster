@@ -35,15 +35,29 @@ export default function ProjectSaveControls({
       {exportSlot ? (
         exportSlot
       ) : (
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={exportDisabled}
-          title="Not available for this module yet"
-          className="opacity-50 cursor-not-allowed"
+        <div
+          className="relative flex rounded-lg border border-dark-accent/50 opacity-50 cursor-not-allowed"
+          aria-disabled={exportDisabled}
         >
-          Export
-        </Button>
+          <button
+            type="button"
+            disabled={exportDisabled}
+            title="Not available for this module yet"
+            className="px-3 py-1.5 rounded-none border-0 rounded-l-lg bg-dark-accent text-dark-text text-sm font-medium cursor-not-allowed"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            disabled={exportDisabled}
+            title="Not available for this module yet"
+            className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent text-dark-text text-sm flex items-center justify-center cursor-not-allowed"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
       )}
       <Button
         variant="primary"
