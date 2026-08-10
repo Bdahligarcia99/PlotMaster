@@ -5,6 +5,7 @@ import type { CharacterEntity, ChartLayoutTemplate, ChartSectionLayoutMode } fro
 export interface ChartsPayload {
   version: 1;
   moduleType: "charts";
+  displayMode?: "charts";
   characters: CharacterEntity[];
   templates: ChartLayoutTemplate[];
   chartSectionLayout?: ChartSectionLayoutMode;
@@ -38,6 +39,7 @@ export function normalizeChartsPayload(
   return {
     version: legacy.version,
     moduleType: "charts",
+    displayMode: "charts",
     characters: legacy.characters,
     templates: legacy.templates,
     chartSectionLayout: legacy.chartSectionLayout,

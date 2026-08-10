@@ -141,6 +141,7 @@ export function buildChartsPayloadFromLocalStorage(projectId: string): ChartsPay
   return {
     version: 1,
     moduleType: "charts",
+    displayMode: "charts",
     characters,
     templates,
     chartSectionLayout,

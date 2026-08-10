@@ -382,6 +382,7 @@ async function persistChartsModuleToFile(projectId: string): Promise<void> {
     const payload = {
       version: 1 as const,
       moduleType: "charts" as const,
+      displayMode: "charts" as const,
       characters: loadFromStorage(projectId),
       templates: loadTemplatesFromStorage(projectId),
       chartSectionLayout: loadChartSectionLayoutMode(projectId),

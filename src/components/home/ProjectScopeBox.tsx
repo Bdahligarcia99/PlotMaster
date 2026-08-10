@@ -9,6 +9,7 @@ const ACCORDION_DURATION_MS = 250;
 const ACCORDION_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 
 type ProjectScopeBoxVariant = "multi" | "quick";
+type CreateModuleTab = "core" | "engrams";
 
 interface ProjectScopeBoxProps {
   variant: ProjectScopeBoxVariant;
@@ -35,6 +36,7 @@ export default function ProjectScopeBox({
   const [selectedModules, setSelectedModules] = useState<Set<string>>(new Set());
   const [validationError, setValidationError] = useState<string | null>(null);
   const [storageMode, setStorageMode] = useState<"localStorage" | "file">("localStorage");
+  const [createModuleTab, setCreateModuleTab] = useState<CreateModuleTab>("engrams");
   const inputElRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -251,9 +253,47 @@ export default function ProjectScopeBox({
           </div>
         )}
 
+        {/* Module tier tabs (Create Project multi variant) */}
+        {variant === "multi" && (
+          <div
+            role="tablist"
+            aria-label="Module tier"
+            className="flex gap-1"
+          >
+            {(
+              [
+                { id: "engrams" as const, label: "Engrams" },
+                { id: "core" as const, label: "Core" },
+              ] as const
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={createModuleTab === id}
+                onClick={() => setCreateModuleTab(id)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors
+                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 focus:ring-offset-dark-surface
+                  ${createModuleTab === id ? "bg-dark-accent text-dark-text" : "text-dark-muted hover:text-dark-text"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Module tiles grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {MODULE_REGISTRY.map((module) => {
+        <div
+          className={`grid gap-3 ${
+            variant === "multi" && createModuleTab === "core"
+              ? "grid-cols-1"
+              : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+          }`}
+        >
+          {MODULE_REGISTRY.filter((module) => {
+            if (variant !== "multi") return module.tier === "sub";
+            return createModuleTab === "core" ? module.tier === "primary" : module.tier === "sub";
+          }).map((module) => {
             const isCreateable =
               variant === "multi"
                 ? CREATEABLE_MODULES.includes(module.id as (typeof CREATEABLE_MODULES)[number])

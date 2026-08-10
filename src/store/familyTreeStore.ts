@@ -3928,6 +3928,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       const payload = {
         version: 1 as const,
         moduleType: "familyTree" as const,
+        displayMode: "nodes" as const,
         nodes: s.nodes,
         edges: s.edges,
         anchorNodeId: s.anchorNodeId,
@@ -4034,6 +4035,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       driver.saveProjectData(pid, {
         version: 1,
         moduleType: "familyTree",
+        displayMode: "nodes",
         nodes: [],
         edges: [],
         anchorNodeId: null,

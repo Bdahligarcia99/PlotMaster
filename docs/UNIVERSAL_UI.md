@@ -340,21 +340,36 @@ Centered in `TopBar` via the `children` slot. Icon buttons for each module enabl
 />
 ```
 
-### Mode-Switch Navbar
+### Display Mode Dropdown
 
-Per-module pill group in `TopBar` `left`: primary module mode | Text Editor (future global) | Entities (future global). Text Editor and Entities are disabled placeholders except Timeline Outliner's local Text Editor mode.
+Cross-cutting display mode selector in `TopBar` `children`, positioned to the left of the module switcher navbar. Replaces the old per-module mode-switch navbar (module name / Text Editor / Entities placeholders).
 
-**Component:** `src/components/ui/ModeSwitchNavbar.tsx`
+**Component:** `src/components/ui/DisplayModeDropdown.tsx`
+
+**Support matrix:** `src/home/displayModes.ts` — data-driven list of which modes each Engram supports (Block, Nodes, Charts, Text). Unsupported modes appear greyed out in the dropdown; modules with zero supported modes show a disabled "Display Mode: None" trigger.
 
 ```tsx
-<ModeSwitchNavbar
-  slots={[
-    { id: "primary", label: "Characters", active: true },
-    { id: "textEditor", label: "Text Editor", disabled: true },
-    { id: "entities", label: "Entities", disabled: true },
-  ]}
+<TopBar
+  left={/* Projects + project name + module badge */}
+  children={
+    <div className="flex items-center justify-center gap-3">
+      <DisplayModeDropdown
+        activeMode={displayMode}
+        supportedModes={["block", "text"]}
+        onSelect={(mode) => setDisplayMode(mode === "text" ? "text" : "block")}
+      />
+      <ModuleSwitcherNavbar currentProjectId={projectId} />
+    </div>
+  }
+  right={/* Save + panel toggles */}
 />
 ```
+
+Timeline Outliner persists `displayMode` in its project payload; other Engrams write their fixed native mode on save.
+
+### Create Project — Core vs Engrams
+
+The intro screen Create Project module picker uses two tabs: **Engrams** (default, two-per-row grid of functional modules) and **Core** (Neuron and Axon placeholders, full-width single-column cards, greyed out). Tier is defined on `ModuleRegistryItem.tier` in `src/home/moduleRegistry.ts` (`"primary"` = Core, `"sub"` = Engram; UI labels only).
 
 ---
 

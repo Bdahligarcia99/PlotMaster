@@ -35,16 +35,35 @@ export interface ModuleRegistryItem {
   label: string;
   icon: string;
   available: boolean;
+  /** "primary" = Core tier (Neuron, Axon); "sub" = Engram tier. */
+  tier: "primary" | "sub";
   description?: string;
 }
 
 /** Canonical module order used anywhere multiple module indicators are shown together. */
 export const MODULE_REGISTRY: ModuleRegistryItem[] = [
   {
+    id: "neuron",
+    label: "Neuron",
+    icon: "🗂️",
+    available: false,
+    tier: "primary",
+    description: "Scrivener-style binder for hierarchical text files.",
+  },
+  {
+    id: "axon",
+    label: "Axon",
+    icon: "🕸️",
+    available: false,
+    tier: "primary",
+    description: "Cross-module link viewer and relationship manager.",
+  },
+  {
     id: "familyTree",
     label: "Family Tree",
     icon: "👪",
     available: true,
+    tier: "sub",
     description: "Create node-based family tree layouts.",
   },
   {
@@ -52,6 +71,7 @@ export const MODULE_REGISTRY: ModuleRegistryItem[] = [
     label: "Charts",
     icon: "👤",
     available: true,
+    tier: "sub",
     description: "Design, edit, and create charts for your writing projects.",
   },
   {
@@ -59,6 +79,7 @@ export const MODULE_REGISTRY: ModuleRegistryItem[] = [
     label: "Timeline Outliner",
     icon: "🗓️",
     available: true,
+    tier: "sub",
     description: "Plan your stories with advanced plot grids.",
   },
   {
@@ -66,9 +87,16 @@ export const MODULE_REGISTRY: ModuleRegistryItem[] = [
     label: "Ideas Playground",
     icon: "🧠",
     available: true,
+    tier: "sub",
     description: "Dump, digest, develop ideas into story components.",
   },
-  { id: "imagePlayground", label: "Image Playground", icon: "🖼️", available: false },
+  {
+    id: "imagePlayground",
+    label: "Image Playground",
+    icon: "🖼️",
+    available: false,
+    tier: "sub",
+  },
 ];
 
 /** Driver index moduleType values that aren't display names. */

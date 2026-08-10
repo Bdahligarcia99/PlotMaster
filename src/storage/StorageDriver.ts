@@ -62,6 +62,7 @@ export interface GenerationAnchor {
 export interface ProjectPayload {
   version: 1;
   moduleType: "familyTree";
+  displayMode?: "nodes";
   nodes: Node<unknown>[];
   edges: Edge[];
   anchorNodeId: string | null;
@@ -136,6 +137,7 @@ export interface TimelineProjectPayload {
   version: 1;
   moduleType: "timeline";
   timelineOrientation: TimelineOrientation;
+  displayMode?: "block" | "text";
   lanes?: TimelineLaneRecord[];
   beats?: TimelineBeatRecord[];
   connections?: TimelineConnectionRecord[];

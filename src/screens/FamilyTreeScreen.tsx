@@ -8,7 +8,7 @@ const SCRIPT_MAX_H = 520;
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
-import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
+import DisplayModeDropdown from "../components/ui/DisplayModeDropdown";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import FamilyTreeCanvas from "../components/family-tree/FamilyTreeCanvas";
@@ -233,17 +233,20 @@ export default function FamilyTreeScreen() {
               </button>
             )}
             <ModuleBadge label="Family Tree" />
-            <div className="h-4 w-px bg-dark-accent" />
-            <ModeSwitchNavbar
-              slots={[
-                { id: "primary", label: "Family Tree", active: true },
-                { id: "textEditor", label: "Text Editor", disabled: true },
-                { id: "entities", label: "Entities", disabled: true },
-              ]}
-            />
           </div>
         }
-        children={projectId ? <ModuleSwitcherNavbar currentProjectId={projectId} /> : undefined}
+        children={
+          projectId ? (
+            <div className="flex items-center justify-center gap-3">
+              <DisplayModeDropdown
+                activeMode="nodes"
+                supportedModes={["nodes"]}
+                onSelect={() => {}}
+              />
+              <ModuleSwitcherNavbar currentProjectId={projectId} />
+            </div>
+          ) : undefined
+        }
         right={
           <div className="flex items-center gap-2">
             <FamilyTreeSaveControls />

@@ -73,6 +73,7 @@ export function createDefaultTimelinePayload(): TimelineProjectPayload {
     version: 1,
     moduleType: "timeline",
     timelineOrientation: "vertical",
+    displayMode: "block",
     lanes: [],
     beats: [],
     connections: [],
@@ -213,6 +214,7 @@ export function connectionMatchesBeatSet(connection: TimelineConnection, beatIds
 interface TimelineStore {
   activeProjectId: string | null;
   timelineOrientation: TimelineOrientation;
+  displayMode: "block" | "text";
   lanes: TimelineLane[];
   beats: TimelineBeat[];
   connections: TimelineConnection[];
@@ -237,6 +239,7 @@ interface TimelineStore {
   saveTimeline: () => Promise<boolean>;
   flushSaveAndSave: () => Promise<boolean>;
   setTimelineOrientation: (orientation: TimelineOrientation) => void;
+  setDisplayMode: (mode: "block" | "text") => void;
   setScriptPanelLayout: (layout: "split" | "codeOnly" | "viewOnly") => void;
   setZoomLaneCount: (count: number) => void;
   setBeatWidthPercent: (percent: number) => void;
@@ -311,6 +314,7 @@ interface TimelineStore {
 export const useTimelineStore = create<TimelineStore>((set, get) => ({
   activeProjectId: null,
   timelineOrientation: "vertical",
+  displayMode: "block",
   lanes: [],
   beats: [],
   connections: [],
@@ -338,6 +342,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const hadData = payload != null && isTimelineProjectPayload(payload);
     const orientation =
       hadData && payload.timelineOrientation === "horizontal" ? "horizontal" : "vertical";
+    const displayMode =
+      hadData && payload.displayMode === "text" ? "text" : "block";
     const lanes = hadData ? (payload.lanes ?? []) : [];
     const beats = hadData
       ? (payload.beats ?? [])
@@ -349,6 +355,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     set({
       activeProjectId: projectId,
       timelineOrientation: orientation,
+      displayMode,
       lanes,
       beats,
       connections,
@@ -391,6 +398,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         version: 1,
         moduleType: "timeline",
         timelineOrientation: s.timelineOrientation,
+        displayMode: s.displayMode,
         lanes: s.lanes,
         beats: s.beats,
         connections: s.connections,
@@ -422,6 +430,14 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   setTimelineOrientation: (orientation) => {
     set({
       timelineOrientation: orientation,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  },
+
+  setDisplayMode: (mode) => {
+    set({
+      displayMode: mode,
       hasUnsavedChanges: true,
       lastSaveError: null,
     });
@@ -1273,6 +1289,7 @@ let prevSnapshot = "";
 function storeSnapshot(state: TimelineStore): string {
   return JSON.stringify({
     orientation: state.timelineOrientation,
+    displayMode: state.displayMode,
     lanes: state.lanes,
     beats: state.beats,
     connections: state.connections,

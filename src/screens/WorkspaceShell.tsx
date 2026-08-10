@@ -4,8 +4,9 @@ import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
 import ProjectSaveControls from "../components/ui/ProjectSaveControls";
-import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
+import DisplayModeDropdown from "../components/ui/DisplayModeDropdown";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
+import { getSupportedDisplayModes, type DisplayMode } from "../home/displayModes";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
@@ -78,6 +79,26 @@ export default function WorkspaceShell() {
   const isCharts = project?.moduleType === "Charts" || project?.moduleType === "Profiles";
   const hasPanelLayout = isFamilyTree || isTimeline || isIdeas || isCharts;
 
+  const moduleRegistryId =
+    isFamilyTree ? "familyTree"
+    : isCharts ? "charts"
+    : isTimeline ? "timeline"
+    : isIdeas ? "ideaPlayground"
+    : "unknown";
+  const supportedDisplayModes = getSupportedDisplayModes(moduleRegistryId);
+  const activeDisplayMode: DisplayMode | undefined =
+    supportedDisplayModes.length === 1
+      ? supportedDisplayModes[0]
+      : isTimeline
+        ? "block"
+        : supportedDisplayModes.includes("nodes")
+          ? "nodes"
+          : supportedDisplayModes.includes("charts")
+            ? "charts"
+            : supportedDisplayModes.includes("block")
+              ? "block"
+              : undefined;
+
   useWindowTitle(project ? `${project.name} - Synapse IWE` : "Synapse IWE");
 
   if (!project) {
@@ -121,27 +142,18 @@ export default function WorkspaceShell() {
             <div className="h-4 w-px bg-dark-accent" />
             <span className="text-dark-text font-medium truncate max-w-[200px]">{project.name}</span>
             <ModuleBadge label={project.moduleType} />
-            {(isFamilyTree || isCharts) && (
-              <>
-                <div className="h-4 w-px bg-dark-accent" />
-                <ModeSwitchNavbar
-                  slots={[
-                    {
-                      id: "primary",
-                      label: isFamilyTree ? "Family Tree" : "Charts",
-                      active: true,
-                    },
-                    { id: "textEditor", label: "Text Editor", disabled: true },
-                    { id: "entities", label: "Entities", disabled: true },
-                  ]}
-                />
-              </>
-            )}
           </div>
         }
         children={
-          id && isCharts ? (
-            <ModuleSwitcherNavbar currentProjectId={id} />
+          id ? (
+            <div className="flex items-center justify-center gap-3">
+              <DisplayModeDropdown
+                activeMode={activeDisplayMode}
+                supportedModes={supportedDisplayModes}
+                onSelect={() => {}}
+              />
+              <ModuleSwitcherNavbar currentProjectId={id} />
+            </div>
           ) : undefined
         }
         right={

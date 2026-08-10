@@ -4,7 +4,7 @@ import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
-import ModeSwitchNavbar from "../components/ui/ModeSwitchNavbar";
+import DisplayModeDropdown from "../components/ui/DisplayModeDropdown";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import TimelineEntitiesPanel from "../components/timeline/TimelineEntitiesPanel";
@@ -36,8 +36,6 @@ const INSPECTOR_MAX_W = 900;
 const INSPECTOR_DEFAULT_EXPANDED_W = 640;
 const UNIFORM_PANE_WIDTH_DEFAULT_PX = 420;
 
-type WorkspaceMode = "outline" | "textEditor";
-
 type LaneDeleteConfirm = {
   docId: string;
   paneId: string;
@@ -48,7 +46,6 @@ export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("outline");
   const [textDrafts, setTextDrafts] = useState<TextEditorDrafts>({});
   const [panes, setPanes] = useState<TextEditorPane[]>([]);
   const [activePaneId, setActivePaneId] = useState<string | null>(null);
@@ -73,6 +70,8 @@ export default function TimelineScreen() {
   const pendingSaveAfterCommitRef = useRef(false);
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
+  const displayMode = useTimelineStore((s) => s.displayMode);
+  const setDisplayMode = useTimelineStore((s) => s.setDisplayMode);
   const flushSaveAndSave = useTimelineStore((s) => s.flushSaveAndSave);
   const saveDerivedLaneFile = useTimelineStore((s) => s.saveDerivedLaneFile);
   const saveUserDocumentContent = useTimelineStore((s) => s.saveUserDocumentContent);
@@ -82,7 +81,7 @@ export default function TimelineScreen() {
   const removeBeats = useTimelineStore((s) => s.removeBeats);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
 
-  const isTextEditor = workspaceMode === "textEditor";
+  const isTextEditor = displayMode === "text";
 
   const openFileIds = useMemo(
     () => panes.map((p) => p.docId).filter((id): id is string => id != null),
@@ -484,31 +483,20 @@ export default function TimelineScreen() {
               </button>
             )}
             <ModuleBadge label="Timeline Outliner" />
-            <div className="h-4 w-px bg-dark-accent" />
-            <ModeSwitchNavbar
-              slots={[
-                {
-                  id: "outline",
-                  label: "Outline",
-                  active: workspaceMode === "outline",
-                  onClick: () => setWorkspaceMode("outline"),
-                },
-                {
-                  id: "textEditor",
-                  label: "Text Editor",
-                  active: workspaceMode === "textEditor",
-                  onClick: () => setWorkspaceMode("textEditor"),
-                },
-                {
-                  id: "entities",
-                  label: "Entities",
-                  disabled: true,
-                },
-              ]}
-            />
           </div>
         }
-        children={projectId ? <ModuleSwitcherNavbar currentProjectId={projectId} /> : undefined}
+        children={
+          projectId ? (
+            <div className="flex items-center justify-center gap-3">
+              <DisplayModeDropdown
+                activeMode={displayMode}
+                supportedModes={["block", "text"]}
+                onSelect={(mode) => setDisplayMode(mode === "text" ? "text" : "block")}
+              />
+              <ModuleSwitcherNavbar currentProjectId={projectId} />
+            </div>
+          ) : undefined
+        }
         right={
           <div className="flex items-center gap-2">
             <TimelineSaveControls
