@@ -152,7 +152,7 @@ export default function WorkspaceShell() {
                 supportedModes={supportedDisplayModes}
                 onSelect={() => {}}
               />
-              <ModuleSwitcherNavbar currentProjectId={id} />
+              <ModuleSwitcherNavbar currentProjectId={id} currentModuleType={project.moduleType} />
             </div>
           ) : undefined
         }

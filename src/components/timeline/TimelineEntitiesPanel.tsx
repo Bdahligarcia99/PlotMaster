@@ -235,6 +235,7 @@ export default function TimelineEntitiesPanel({
   const folders = useTimelineStore((s) => s.folders);
   const activeFolderId = useTimelineStore((s) => s.activeFolderId);
   const setActiveFolderId = useTimelineStore((s) => s.setActiveFolderId);
+  const renameFolder = useTimelineStore((s) => s.renameFolder);
   const selection = useTimelineStore((s) => s.selection);
   const toggleSelection = useTimelineStore((s) => s.toggleSelection);
   const selectOnly = useTimelineStore((s) => s.selectOnly);
@@ -477,28 +478,6 @@ export default function TimelineEntitiesPanel({
         </h2>
         <p className="text-dark-muted text-xs mt-1">Folders → Lanes → Beats</p>
       </div>
-      {sortedFolders.length > 0 && (
-        <div className="p-2 border-b border-dark-accent/50 space-y-1">
-          <p className="text-[10px] uppercase tracking-wide text-dark-muted px-1">Folders</p>
-          {sortedFolders.map((folder) => {
-            const isActive = activeFolderId === folder.id;
-            return (
-              <button
-                key={folder.id}
-                type="button"
-                onClick={() => setActiveFolderId(folder.id)}
-                className={`w-full text-left px-3 py-1.5 rounded text-sm truncate ${
-                  isActive
-                    ? "bg-blue-500/20 text-dark-text ring-1 ring-blue-500/40"
-                    : "text-dark-muted hover:bg-dark-accent/30 hover:text-dark-text"
-                }`}
-              >
-                {folder.name}
-              </button>
-            );
-          })}
-        </div>
-      )}
       <div className="p-3 border-b border-dark-accent/50 space-y-2">
         {sortedLanes.length > 0 && (
           <div className="flex justify-end">
@@ -519,6 +498,66 @@ export default function TimelineEntitiesPanel({
           className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm placeholder-dark-muted focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
         />
       </div>
+      {sortedFolders.length > 0 && (
+        <div className="px-3 py-2 border-b border-dark-accent/50 min-w-0">
+          <div
+            role="tablist"
+            aria-label="Outline folders"
+            className="flex-1 min-w-0 overflow-x-auto flex gap-1 pb-0.5"
+          >
+            {sortedFolders.map((folder) => {
+              const isActive = activeFolderId === folder.id;
+              const isRenaming = renamingFolderId === folder.id;
+              if (isRenaming) {
+                return (
+                  <input
+                    key={folder.id}
+                    type="text"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => {
+                      renameFolder(folder.id, renameValue);
+                      setRenamingFolderId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        renameFolder(folder.id, renameValue);
+                        setRenamingFolderId(null);
+                      }
+                      if (e.key === "Escape") setRenamingFolderId(null);
+                    }}
+                    className="flex-shrink-0 px-2 py-1 rounded-md text-xs bg-dark-bg border border-blue-500/50 text-dark-text min-w-[80px] max-w-[140px]"
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                );
+              }
+              return (
+                <button
+                  key={folder.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveFolderId(folder.id)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setRenamingFolderId(folder.id);
+                    setRenameValue(folder.name);
+                  }}
+                  className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors max-w-[140px] truncate ${
+                    isActive
+                      ? "bg-dark-accent text-dark-text"
+                      : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+                  }`}
+                  title={folder.name}
+                >
+                  {folder.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
         {filteredLanes.length === 0 ? (
           <p className="text-dark-muted text-sm py-4 text-center">

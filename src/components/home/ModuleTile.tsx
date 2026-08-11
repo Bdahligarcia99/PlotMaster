@@ -104,8 +104,7 @@ export default function ModuleTile({
           onChange={isGreyedOut ? undefined : () => onSelect?.()}
           onClick={(e) => e.stopPropagation()}
           disabled={isGreyedOut}
-          className="w-4 h-4 rounded border-2 border-dark-accent bg-dark-bg text-blue-600
-            focus:ring-blue-500 focus:ring-offset-0 focus:ring-2 mt-0.5 flex-shrink-0 disabled:opacity-50"
+          className="themed-checkbox w-4 h-4 mt-0.5 disabled:opacity-50"
           aria-label={`Select ${module.label}`}
         />
         <span className="text-2xl flex-shrink-0">{module.icon}</span>

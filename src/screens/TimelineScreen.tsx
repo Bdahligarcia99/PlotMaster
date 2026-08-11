@@ -544,7 +544,7 @@ export default function TimelineScreen() {
                 supportedModes={["block", "text"]}
                 onSelect={(mode) => setDisplayMode(mode === "text" ? "text" : "block")}
               />
-              <ModuleSwitcherNavbar currentProjectId={projectId} />
+              <ModuleSwitcherNavbar currentProjectId={projectId} currentModuleType="Timeline" />
             </div>
           ) : undefined
         }

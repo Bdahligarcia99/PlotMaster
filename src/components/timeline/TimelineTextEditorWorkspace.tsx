@@ -87,6 +87,7 @@ export default function TimelineTextEditorWorkspace({
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
   const applyDocumentEdits = useTimelineStore((s) => s.applyDocumentEdits);
   const lanes = useTimelineStore((s) => s.lanes);
+  const ensureActiveFolder = useTimelineStore((s) => s.ensureActiveFolder);
 
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [activeTool, setActiveTool] = useState<BeatEditorTool>(null);
@@ -247,6 +248,7 @@ export default function TimelineTextEditorWorkspace({
 
   const handleInsertLane = () => {
     if (!activeFileId) return;
+    ensureActiveFolder();
     const content = getDocContent(activeFileId);
     const sortOrder = lanes.length;
     const label = getDefaultLaneLabel(sortOrder);

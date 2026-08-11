@@ -243,7 +243,7 @@ export default function FamilyTreeScreen() {
                 supportedModes={["nodes"]}
                 onSelect={() => {}}
               />
-              <ModuleSwitcherNavbar currentProjectId={projectId} />
+              <ModuleSwitcherNavbar currentProjectId={projectId} currentModuleType="Family Tree" />
             </div>
           ) : undefined
         }

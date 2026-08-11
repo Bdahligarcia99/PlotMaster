@@ -759,13 +759,13 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       sortOrder,
     };
     const now = Date.now();
-    const folderId = s.folders.length > 0 ? get().ensureActiveFolder() : undefined;
+    const folderId = get().ensureActiveFolder();
     const seedDoc: TimelineDocumentRecord = {
       id: generateTimelineId(),
       name: lane.label,
       content: generateTimelineScript([lane], [], [], { includeSectionMarkers: false }),
       updatedAt: now,
-      ...(folderId ? { folderId } : {}),
+      folderId,
     };
     set({
       lanes: [...s.lanes, lane],
