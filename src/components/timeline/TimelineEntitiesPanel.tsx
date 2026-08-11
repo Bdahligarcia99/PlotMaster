@@ -79,7 +79,7 @@ function DraggableFileRow({
         type="checkbox"
         checked={selected}
         onChange={onToggleSelect}
-        className="ml-2 shrink-0"
+        className="themed-checkbox ml-2 shrink-0"
         aria-label={`Select ${name}`}
         onClick={(e) => e.stopPropagation()}
       />
