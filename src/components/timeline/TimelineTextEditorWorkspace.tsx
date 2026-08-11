@@ -13,10 +13,11 @@ import {
   type FieldDisableFlags,
 } from "./beatEditor/beatDocumentModel";
 import { useTimelineStore, previewDocumentDeleteCounts } from "../../store/timelineStore";
-import { insertBeatAtCursor } from "../../store/timelineTextBlocks";
+import { insertBeatAtCursor, insertLaneAtCursor } from "../../store/timelineTextBlocks";
 import {
   BEAT_TEXT_SCALE_PERCENT_MAX,
   BEAT_TEXT_SCALE_PERCENT_MIN,
+  getDefaultLaneLabel,
 } from "../../store/timelineTypes";
 
 export interface TextEditorDrafts {
@@ -84,6 +85,8 @@ export default function TimelineTextEditorWorkspace({
   const addImportLabelPrefix = useTimelineStore((s) => s.addImportLabelPrefix);
   const removeImportLabelPrefix = useTimelineStore((s) => s.removeImportLabelPrefix);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
+  const applyDocumentEdits = useTimelineStore((s) => s.applyDocumentEdits);
+  const lanes = useTimelineStore((s) => s.lanes);
 
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [activeTool, setActiveTool] = useState<BeatEditorTool>(null);
@@ -145,6 +148,24 @@ export default function TimelineTextEditorWorkspace({
       setParseErrors([]);
     },
     [drafts, onDraftsChange]
+  );
+
+  const commitInsertToModel = useCallback(
+    (docId: string, content: string, cursorPos: number): boolean => {
+      const result = applyDocumentEdits([{ docId, content }]);
+      if (!result.ok) {
+        setParseErrors(result.errors);
+        return false;
+      }
+      setParseErrors([]);
+      onDraftsChange({
+        ...drafts,
+        [docId]: { content, dirty: false },
+      });
+      editorRefs.current.get(docId)?.setContentWithCursor(content, cursorPos);
+      return true;
+    },
+    [drafts, onDraftsChange, applyDocumentEdits]
   );
 
   const activePrefixList = importLabelPrefixes.filter((p) => activePrefixes.has(p));
@@ -221,8 +242,20 @@ export default function TimelineTextEditorWorkspace({
       setParseErrors([result.error]);
       return;
     }
-    setParseErrors([]);
-    setContent(activeFileId, result.content);
+    commitInsertToModel(activeFileId, result.content, result.cursorPos);
+  };
+
+  const handleInsertLane = () => {
+    if (!activeFileId) return;
+    const content = getDocContent(activeFileId);
+    const sortOrder = lanes.length;
+    const label = getDefaultLaneLabel(sortOrder);
+    const result = insertLaneAtCursor(content, sortOrder, label);
+    if (!result.ok) {
+      setParseErrors([result.error]);
+      return;
+    }
+    commitInsertToModel(activeFileId, result.content, result.cursorPos);
   };
 
   const handleDeleteFile = () => {
@@ -459,6 +492,15 @@ export default function TimelineTextEditorWorkspace({
           title="Insert an empty Beat block at the cursor (inside a Lane beats array)"
         >
           Insert beat
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleInsertLane}
+          disabled={!activeFileId}
+          title="Append a new empty Lane block to the active file"
+        >
+          Insert lane
         </Button>
         <Button
           variant="secondary"

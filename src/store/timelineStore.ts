@@ -6,6 +6,7 @@ import {
   type TimelineBeatRecord,
   type TimelineConnectionRecord,
   type TimelineDocumentRecord,
+  type TimelineFolderRecord,
   type TimelineOrientation,
   type TimelineProjectPayload,
 } from "../storage/StorageDriver";
@@ -16,6 +17,7 @@ import {
   findLaneBlockSpans,
   removeLaneBlockFromText,
 } from "./timelineTextBlocks";
+import { previewCrossingsTerminatedByMove } from "./timelineFolderHelpers";
 import {
   BEAT_GAP_PX,
   BEAT_TEXT_SCALE_PERCENT_MAX,
@@ -43,7 +45,7 @@ import {
 const SAVE_DEBOUNCE_MS = 500;
 
 export type { TimelineLane, TimelineBeat, TimelineConnection, TimelineSelectionItem, BeatDateSpec, BeatDateMode, BeatDateRelative } from "./timelineTypes";
-export type { TimelineOrientation, TimelineDocumentRecord } from "../storage/StorageDriver";
+export type { TimelineOrientation, TimelineDocumentRecord, TimelineFolderRecord } from "../storage/StorageDriver";
 export { resolveBeatDate, resolveBeatAbsoluteIso, emptyBeatDateSpec, dateSpecFromImportText, dateSpecFromResolvedText } from "../utils/beatDate";
 export { generateTimelineScript, parseTimelineScript, lineReferencesTimelineEntity, compactTimelineScriptDisplay } from "./timelineScript";
 export {
@@ -134,12 +136,14 @@ function normalizeLoadedBeat(beat: TimelineBeatRecord): TimelineBeat | null {
 }
 
 function stripLegacyDocumentFields(doc: TimelineDocumentRecord): TimelineDocumentRecord {
-  return {
+  const stripped: TimelineDocumentRecord = {
     id: doc.id,
     name: doc.name,
     content: doc.content,
     updatedAt: doc.updatedAt,
   };
+  if (doc.folderId) stripped.folderId = doc.folderId;
+  return stripped;
 }
 
 function combineDocumentContents(
@@ -332,9 +336,30 @@ interface TimelineStore {
   autosaveEnabled: boolean;
   importLabelPrefixes: string[];
   documents: TimelineDocumentRecord[];
+  folders: TimelineFolderRecord[];
+  activeFolderId: string | null;
   /** Ephemeral — doc ids with unsaved text-mode drafts; never persisted. */
   dirtyDocumentIds: string[];
   setDirtyDocumentIds: (ids: string[]) => void;
+  ensureActiveFolder: () => string;
+  createFolder: (name: string, docIdsToMove?: string[]) => string;
+  renameFolder: (folderId: string, name: string) => void;
+  deleteFolderCascade: (folderId: string) => {
+    fileCount: number;
+    laneCount: number;
+    beatCount: number;
+    crossingCount: number;
+  };
+  setActiveFolderId: (folderId: string) => void;
+  moveDocumentsToFolder: (
+    docIds: string[],
+    folderId: string,
+    connectionIdsToRemove?: string[]
+  ) => void;
+  previewMoveCrossingTermination: (
+    docIds: string[],
+    targetFolderId: string
+  ) => { connections: TimelineConnection[]; count: number };
   loadTimeline: (projectId: string) => Promise<{ hadData: boolean }>;
   saveTimeline: () => Promise<boolean>;
   flushSaveAndSave: () => Promise<boolean>;
@@ -428,9 +453,124 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   autosaveEnabled: true,
   importLabelPrefixes: [],
   documents: [],
+  folders: [],
+  activeFolderId: null,
   dirtyDocumentIds: [],
 
   setDirtyDocumentIds: (ids) => set({ dirtyDocumentIds: ids }),
+
+  ensureActiveFolder: () => {
+    const s = get();
+    if (s.folders.length > 0) {
+      const active = s.activeFolderId ?? s.folders[0]!.id;
+      if (active !== s.activeFolderId) {
+        set({ activeFolderId: active });
+      }
+      return active;
+    }
+    const id = generateTimelineId();
+    const folder: TimelineFolderRecord = { id, name: "Outline 1", sortOrder: 0 };
+    set({
+      folders: [folder],
+      activeFolderId: id,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    return id;
+  },
+
+  createFolder: (name, docIdsToMove = []) => {
+    const s = get();
+    const id = generateTimelineId();
+    const sortOrder = s.folders.length;
+    const trimmed = name.trim() || `Outline ${sortOrder + 1}`;
+    const folder: TimelineFolderRecord = { id, name: trimmed, sortOrder };
+    const moveSet = new Set(docIdsToMove);
+    const documents =
+      moveSet.size === 0
+        ? s.documents
+        : s.documents.map((d) => (moveSet.has(d.id) ? { ...d, folderId: id } : d));
+    set({
+      folders: [...s.folders, folder],
+      activeFolderId: id,
+      documents,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    return id;
+  },
+
+  renameFolder: (folderId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    set((s) => ({
+      folders: s.folders.map((f) => (f.id === folderId ? { ...f, name: trimmed } : f)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+  },
+
+  deleteFolderCascade: (folderId) => {
+    const s = get();
+    const folderDocs = s.documents.filter((d) => d.folderId === folderId);
+    let laneCount = 0;
+    let beatCount = 0;
+    let crossingCount = 0;
+    for (const doc of folderDocs) {
+      const counts = get().deleteDocumentCascade(doc.id, doc.content);
+      laneCount += counts.laneCount;
+      beatCount += counts.beatCount;
+      crossingCount += counts.crossingCount;
+    }
+    const remainingFolders = s.folders.filter((f) => f.id !== folderId);
+    const nextActive =
+      s.activeFolderId === folderId
+        ? (remainingFolders[0]?.id ?? null)
+        : s.activeFolderId;
+    set({
+      folders: remainingFolders,
+      activeFolderId: nextActive,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    return {
+      fileCount: folderDocs.length,
+      laneCount,
+      beatCount,
+      crossingCount,
+    };
+  },
+
+  setActiveFolderId: (folderId) => {
+    set({ activeFolderId: folderId, hasUnsavedChanges: true, lastSaveError: null });
+  },
+
+  moveDocumentsToFolder: (docIds, folderId, connectionIdsToRemove = []) => {
+    const moveSet = new Set(docIds);
+    const removeSet = new Set(connectionIdsToRemove);
+    set((s) => ({
+      documents: s.documents.map((d) =>
+        moveSet.has(d.id) ? { ...d, folderId, updatedAt: Date.now() } : d
+      ),
+      connections: s.connections.filter((c) => !removeSet.has(c.id)),
+      activeFolderId: folderId,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    }));
+  },
+
+  previewMoveCrossingTermination: (docIds, targetFolderId) => {
+    const s = get();
+    const connections = previewCrossingsTerminatedByMove(
+      s.documents,
+      s.connections,
+      s.beats,
+      docIds,
+      targetFolderId
+    );
+    return { connections, count: connections.length };
+  },
 
   loadTimeline: async (projectId) => {
     const driver = getStorageDriver();
@@ -459,6 +599,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       connections,
       importLabelPrefixes: hadData ? (payload.importLabelPrefixes ?? []) : [],
       documents,
+      folders: hadData ? (payload.folders ?? []) : [],
+      activeFolderId: hadData ? (payload.activeFolderId ?? null) : null,
       beatWidthPercent: hadData
         ? (payload.beatWidthPercent ?? DEFAULT_BEAT_WIDTH_PERCENT)
         : DEFAULT_BEAT_WIDTH_PERCENT,
@@ -500,6 +642,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         beats: s.beats,
         connections: s.connections,
         importLabelPrefixes: s.importLabelPrefixes,
+        folders: s.folders,
+        activeFolderId: s.activeFolderId,
         documents: s.documents.map(stripLegacyDocumentFields),
         beatWidthPercent: s.beatWidthPercent,
         expandedBeatHeightPx: s.expandedBeatHeightPx,
@@ -533,6 +677,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   },
 
   setDisplayMode: (mode) => {
+    if (mode === "text") {
+      get().ensureActiveFolder();
+    }
     set({
       displayMode: mode,
       hasUnsavedChanges: true,
@@ -612,11 +759,13 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       sortOrder,
     };
     const now = Date.now();
+    const folderId = s.folders.length > 0 ? get().ensureActiveFolder() : undefined;
     const seedDoc: TimelineDocumentRecord = {
       id: generateTimelineId(),
       name: lane.label,
       content: generateTimelineScript([lane], [], [], { includeSectionMarkers: false }),
       updatedAt: now,
+      ...(folderId ? { folderId } : {}),
     };
     set({
       lanes: [...s.lanes, lane],
@@ -788,6 +937,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   },
 
   createUserDocument: (name) => {
+    const folderId = get().ensureActiveFolder();
     const s = get();
     const id = generateTimelineId();
     const doc: TimelineDocumentRecord = {
@@ -795,6 +945,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       name: (name ?? "Untitled").trim() || "Untitled",
       content: "",
       updatedAt: Date.now(),
+      folderId,
     };
     set({
       documents: [...s.documents, doc],

@@ -134,12 +134,21 @@ export interface TimelineConnectionRecord {
   date: string;
 }
 
+/** Outline folder grouping text files into a single outline. */
+export interface TimelineFolderRecord {
+  id: string;
+  name: string;
+  sortOrder: number;
+}
+
 /** Plain text file in Timeline Text display mode (no ongoing lane ownership). */
 export interface TimelineDocumentRecord {
   id: string;
   name: string;
   content: string;
   updatedAt: number;
+  /** Outline folder this file belongs to (required once folders exist). */
+  folderId?: string;
   /** @deprecated Read-only migration field — legacy derived lane files. Never written on save. */
   kind?: "user" | "derived";
   /** @deprecated Read-only migration field — legacy derived lane id. Never written on save. */
@@ -155,6 +164,8 @@ export interface TimelineProjectPayload {
   beats?: TimelineBeatRecord[];
   connections?: TimelineConnectionRecord[];
   importLabelPrefixes?: string[];
+  folders?: TimelineFolderRecord[];
+  activeFolderId?: string | null;
   documents?: TimelineDocumentRecord[];
   beatWidthPercent?: number;
   expandedBeatHeightPx?: number;

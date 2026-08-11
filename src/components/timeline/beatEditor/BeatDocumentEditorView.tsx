@@ -18,6 +18,7 @@ export interface BeatDocumentEditorHandle {
   insertAtCursor: (text: string) => void;
   replaceSelection: (text: string) => void;
   getCursorPos: () => number;
+  setContentWithCursor: (content: string, cursorPos: number) => void;
 }
 
 interface BeatDocumentEditorViewProps {
@@ -71,6 +72,15 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
         });
       },
       getCursorPos: () => viewRef.current?.state.selection.main.head ?? 0,
+      setContentWithCursor: (nextContent: string, cursorPos: number) => {
+        const view = viewRef.current;
+        if (!view) return;
+        const current = view.state.doc.toString();
+        view.dispatch({
+          changes: { from: 0, to: current.length, insert: nextContent },
+          selection: { anchor: cursorPos },
+        });
+      },
     }));
 
     useEffect(() => {

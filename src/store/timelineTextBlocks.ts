@@ -1,5 +1,5 @@
 import { generateTimelineId } from "../storage/timelineIds";
-import { getEmptyBeatScriptBlock } from "./timelineScript";
+import { generateTimelineScript, getEmptyBeatScriptBlock } from "./timelineScript";
 
 export interface TextBlockSpan {
   start: number;
@@ -137,32 +137,12 @@ function laneContainingCursor(laneSpans: LaneBlockSpan[], cursorPos: number): La
   return null;
 }
 
-function shiftBeatSlotsInLaneText(
-  text: string,
-  beats: BeatBlockSpan[],
-  fromIndex: number,
-  delta: number
-): string {
-  if (delta === 0 || fromIndex >= beats.length) return text;
-  let result = text;
-  const toShift = beats.slice(fromIndex).sort((a, b) => b.start - a.start);
-  for (const beat of toShift) {
-    const headerSlice = result.slice(beat.start, Math.min(beat.end, beat.start + 120));
-    const slotMatch = /slot:\s*(-?\d+)/i.exec(headerSlice);
-    if (!slotMatch) continue;
-    const absSlotStart = beat.start + slotMatch.index;
-    const absSlotEnd = absSlotStart + slotMatch[0].length;
-    const newSlot = beat.slot + delta;
-    result =
-      result.slice(0, absSlotStart) +
-      `slot: ${newSlot}` +
-      result.slice(absSlotEnd);
-  }
-  return result;
+function patchBeatSlotInText(beatText: string, newSlot: number): string {
+  return beatText.replace(/slot:\s*-?\d+/i, `slot: ${newSlot}`);
 }
 
 export type InsertBeatResult =
-  | { ok: true; content: string; beatId: string; slot: number }
+  | { ok: true; content: string; beatId: string; slot: number; cursorPos: number }
   | { ok: false; error: string };
 
 /**
@@ -189,76 +169,106 @@ export function insertBeatAtCursor(content: string, cursorPos: number): InsertBe
     targetLane = containing;
   }
 
-  let working = content;
-  let laneSpan = targetLane;
-  const beatsInfo = findBeatBlockSpansInLane(working, laneSpan);
+  const beatsInfo = findBeatBlockSpansInLane(content, targetLane);
   if (!beatsInfo) {
     return { ok: false, error: "Lane block has no beats: [ ] array." };
   }
 
   const beatId = generateTimelineId();
-  let insertAt: number;
-  let slot: number;
-
   const beats = beatsInfo.beats;
+  const insertIndex = beats.filter((b) => b.end <= cursorPos).length;
+
+  let slot: number;
+  let needsShift = false;
 
   if (beats.length === 0) {
-    insertAt = beatsInfo.arrayOpen + 1;
     slot = 0;
+  } else if (insertIndex === 0) {
+    slot = 0;
+    needsShift = beats[0].slot <= slot;
+  } else if (insertIndex >= beats.length) {
+    slot = beats[beats.length - 1].slot + 1;
   } else {
-    let betweenIndex: number | null = null;
-    for (let i = 0; i < beats.length - 1; i++) {
-      const gapStart = beats[i].end;
-      const gapEnd = beats[i + 1].start;
-      if (cursorPos >= gapStart && cursorPos <= gapEnd) {
-        betweenIndex = i;
-        break;
-      }
-    }
-
-    if (betweenIndex != null) {
-      const beatA = beats[betweenIndex];
-      const beatB = beats[betweenIndex + 1];
-      if (beatB.slot - beatA.slot > 1) {
-        slot = beatA.slot + 1;
-        insertAt = beatB.start;
-      } else {
-        working = shiftBeatSlotsInLaneText(working, beats, betweenIndex + 1, 1);
-        laneSpan = findLaneBlockSpans(working).find((s) => s.laneId === targetLane.laneId)!;
-        const refreshed = findBeatBlockSpansInLane(working, laneSpan)!;
-        const refreshedBeats = refreshed.beats;
-        slot = beatA.slot + 1;
-        insertAt = refreshedBeats[betweenIndex + 1].start;
-      }
-    } else if (cursorPos < beats[0].start) {
-      if (beats[0].slot > 0) {
-        slot = 0;
-        insertAt = beats[0].start;
-      } else {
-        working = shiftBeatSlotsInLaneText(working, beats, 0, 1);
-        laneSpan = findLaneBlockSpans(working).find((s) => s.laneId === targetLane.laneId)!;
-        const refreshed = findBeatBlockSpansInLane(working, laneSpan)!;
-        slot = 0;
-        insertAt = refreshed.beats[0].start;
-      }
-    } else {
-      const last = beats[beats.length - 1];
-      slot = last.slot + 1;
-      insertAt = last.end;
-    }
+    const prevSlot = beats[insertIndex - 1].slot;
+    slot = prevSlot + 1;
+    needsShift = beats[insertIndex].slot <= slot;
   }
 
-  const block = getEmptyBeatScriptBlock(beatId, slot);
-  const needsComma =
-    insertAt > beatsInfo.arrayOpen + 1 &&
-    working.slice(beatsInfo.arrayOpen + 1, insertAt).trim().length > 0;
-  const prefix = needsComma && !working.slice(0, insertAt).trimEnd().endsWith(",") ? ",\n" : "\n";
-  const insertion = `${prefix}${block}`;
+  const beatTexts: string[] = [];
+  for (let i = 0; i < beats.length; i++) {
+    let text = content.slice(beats[i].start, beats[i].end).trim();
+    if (needsShift && i >= insertIndex) {
+      text = patchBeatSlotInText(text, beats[i].slot + 1);
+    }
+    beatTexts.push(text);
+  }
+
+  const newBlock = getEmptyBeatScriptBlock(beatId, slot);
+  beatTexts.splice(insertIndex, 0, newBlock.trim());
+
+  const arrayBody =
+    beatTexts.length === 0
+      ? "\n    "
+      : `\n    ${beatTexts.join(",\n    ")}\n  `;
 
   const nextContent =
-    working.slice(0, insertAt) + insertion + working.slice(insertAt);
+    content.slice(0, beatsInfo.arrayOpen + 1) +
+    arrayBody +
+    content.slice(beatsInfo.arrayClose - 1);
 
-  return { ok: true, content: nextContent, beatId, slot };
+  const blockEndMarker = `Beat ${beatId}`;
+  const blockStartInContent = nextContent.indexOf(blockEndMarker);
+  const blockCloseBrace = nextContent.indexOf("}", blockStartInContent);
+  const resultCursorPos = blockCloseBrace === -1 ? cursorPos : blockCloseBrace + 1;
+
+  return { ok: true, content: nextContent, beatId, slot, cursorPos: resultCursorPos };
+}
+
+export type InsertLaneResult =
+  | { ok: true; content: string; laneId: string; cursorPos: number }
+  | { ok: false; error: string };
+
+/** Append a new empty Lane block to the end of the file (or create as sole content). */
+export function insertLaneAtCursor(
+  content: string,
+  sortOrder: number,
+  label: string
+): InsertLaneResult {
+  const laneId = generateTimelineId();
+  const block = generateTimelineScript(
+    [
+      {
+        id: laneId,
+        label,
+        laneType: "character",
+        sortOrder,
+      },
+    ],
+    [],
+    [],
+    { includeSectionMarkers: false }
+  ).trim();
+
+  const laneSpans = findLaneBlockSpans(content);
+  let nextContent: string;
+  if (laneSpans.length === 0) {
+    const trimmed = content.trim();
+    nextContent = trimmed.length === 0 ? block : `${trimmed}\n\n${block}`;
+  } else {
+    const last = laneSpans[laneSpans.length - 1]!;
+    const insertAt = last.end;
+    const needsSep =
+      content.slice(0, insertAt).trim().length > 0 || content.slice(insertAt).trim().length > 0;
+    const prefix = needsSep ? "\n\n" : "";
+    nextContent = content.slice(0, insertAt) + prefix + block + content.slice(insertAt);
+  }
+
+  const laneMarker = `Lane ${laneId}`;
+  const idx = nextContent.indexOf(laneMarker);
+  const closeBrace = nextContent.indexOf("}", idx);
+  const cursorPos = closeBrace === -1 ? nextContent.length : closeBrace + 1;
+
+  return { ok: true, content: nextContent, laneId, cursorPos };
 }
 
 /** Remove a lane block span and any adjacent blank line. */

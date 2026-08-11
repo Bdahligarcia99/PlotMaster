@@ -41,6 +41,22 @@ type FileDeleteConfirm = {
   crossingCount: number;
 };
 
+type FolderDeleteConfirm = {
+  folderId: string;
+  folderName: string;
+  fileCount: number;
+  laneCount: number;
+  beatCount: number;
+  crossingCount: number;
+};
+
+type FileMoveConfirm = {
+  docIds: string[];
+  targetFolderId: string;
+  crossingCount: number;
+  connectionIds: string[];
+};
+
 export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -66,6 +82,9 @@ export default function TimelineScreen() {
   const [editNameValue, setEditNameValue] = useState("");
   const [textEditorCommitError, setTextEditorCommitError] = useState<string | null>(null);
   const [fileDeleteConfirm, setFileDeleteConfirm] = useState<FileDeleteConfirm | null>(null);
+  const [folderDeleteConfirm, setFolderDeleteConfirm] = useState<FolderDeleteConfirm | null>(null);
+  const [fileMoveConfirm, setFileMoveConfirm] = useState<FileMoveConfirm | null>(null);
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
   const displayMode = useTimelineStore((s) => s.displayMode);
@@ -73,6 +92,11 @@ export default function TimelineScreen() {
   const applyDocumentEdits = useTimelineStore((s) => s.applyDocumentEdits);
   const deleteDocumentCascade = useTimelineStore((s) => s.deleteDocumentCascade);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
+  const createFolder = useTimelineStore((s) => s.createFolder);
+  const renameFolder = useTimelineStore((s) => s.renameFolder);
+  const deleteFolderCascade = useTimelineStore((s) => s.deleteFolderCascade);
+  const moveDocumentsToFolder = useTimelineStore((s) => s.moveDocumentsToFolder);
+  const previewMoveCrossingTermination = useTimelineStore((s) => s.previewMoveCrossingTermination);
   const selection = useTimelineStore((s) => s.selection);
   const removeBeats = useTimelineStore((s) => s.removeBeats);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
@@ -265,6 +289,89 @@ export default function TimelineScreen() {
     },
     [panes, textDrafts]
   );
+
+  const handleToggleFileSelect = useCallback((docId: string) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  }, []);
+
+  const handleNewFolder = useCallback(
+    (name: string, docIds: string[]) => {
+      createFolder(name, docIds);
+      setSelectedFileIds(new Set());
+    },
+    [createFolder]
+  );
+
+  const handleRequestFolderDelete = useCallback((folderId: string, folderName: string) => {
+    const docs = useTimelineStore.getState().documents.filter((d) => d.folderId === folderId);
+    let laneCount = 0;
+    let beatCount = 0;
+    let crossingCount = 0;
+    for (const doc of docs) {
+      const counts = previewDocumentDeleteCounts(doc.content);
+      laneCount += counts.laneCount;
+      beatCount += counts.beatCount;
+      crossingCount += counts.crossingCount;
+    }
+    setFolderDeleteConfirm({
+      folderId,
+      folderName,
+      fileCount: docs.length,
+      laneCount,
+      beatCount,
+      crossingCount,
+    });
+  }, []);
+
+  const handleFolderDeleteConfirm = useCallback(() => {
+    if (!folderDeleteConfirm) return;
+    const { folderId } = folderDeleteConfirm;
+    const folderDocIds = useTimelineStore
+      .getState()
+      .documents.filter((d) => d.folderId === folderId)
+      .map((d) => d.id);
+    deleteFolderCascade(folderId);
+    for (const docId of folderDocIds) {
+      removePaneAndDraftForDoc(docId);
+    }
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      for (const id of folderDocIds) next.delete(id);
+      return next;
+    });
+    setFolderDeleteConfirm(null);
+  }, [folderDeleteConfirm, deleteFolderCascade, removePaneAndDraftForDoc]);
+
+  const handleRequestMoveFiles = useCallback(
+    (docIds: string[], targetFolderId: string) => {
+      const { count, connections } = previewMoveCrossingTermination(docIds, targetFolderId);
+      if (count > 0) {
+        setFileMoveConfirm({
+          docIds,
+          targetFolderId,
+          crossingCount: count,
+          connectionIds: connections.map((c) => c.id),
+        });
+      } else {
+        moveDocumentsToFolder(docIds, targetFolderId);
+        setSelectedFileIds(new Set());
+      }
+    },
+    [previewMoveCrossingTermination, moveDocumentsToFolder]
+  );
+
+  const handleFileMoveConfirm = useCallback(() => {
+    if (!fileMoveConfirm) return;
+    const { docIds, targetFolderId, connectionIds } = fileMoveConfirm;
+    moveDocumentsToFolder(docIds, targetFolderId, connectionIds);
+    setSelectedFileIds(new Set());
+    setFileMoveConfirm(null);
+  }, [fileMoveConfirm, moveDocumentsToFolder]);
 
   const entitiesDragStart = useRef<number | null>(null);
   const entitiesStartWidth = useRef(260);
@@ -504,9 +611,15 @@ export default function TimelineScreen() {
                   openFileIds={openFileIds}
                   activeFileId={activeFileId}
                   dirtyDocIds={dirtyDocIds}
+                  selectedFileIds={selectedFileIds}
+                  onToggleFileSelect={handleToggleFileSelect}
                   onOpenFile={handleOpenFile}
                   onNewUserFile={handleNewUserFile}
+                  onNewFolder={handleNewFolder}
                   onDeleteUserFile={handleDeleteUserFile}
+                  onRequestFolderDelete={handleRequestFolderDelete}
+                  onRequestMoveFiles={handleRequestMoveFiles}
+                  onRenameFolder={renameFolder}
                 />
               </div>
               <div
@@ -647,6 +760,88 @@ export default function TimelineScreen() {
               </Button>
               <Button variant="primary" size="sm" onClick={handleFileDeleteConfirm}>
                 Delete file
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={folderDeleteConfirm != null}
+        onClose={() => setFolderDeleteConfirm(null)}
+        title="Delete folder?"
+        contentClassName="max-w-md"
+      >
+        {folderDeleteConfirm && (
+          <>
+            <p className="text-sm text-dark-muted mb-4">
+              Deleting folder{" "}
+              <span className="text-dark-text font-medium">{folderDeleteConfirm.folderName}</span>{" "}
+              will remove {folderDeleteConfirm.fileCount} file
+              {folderDeleteConfirm.fileCount === 1 ? "" : "s"}
+              {folderDeleteConfirm.laneCount + folderDeleteConfirm.beatCount + folderDeleteConfirm.crossingCount > 0 && (
+                <>
+                  {" "}
+                  and{" "}
+                  {folderDeleteConfirm.laneCount > 0 && (
+                    <>
+                      {folderDeleteConfirm.laneCount} lane
+                      {folderDeleteConfirm.laneCount === 1 ? "" : "s"}
+                    </>
+                  )}
+                  {folderDeleteConfirm.laneCount > 0 && folderDeleteConfirm.beatCount > 0 && ", "}
+                  {folderDeleteConfirm.beatCount > 0 && (
+                    <>
+                      {folderDeleteConfirm.beatCount} beat
+                      {folderDeleteConfirm.beatCount === 1 ? "" : "s"}
+                    </>
+                  )}
+                  {(folderDeleteConfirm.laneCount > 0 || folderDeleteConfirm.beatCount > 0) &&
+                    folderDeleteConfirm.crossingCount > 0 &&
+                    ", "}
+                  {folderDeleteConfirm.crossingCount > 0 && (
+                    <>
+                      {folderDeleteConfirm.crossingCount} crossing
+                      {folderDeleteConfirm.crossingCount === 1 ? "" : "s"}
+                    </>
+                  )}{" "}
+                  from the project
+                </>
+              )}
+              . This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setFolderDeleteConfirm(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleFolderDeleteConfirm}>
+                Delete folder
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={fileMoveConfirm != null}
+        onClose={() => setFileMoveConfirm(null)}
+        title="Crossing warning"
+        contentClassName="max-w-md"
+      >
+        {fileMoveConfirm && (
+          <>
+            <p className="text-sm text-dark-muted mb-4">
+              Moving {fileMoveConfirm.docIds.length} file
+              {fileMoveConfirm.docIds.length === 1 ? "" : "s"} to another outline will terminate{" "}
+              {fileMoveConfirm.crossingCount} crossing
+              {fileMoveConfirm.crossingCount === 1 ? "" : "s"} that span multiple outlines. Proceed?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setFileMoveConfirm(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleFileMoveConfirm}>
+                Proceed
               </Button>
             </div>
           </>

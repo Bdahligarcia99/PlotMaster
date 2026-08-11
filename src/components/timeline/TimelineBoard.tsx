@@ -24,6 +24,12 @@ import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import BeatBlock from "./BeatBlock";
 import MagnifiedBeatOverlay from "./MagnifiedBeatOverlay";
 import { computeSlotTrackContentHeightPx, getPrimarySelection, useTimelineStore } from "../../store/timelineStore";
+import {
+  filterBeatsByScope,
+  filterConnectionsForActiveFolder,
+  filterLanesByScope,
+  getScopedLaneIds,
+} from "../../store/timelineFolderHelpers";
 import type { TimelineBeat, TimelineLane } from "../../store/timelineTypes";
 import {
   BEAT_COLLAPSED_HEIGHT_PX,
@@ -129,9 +135,12 @@ export default function TimelineBoard({
   inspectorOpen = false,
   inspectorWidth = 0,
 }: TimelineBoardProps) {
-  const lanes = useTimelineStore((s) => s.lanes);
-  const beats = useTimelineStore((s) => s.beats);
-  const connections = useTimelineStore((s) => s.connections);
+  const allLanes = useTimelineStore((s) => s.lanes);
+  const allBeats = useTimelineStore((s) => s.beats);
+  const allConnections = useTimelineStore((s) => s.connections);
+  const documents = useTimelineStore((s) => s.documents);
+  const folders = useTimelineStore((s) => s.folders);
+  const activeFolderId = useTimelineStore((s) => s.activeFolderId);
   const selection = useTimelineStore((s) => s.selection);
   const zoomLaneCount = useTimelineStore((s) => s.zoomLaneCount);
   const beatWidthPercent = useTimelineStore((s) => s.beatWidthPercent);
@@ -149,6 +158,24 @@ export default function TimelineBoard({
   const moveBeat = useTimelineStore((s) => s.moveBeat);
   const moveBeatsGroup = useTimelineStore((s) => s.moveBeatsGroup);
   const reorderLane = useTimelineStore((s) => s.reorderLane);
+
+  const scopedLaneIds = useMemo(
+    () => getScopedLaneIds(documents, folders, activeFolderId),
+    [documents, folders, activeFolderId]
+  );
+
+  const lanes = useMemo(
+    () => filterLanesByScope(allLanes, scopedLaneIds),
+    [allLanes, scopedLaneIds]
+  );
+  const beats = useMemo(
+    () => filterBeatsByScope(allBeats, scopedLaneIds),
+    [allBeats, scopedLaneIds]
+  );
+  const connections = useMemo(
+    () => filterConnectionsForActiveFolder(allConnections, allBeats, scopedLaneIds),
+    [allConnections, allBeats, scopedLaneIds]
+  );
 
   const sortedLanes = useMemo(() => [...lanes].sort((a, b) => a.sortOrder - b.sortOrder), [lanes]);
 

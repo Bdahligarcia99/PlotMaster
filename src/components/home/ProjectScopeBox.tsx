@@ -14,7 +14,11 @@ type CreateModuleTab = "core" | "engrams";
 interface ProjectScopeBoxProps {
   variant: ProjectScopeBoxVariant;
   label: string;
-  onCreate?: (projectName: string, enabledModules: string[], storageMode?: "localStorage" | "file") => void;
+  onCreate?: (
+    projectName: string,
+    enabledModules: string[],
+    storageMode?: "localStorage" | "file"
+  ) => void | boolean | Promise<boolean | void>;
   /** Optional ref for the Project Name input (e.g. for initial focus in modal) */
   inputRef?: React.RefObject<HTMLInputElement | null>;
   /** When true, this box is expanded (content visible); when false, minimized */
@@ -68,13 +72,24 @@ export default function ProjectScopeBox({
     setValidationError(null);
   };
 
-  const handleCreate = () => {
+  const resetCreateForm = () => {
+    setProjectName("");
+    setSelectedModules(new Set());
+    setStorageMode("localStorage");
+    setCreateModuleTab("engrams");
+    setValidationError(null);
+  };
+
+  const handleCreate = async () => {
     if (variant === "multi" && canCreate) {
       setValidationError(null);
       const modules = Array.from(selectedModules).filter((id) =>
         CREATEABLE_MODULES.includes(id as (typeof CREATEABLE_MODULES)[number])
       );
-      onCreate?.(projectName.trim(), modules, storageMode);
+      const result = await onCreate?.(projectName.trim(), modules, storageMode);
+      if (result !== false) {
+        resetCreateForm();
+      }
     }
   };
 

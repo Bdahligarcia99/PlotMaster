@@ -165,22 +165,21 @@ export default function IntroDialog({
     projectName: string,
     enabledModules: string[],
     storageMode: "localStorage" | "file" = "localStorage"
-  ) => {
+  ): Promise<boolean> => {
     const name = projectName.trim();
-    if (!name || enabledModules.length === 0) return;
+    if (!name || enabledModules.length === 0) return false;
 
     let fileRef: string | null = null;
     if (storageMode === "file") {
       try {
         fileRef = await getSynprojFileIO().pickSaveLocation(name);
-        if (!fileRef) return;
+        if (!fileRef) return false;
       } catch (e) {
         console.error("[IntroDialog] File picker failed:", e);
-        return;
+        return false;
       }
     }
 
-    refreshProjects();
     setIntroDialogOpen(false);
     onClose();
 
@@ -255,6 +254,9 @@ export default function IntroDialog({
         openInNewWindow(getModuleRoute(firstTypeName, firstSubId));
       }
     }
+
+    refreshProjects();
+    return true;
   };
 
   const handleOpenProjectFile = async () => {
