@@ -134,15 +134,15 @@ export interface TimelineConnectionRecord {
   date: string;
 }
 
-/** Saved text document in Timeline Text Editor mode (user-made notes or lane-derived files). */
+/** Plain text file in Timeline Text display mode (no ongoing lane ownership). */
 export interface TimelineDocumentRecord {
   id: string;
   name: string;
   content: string;
   updatedAt: number;
-  /** Defaults to "user" when absent (legacy projects). */
+  /** @deprecated Read-only migration field — legacy derived lane files. Never written on save. */
   kind?: "user" | "derived";
-  /** Set when kind === "derived" — the lane this file mirrors. */
+  /** @deprecated Read-only migration field — legacy derived lane id. Never written on save. */
   laneId?: string;
 }
 

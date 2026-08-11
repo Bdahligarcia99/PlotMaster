@@ -206,7 +206,7 @@ export default function TimelineScriptPane() {
             <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">View</span>
           </div>
           <div ref={viewScrollRef} className="flex-1 min-h-0 overflow-auto p-3">
-            <div className="block w-full min-h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono">
+            <div className="block w-full min-h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono whitespace-pre">
               {scriptLines.map((line, i) => {
                 const highlight = lineHighlights[i] ?? false;
                 return (

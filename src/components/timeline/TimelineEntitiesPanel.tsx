@@ -4,7 +4,7 @@ import type { TimelineSelectionItem } from "../../store/timelineTypes";
 
 interface TimelineEntitiesPanelProps {
   onSelectForEdit?: () => void;
-  /** Text Editor workspace — Derived / User-made files list. */
+  /** Text Editor workspace — project files list. */
   textEditorMode?: boolean;
   openFileIds?: string[];
   activeFileId?: string | null;
@@ -28,7 +28,6 @@ export default function TimelineEntitiesPanel({
   const beats = useTimelineStore((s) => s.beats);
   const connections = useTimelineStore((s) => s.connections);
   const documents = useTimelineStore((s) => s.documents);
-  const deleteDocument = useTimelineStore((s) => s.deleteDocument);
   const selection = useTimelineStore((s) => s.selection);
   const toggleSelection = useTimelineStore((s) => s.toggleSelection);
   const selectOnly = useTimelineStore((s) => s.selectOnly);
@@ -86,23 +85,8 @@ export default function TimelineEntitiesPanel({
     setExpandedLanes(Object.fromEntries(sortedLanes.map((lane) => [lane.id, nextExpanded])));
   };
 
-  const derivedDocs = useMemo(
-    () =>
-      documents
-        .filter((d) => d.kind === "derived")
-        .sort((a, b) => {
-          const la = lanes.find((l) => l.id === a.laneId)?.sortOrder ?? 0;
-          const lb = lanes.find((l) => l.id === b.laneId)?.sortOrder ?? 0;
-          return la - lb;
-        }),
-    [documents, lanes]
-  );
-
-  const userDocs = useMemo(
-    () =>
-      documents
-        .filter((d) => d.kind !== "derived")
-        .sort((a, b) => b.updatedAt - a.updatedAt),
+  const sortedFiles = useMemo(
+    () => [...documents].sort((a, b) => b.updatedAt - a.updatedAt),
     [documents]
   );
 
@@ -115,110 +99,65 @@ export default function TimelineEntitiesPanel({
           </h2>
           <p className="text-dark-muted text-xs mt-1">Files</p>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-4">
-          <div>
-            <p className="text-xs text-dark-muted uppercase tracking-wide px-1 mb-1">Derived</p>
-            {derivedDocs.length === 0 ? (
-              <p className="text-dark-muted text-xs py-2 px-2">
-                No lanes yet. Create a lane in Outline mode, or convert a user-made file.
-              </p>
-            ) : (
-              <div className="space-y-1">
-                {derivedDocs.map((doc) => {
-                  const isActive = activeFileId === doc.id;
-                  const isOpen = openFileIds.includes(doc.id);
-                  const dirty = dirtyDocIds.has(doc.id);
-                  return (
+        <div className="flex-1 overflow-y-auto p-2">
+          <div className="flex items-center justify-between px-1 mb-1">
+            <p className="text-xs text-dark-muted uppercase tracking-wide">Files</p>
+            <button
+              type="button"
+              onClick={() => onNewUserFile?.()}
+              className="text-[11px] text-blue-300 hover:text-blue-200"
+            >
+              + New
+            </button>
+          </div>
+          {sortedFiles.length === 0 ? (
+            <p className="text-dark-muted text-xs py-2 px-2">
+              No files yet. Create a lane in Block mode or add a new file here.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {sortedFiles.map((doc) => {
+                const isActive = activeFileId === doc.id;
+                const isOpen = openFileIds.includes(doc.id);
+                const dirty = dirtyDocIds.has(doc.id);
+                return (
+                  <div
+                    key={doc.id}
+                    className={`flex items-center gap-1 rounded border overflow-hidden ${
+                      isActive
+                        ? "border-blue-500/50 ring-1 ring-blue-500/50"
+                        : isOpen
+                          ? "border-dark-accent/50"
+                          : "border-dark-accent/30"
+                    }`}
+                  >
                     <button
-                      key={doc.id}
                       type="button"
                       onClick={() => onOpenFile?.(doc.id)}
-                      className={`w-full text-left px-3 py-2 text-sm rounded border truncate ${
+                      className={`flex-1 text-left px-3 py-2 text-sm truncate ${
                         isActive
-                          ? "border-blue-500/50 bg-blue-500/10 text-dark-text ring-1 ring-blue-500/50"
+                          ? "bg-blue-500/10 text-dark-text"
                           : isOpen
-                            ? "border-dark-accent/50 text-dark-text hover:bg-dark-accent/30"
-                            : "border-dark-accent/30 text-dark-text hover:bg-dark-accent/30"
+                            ? "text-dark-text hover:bg-dark-accent/30"
+                            : "text-dark-text hover:bg-dark-accent/30"
                       }`}
                     >
                       {doc.name}
                       {dirty ? " •" : ""}
                     </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between px-1 mb-1">
-              <p className="text-xs text-dark-muted uppercase tracking-wide">User-made</p>
-              <button
-                type="button"
-                onClick={() => onNewUserFile?.()}
-                className="text-[11px] text-blue-300 hover:text-blue-200"
-              >
-                + New
-              </button>
-            </div>
-            {userDocs.length === 0 ? (
-              <p className="text-dark-muted text-xs py-2 px-2">
-                No user-made files. Create one to draft beats, then Convert to Lane.
-              </p>
-            ) : (
-              <div className="space-y-1">
-                {userDocs.map((doc) => {
-                  const isActive = activeFileId === doc.id;
-                  const isOpen = openFileIds.includes(doc.id);
-                  const dirty = dirtyDocIds.has(doc.id);
-                  return (
-                    <div
-                      key={doc.id}
-                      className={`flex items-center gap-1 rounded border overflow-hidden ${
-                        isActive
-                          ? "border-blue-500/50 ring-1 ring-blue-500/50"
-                          : isOpen
-                            ? "border-dark-accent/50"
-                            : "border-dark-accent/30"
-                      }`}
+                    <button
+                      type="button"
+                      onClick={() => onDeleteUserFile?.(doc.id)}
+                      className="px-2 py-2 text-xs text-red-400 hover:text-red-300"
+                      title="Delete"
                     >
-                      <button
-                        type="button"
-                        onClick={() => onOpenFile?.(doc.id)}
-                        className={`flex-1 text-left px-3 py-2 text-sm truncate ${
-                          isActive
-                            ? "bg-blue-500/10 text-dark-text"
-                            : isOpen
-                              ? "text-dark-text hover:bg-dark-accent/30"
-                              : "text-dark-text hover:bg-dark-accent/30"
-                        }`}
-                      >
-                        {doc.name}
-                        {dirty ? " •" : ""}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (dirty) {
-                            const ok = window.confirm(
-                              `"${doc.name}" has unsaved changes. Delete anyway?`
-                            );
-                            if (!ok) return;
-                          }
-                          onDeleteUserFile?.(doc.id);
-                          deleteDocument(doc.id);
-                        }}
-                        className="px-2 py-2 text-xs text-red-400 hover:text-red-300"
-                        title="Delete"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     );

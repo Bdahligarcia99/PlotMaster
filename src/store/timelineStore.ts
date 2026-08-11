@@ -11,12 +11,11 @@ import {
 } from "../storage/StorageDriver";
 import { generateTimelineId } from "../storage/timelineIds";
 import { emptyBeatDateSpec, migrateLegacyDateString } from "../utils/beatDate";
-import {
-  generateLaneFileContent,
-  parseLaneFileContent,
-  validateBlockIdsForLane,
-} from "../components/timeline/beatEditor/laneFileFormat";
 import { generateTimelineScript, parseTimelineScript } from "./timelineScript";
+import {
+  findLaneBlockSpans,
+  removeLaneBlockFromText,
+} from "./timelineTextBlocks";
 import {
   BEAT_GAP_PX,
   BEAT_TEXT_SCALE_PERCENT_MAX,
@@ -134,15 +133,113 @@ function normalizeLoadedBeat(beat: TimelineBeatRecord): TimelineBeat | null {
   };
 }
 
-function normalizeDocument(doc: TimelineDocumentRecord): TimelineDocumentRecord {
-  const kind = doc.kind === "derived" ? "derived" : "user";
+function stripLegacyDocumentFields(doc: TimelineDocumentRecord): TimelineDocumentRecord {
   return {
     id: doc.id,
     name: doc.name,
     content: doc.content,
     updatedAt: doc.updatedAt,
-    kind,
-    laneId: kind === "derived" ? doc.laneId : undefined,
+  };
+}
+
+function combineDocumentContents(
+  documents: TimelineDocumentRecord[],
+  edits: Map<string, string>
+): string {
+  const sorted = [...documents].sort((a, b) => a.id.localeCompare(b.id));
+  return sorted
+    .map((doc) => edits.get(doc.id) ?? doc.content)
+    .filter((content) => content.trim().length > 0)
+    .join("\n\n");
+}
+
+function migrateDocuments(
+  documents: TimelineDocumentRecord[],
+  lanes: TimelineLane[],
+  beats: TimelineBeat[]
+): { documents: TimelineDocumentRecord[]; migrated: boolean } {
+  let migrated = false;
+  const next = documents.map((doc) => {
+    if (doc.kind === "derived" && doc.laneId) {
+      const lane = lanes.find((l) => l.id === doc.laneId);
+      if (lane) {
+        migrated = true;
+        const laneBeats = beats.filter((b) => b.laneId === lane.id);
+        return stripLegacyDocumentFields({
+          id: doc.id,
+          name: doc.name,
+          content: generateTimelineScript([lane], laneBeats, [], { includeSectionMarkers: false }),
+          updatedAt: doc.updatedAt,
+        });
+      }
+    }
+    const stripped = stripLegacyDocumentFields(doc);
+    if (doc.kind != null || doc.laneId != null) {
+      migrated = true;
+    }
+    return stripped;
+  });
+  return { documents: next, migrated };
+}
+
+function syncDocumentsFromModel(
+  documents: TimelineDocumentRecord[],
+  lanes: TimelineLane[],
+  beats: TimelineBeat[],
+  dirtyDocumentIds: string[]
+): TimelineDocumentRecord[] | null {
+  const dirtySet = new Set(dirtyDocumentIds);
+  const laneById = new Map(lanes.map((l) => [l.id, l]));
+  let anyChanged = false;
+
+  const updated = documents.map((doc) => {
+    if (dirtySet.has(doc.id)) return doc;
+
+    const spans = findLaneBlockSpans(doc.content);
+    if (spans.length === 0) return doc;
+
+    let content = doc.content;
+    let docChanged = false;
+    const sortedSpans = [...spans].sort((a, b) => b.start - a.start);
+
+    for (const span of sortedSpans) {
+      const lane = laneById.get(span.laneId);
+      if (!lane) {
+        content = removeLaneBlockFromText(content, span);
+        docChanged = true;
+        anyChanged = true;
+        continue;
+      }
+
+      const laneBeats = beats.filter((b) => b.laneId === lane.id);
+      const newBlock = generateTimelineScript([lane], laneBeats, [], {
+        includeSectionMarkers: false,
+      }).trimEnd();
+      const oldBlock = content.slice(span.start, span.end).trimEnd();
+      if (oldBlock !== newBlock) {
+        content = content.slice(0, span.start) + newBlock + content.slice(span.end);
+        docChanged = true;
+        anyChanged = true;
+      }
+    }
+
+    if (!docChanged) return doc;
+    return { ...doc, content, updatedAt: Date.now() };
+  });
+
+  return anyChanged ? updated : null;
+}
+
+export function previewDocumentDeleteCounts(content: string): {
+  laneCount: number;
+  beatCount: number;
+  crossingCount: number;
+} {
+  const parsed = parseTimelineScript(content);
+  return {
+    laneCount: parsed.lanes.length,
+    beatCount: parsed.beats.length,
+    crossingCount: parsed.connections.length,
   };
 }
 
@@ -235,6 +332,9 @@ interface TimelineStore {
   autosaveEnabled: boolean;
   importLabelPrefixes: string[];
   documents: TimelineDocumentRecord[];
+  /** Ephemeral — doc ids with unsaved text-mode drafts; never persisted. */
+  dirtyDocumentIds: string[];
+  setDirtyDocumentIds: (ids: string[]) => void;
   loadTimeline: (projectId: string) => Promise<{ hadData: boolean }>;
   saveTimeline: () => Promise<boolean>;
   flushSaveAndSave: () => Promise<boolean>;
@@ -266,22 +366,15 @@ interface TimelineStore {
   ) => string[];
   saveDocument: (id: string | null, name: string, content: string) => string;
   deleteDocument: (id: string) => void;
+  deleteDocumentCascade: (
+    docId: string,
+    content: string
+  ) => { laneCount: number; beatCount: number; crossingCount: number };
   renameDocument: (id: string, name: string) => void;
-  ensureDerivedDocuments: () => void;
-  syncDerivedDocumentFromBeats: (laneId: string) => void;
   createUserDocument: (name?: string) => string;
-  saveDerivedLaneFile: (
-    docId: string,
-    content: string
-  ) =>
-    | { ok: true; content: string }
-    | { ok: false; errors: string[]; needsLaneDeleteConfirm?: boolean };
-  confirmDeleteLaneFromDocument: (docId: string) => boolean;
-  convertUserDocumentToLane: (
-    docId: string,
-    content: string
-  ) => { ok: true; laneId: string; content: string } | { ok: false; errors: string[] };
-  saveUserDocumentContent: (docId: string, content: string) => void;
+  applyDocumentEdits: (
+    edits: { docId: string; content: string }[]
+  ) => { ok: boolean; errors: string[] };
   insertPendingBeats: (laneId: string, slots: number[]) => string[];
   bulkRenameBeatTitles: (beatIds: string[], baseLabel: string) => void;
   addImportLabelPrefix: (prefix: string) => void;
@@ -335,6 +428,9 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   autosaveEnabled: true,
   importLabelPrefixes: [],
   documents: [],
+  dirtyDocumentIds: [],
+
+  setDirtyDocumentIds: (ids) => set({ dirtyDocumentIds: ids }),
 
   loadTimeline: async (projectId) => {
     const driver = getStorageDriver();
@@ -351,6 +447,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
           .filter((b): b is TimelineBeat => b !== null)
       : [];
     const connections = hadData ? (payload.connections ?? []).map(normalizeLoadedConnection) : [];
+    const rawDocuments = hadData ? (payload.documents ?? []) : [];
+    const { documents, migrated: documentsMigrated } = migrateDocuments(rawDocuments, lanes, beats);
 
     set({
       activeProjectId: projectId,
@@ -360,7 +458,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       beats,
       connections,
       importLabelPrefixes: hadData ? (payload.importLabelPrefixes ?? []) : [],
-      documents: hadData ? (payload.documents ?? []).map(normalizeDocument) : [],
+      documents,
       beatWidthPercent: hadData
         ? (payload.beatWidthPercent ?? DEFAULT_BEAT_WIDTH_PERCENT)
         : DEFAULT_BEAT_WIDTH_PERCENT,
@@ -374,12 +472,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       magnifyToolActive: false,
       magnifiedBeatId: null,
       scriptDraft: null,
-      hasUnsavedChanges: false,
+      hasUnsavedChanges: documentsMigrated,
       lastSaveError: null,
       isSaving: false,
+      dirtyDocumentIds: [],
     });
-
-    get().ensureDerivedDocuments();
 
     if (!hadData && payload == null) {
       await driver.saveProjectData(projectId, createDefaultTimelinePayload());
@@ -403,7 +500,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         beats: s.beats,
         connections: s.connections,
         importLabelPrefixes: s.importLabelPrefixes,
-        documents: s.documents,
+        documents: s.documents.map(stripLegacyDocumentFields),
         beatWidthPercent: s.beatWidthPercent,
         expandedBeatHeightPx: s.expandedBeatHeightPx,
         beatTextScalePercent: s.beatTextScalePercent,
@@ -514,14 +611,21 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       laneType: "character",
       sortOrder,
     };
+    const now = Date.now();
+    const seedDoc: TimelineDocumentRecord = {
+      id: generateTimelineId(),
+      name: lane.label,
+      content: generateTimelineScript([lane], [], [], { includeSectionMarkers: false }),
+      updatedAt: now,
+    };
     set({
       lanes: [...s.lanes, lane],
+      documents: [...s.documents, seedDoc],
       selection: [{ type: "lane", id }],
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
     });
-    get().ensureDerivedDocuments();
     return id;
   },
 
@@ -605,7 +709,6 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       name: trimmedName,
       content,
       updatedAt: now,
-      kind: "user",
     };
     set({
       documents: [...s.documents, doc],
@@ -618,9 +721,58 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   deleteDocument: (id) => {
     set((s) => ({
       documents: s.documents.filter((d) => d.id !== id),
+      dirtyDocumentIds: s.dirtyDocumentIds.filter((docId) => docId !== id),
       hasUnsavedChanges: true,
       lastSaveError: null,
     }));
+  },
+
+  deleteDocumentCascade: (docId, content) => {
+    const s = get();
+    const parsed = parseTimelineScript(content);
+    const laneIds = new Set(parsed.lanes.map((l) => l.id));
+    const beatIds = new Set(parsed.beats.map((b) => b.id));
+    const crossingIds = new Set(parsed.connections.map((c) => c.id));
+
+    const removedBeatIds = new Set<string>();
+    for (const beat of s.beats) {
+      if (beatIds.has(beat.id) || laneIds.has(beat.laneId)) {
+        removedBeatIds.add(beat.id);
+      }
+    }
+
+    const lanes = s.lanes
+      .filter((lane) => !laneIds.has(lane.id))
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((lane, index) => ({ ...lane, sortOrder: index }));
+    const beats = s.beats.filter((b) => !removedBeatIds.has(b.id));
+    const connections = s.connections.filter((c) => {
+      if (crossingIds.has(c.id)) return false;
+      return !c.beatIds.some((id) => removedBeatIds.has(id));
+    });
+
+    set({
+      lanes,
+      beats,
+      connections,
+      documents: s.documents.filter((d) => d.id !== docId),
+      dirtyDocumentIds: s.dirtyDocumentIds.filter((id) => id !== docId),
+      selection: s.selection.filter(
+        (item) =>
+          !(item.type === "lane" && laneIds.has(item.id)) &&
+          !(item.type === "beat" && removedBeatIds.has(item.id)) &&
+          !(item.type === "connection" && crossingIds.has(item.id))
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+
+    return {
+      laneCount: laneIds.size,
+      beatCount: beatIds.size,
+      crossingCount: crossingIds.size,
+    };
   },
 
   renameDocument: (id, name) => {
@@ -635,73 +787,6 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     }));
   },
 
-  ensureDerivedDocuments: () => {
-    const s = get();
-    const laneIds = new Set(s.lanes.map((l) => l.id));
-    let docs = s.documents
-      .map(normalizeDocument)
-      .filter((d) => d.kind !== "derived" || (d.laneId != null && laneIds.has(d.laneId)));
-
-    const now = Date.now();
-    let changed = docs.length !== s.documents.length;
-
-    for (const lane of s.lanes) {
-      const existing = docs.find((d) => d.kind === "derived" && d.laneId === lane.id);
-      if (!existing) {
-        const laneBeats = s.beats.filter((b) => b.laneId === lane.id);
-        docs = [
-          ...docs,
-          {
-            id: generateTimelineId(),
-            name: lane.label,
-            content: generateLaneFileContent(laneBeats, s.beats),
-            updatedAt: now,
-            kind: "derived",
-            laneId: lane.id,
-          },
-        ];
-        changed = true;
-      } else if (existing.name !== lane.label) {
-        docs = docs.map((d) =>
-          d.id === existing.id ? { ...d, name: lane.label, updatedAt: now } : d
-        );
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      set({ documents: docs, hasUnsavedChanges: true, lastSaveError: null });
-    }
-  },
-
-  syncDerivedDocumentFromBeats: (laneId) => {
-    const s = get();
-    const lane = s.lanes.find((l) => l.id === laneId);
-    if (!lane) return;
-    const laneBeats = s.beats.filter((b) => b.laneId === laneId);
-    const content = generateLaneFileContent(laneBeats, s.beats);
-    const now = Date.now();
-    let found = false;
-    const docs = s.documents.map((d) => {
-      if (d.kind === "derived" && d.laneId === laneId) {
-        found = true;
-        return { ...d, name: lane.label, content, updatedAt: now };
-      }
-      return d;
-    });
-    if (!found) {
-      docs.push({
-        id: generateTimelineId(),
-        name: lane.label,
-        content,
-        updatedAt: now,
-        kind: "derived",
-        laneId,
-      });
-    }
-    set({ documents: docs, hasUnsavedChanges: true, lastSaveError: null });
-  },
-
   createUserDocument: (name) => {
     const s = get();
     const id = generateTimelineId();
@@ -710,7 +795,6 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       name: (name ?? "Untitled").trim() || "Untitled",
       content: "",
       updatedAt: Date.now(),
-      kind: "user",
     };
     set({
       documents: [...s.documents, doc],
@@ -720,196 +804,36 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     return id;
   },
 
-  saveUserDocumentContent: (docId, content) => {
+  applyDocumentEdits: (edits) => {
     const s = get();
-    const doc = s.documents.find((d) => d.id === docId);
-    if (!doc || doc.kind === "derived") return;
-    set({
-      documents: s.documents.map((d) =>
-        d.id === docId ? { ...d, content, updatedAt: Date.now() } : d
-      ),
-      hasUnsavedChanges: true,
-      lastSaveError: null,
-    });
-  },
-
-  saveDerivedLaneFile: (docId, content) => {
-    const s = get();
-    const doc = s.documents.find((d) => d.id === docId);
-    if (!doc || doc.kind !== "derived" || !doc.laneId) {
-      return { ok: false, errors: ["Not a derived lane file."] };
-    }
-    const laneId = doc.laneId;
-    const lane = s.lanes.find((l) => l.id === laneId);
-    if (!lane) {
-      return { ok: false, errors: ["Lane no longer exists."] };
-    }
-
-    const parsed = parseLaneFileContent(content);
+    const editMap = new Map(edits.map((e) => [e.docId, e.content]));
+    const combined = combineDocumentContents(s.documents, editMap);
+    const parsed = parseTimelineScript(combined);
     if (parsed.errors.length > 0) {
       return { ok: false, errors: parsed.errors };
     }
-    if (parsed.isEmpty || parsed.blocks.length === 0) {
-      return { ok: false, errors: [], needsLaneDeleteConfirm: true };
-    }
 
-    const laneBeatIds = new Set(s.beats.filter((b) => b.laneId === laneId).map((b) => b.id));
-    const idErrors = validateBlockIdsForLane(parsed.blocks, laneBeatIds);
-    if (idErrors.length > 0) {
-      return { ok: false, errors: idErrors };
-    }
-
-    const keptIds = new Set(
-      parsed.blocks.map((b) => b.beatId).filter((id): id is string => id != null)
-    );
-    const toRemove = [...laneBeatIds].filter((id) => !keptIds.has(id));
-
-    let beats = s.beats.filter((b) => !toRemove.includes(b.id));
-    let connections = s.connections.filter(
-      (c) => !c.beatIds.some((id) => toRemove.includes(id))
-    );
-
-    const createdIds: string[] = [];
-    parsed.blocks.forEach((block, index) => {
-      if (block.beatId) {
-        beats = beats.map((b) =>
-          b.id === block.beatId
-            ? {
-                ...b,
-                title: block.title,
-                synopsis: block.synopsis,
-                detail: block.detail,
-                dateSpec: block.dateSpec,
-                slot: index,
-                laneId,
-              }
-            : b
-        );
-      } else {
-        const id = generateTimelineId();
-        createdIds.push(id);
-        beats = [
-          ...beats,
-          {
-            id,
-            laneId,
-            slot: index,
-            kind: "story",
-            title: block.title,
-            synopsis: block.synopsis,
-            detail: block.detail,
-            dateSpec: block.dateSpec,
-          },
-        ];
+    const now = Date.now();
+    const updatedDocs = s.documents.map((doc) => {
+      const newContent = editMap.get(doc.id);
+      if (newContent !== undefined) {
+        return stripLegacyDocumentFields({ ...doc, content: newContent, updatedAt: now });
       }
+      return stripLegacyDocumentFields(doc);
     });
 
-    // Re-slot any beats on other lanes unchanged; ensure this lane's slots match file order
-    const nextContent = generateLaneFileContent(
-      beats.filter((b) => b.laneId === laneId),
-      beats
-    );
-
-    const now = Date.now();
+    const editDocIds = [...editMap.keys()];
     set({
-      beats,
-      connections,
-      documents: s.documents.map((d) =>
-        d.id === docId ? { ...d, content: nextContent, updatedAt: now, name: lane.label } : d
-      ),
-      selection: s.selection.filter(
-        (item) => !(item.type === "beat" && toRemove.includes(item.id))
-      ),
+      lanes: parsed.lanes,
+      beats: parsed.beats,
+      connections: parsed.connections,
+      documents: updatedDocs,
+      dirtyDocumentIds: s.dirtyDocumentIds.filter((id) => !editDocIds.includes(id)),
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
     });
-
-    return { ok: true, content: nextContent };
-  },
-
-  confirmDeleteLaneFromDocument: (docId) => {
-    const s = get();
-    const doc = s.documents.find((d) => d.id === docId);
-    if (!doc || doc.kind !== "derived" || !doc.laneId) return false;
-    get().removeLane(doc.laneId);
-    return true;
-  },
-
-  convertUserDocumentToLane: (docId, content) => {
-    const s = get();
-    const doc = s.documents.find((d) => d.id === docId);
-    if (!doc || doc.kind === "derived") {
-      return { ok: false, errors: ["Only user-made files can be converted to a lane."] };
-    }
-
-    const parsed = parseLaneFileContent(content);
-    if (parsed.errors.length > 0) {
-      return { ok: false, errors: parsed.errors };
-    }
-    if (parsed.isEmpty || parsed.blocks.length === 0) {
-      return {
-        ok: false,
-        errors: ["Add at least one beat template (with a Title) before converting to a lane."],
-      };
-    }
-    const idLines = parsed.blocks.filter((b) => b.beatId != null);
-    if (idLines.length > 0) {
-      return {
-        ok: false,
-        errors: [
-          "User-made files should not contain id: lines before Convert to Lane. Remove them and try again.",
-        ],
-      };
-    }
-
-    const laneId = generateTimelineId();
-    const sortOrder = s.lanes.length;
-    const laneLabel = doc.name.trim() || getDefaultLaneLabel(sortOrder);
-    const lane: TimelineLane = {
-      id: laneId,
-      label: laneLabel,
-      laneType: "character",
-      sortOrder,
-    };
-
-    const newBeats: TimelineBeat[] = parsed.blocks.map((block, index) => ({
-      id: generateTimelineId(),
-      laneId,
-      slot: index,
-      kind: "story" as const,
-      title: block.title,
-      synopsis: block.synopsis,
-      detail: block.detail,
-      dateSpec: block.dateSpec,
-    }));
-
-    const allBeats = [...s.beats, ...newBeats];
-    const nextContent = generateLaneFileContent(newBeats, allBeats);
-    const now = Date.now();
-
-    set({
-      lanes: [...s.lanes, lane],
-      beats: allBeats,
-      documents: s.documents.map((d) =>
-        d.id === docId
-          ? {
-              ...d,
-              kind: "derived" as const,
-              laneId,
-              name: laneLabel,
-              content: nextContent,
-              updatedAt: now,
-            }
-          : d
-      ),
-      selection: [{ type: "lane", id: laneId }],
-      hasUnsavedChanges: true,
-      lastSaveError: null,
-      scriptDraft: null,
-    });
-
-    return { ok: true, laneId, content: nextContent };
+    return { ok: true, errors: [] };
   },
 
   insertPendingBeats: (laneId, slots) => {
@@ -1018,17 +942,8 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   updateLane: (laneId, patch) => {
     const s = get();
     const lanes = s.lanes.map((lane) => (lane.id === laneId ? { ...lane, ...patch } : lane));
-    let documents = s.documents;
-    if (patch.label != null) {
-      documents = s.documents.map((d) =>
-        d.kind === "derived" && d.laneId === laneId
-          ? { ...d, name: patch.label!, updatedAt: Date.now() }
-          : d
-      );
-    }
     set({
       lanes,
-      documents,
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
@@ -1123,14 +1038,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const connections = s.connections.filter(
       (c) => !c.beatIds.some((id) => removedBeatIds.has(id))
     );
-    const documents = s.documents.filter(
-      (d) => !(d.kind === "derived" && d.laneId === laneId)
-    );
     set({
       lanes,
       beats,
       connections,
-      documents,
       selection: s.selection.filter(
         (item) => !(item.type === "lane" && item.id === laneId) && !(item.type === "beat" && removedBeatIds.has(item.id))
       ),
@@ -1285,6 +1196,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
 
 let saveDebounce: ReturnType<typeof setTimeout> | null = null;
 let prevSnapshot = "";
+let prevModelSnapshot = "";
 
 function storeSnapshot(state: TimelineStore): string {
   return JSON.stringify({
@@ -1301,7 +1213,29 @@ function storeSnapshot(state: TimelineStore): string {
   });
 }
 
+function modelSnapshot(state: TimelineStore): string {
+  return JSON.stringify({
+    lanes: state.lanes,
+    beats: state.beats,
+    connections: state.connections,
+  });
+}
+
 useTimelineStore.subscribe((state) => {
+  const modelSnap = modelSnapshot(state);
+  if (modelSnap !== prevModelSnapshot) {
+    prevModelSnapshot = modelSnap;
+    const synced = syncDocumentsFromModel(
+      state.documents,
+      state.lanes,
+      state.beats,
+      state.dirtyDocumentIds
+    );
+    if (synced) {
+      useTimelineStore.setState({ documents: synced });
+    }
+  }
+
   const snapshot = storeSnapshot(state);
   const changed = snapshot !== prevSnapshot;
   prevSnapshot = snapshot;

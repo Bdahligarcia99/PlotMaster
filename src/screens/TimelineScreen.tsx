@@ -17,11 +17,7 @@ import TimelineTextEditorWorkspace, {
   type TextEditorPane,
 } from "../components/timeline/TimelineTextEditorWorkspace";
 import TimelineSaveControls from "../components/timeline/TimelineSaveControls";
-import {
-  parseLaneFileContent,
-  validateBlockIdsForLane,
-} from "../components/timeline/beatEditor/laneFileFormat";
-import { getSelectedBeatIds, useTimelineStore } from "../store/timelineStore";
+import { getSelectedBeatIds, previewDocumentDeleteCounts, useTimelineStore } from "../store/timelineStore";
 import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
@@ -36,10 +32,13 @@ const INSPECTOR_MAX_W = 900;
 const INSPECTOR_DEFAULT_EXPANDED_W = 640;
 const UNIFORM_PANE_WIDTH_DEFAULT_PX = 420;
 
-type LaneDeleteConfirm = {
+type FileDeleteConfirm = {
   docId: string;
   paneId: string;
-  laneName: string;
+  fileName: string;
+  laneCount: number;
+  beatCount: number;
+  crossingCount: number;
 };
 
 export default function TimelineScreen() {
@@ -65,17 +64,14 @@ export default function TimelineScreen() {
   const [loading, setLoading] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState("");
-  const [laneDeleteConfirm, setLaneDeleteConfirm] = useState<LaneDeleteConfirm | null>(null);
   const [textEditorCommitError, setTextEditorCommitError] = useState<string | null>(null);
-  const pendingSaveAfterCommitRef = useRef(false);
+  const [fileDeleteConfirm, setFileDeleteConfirm] = useState<FileDeleteConfirm | null>(null);
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
   const displayMode = useTimelineStore((s) => s.displayMode);
   const setDisplayMode = useTimelineStore((s) => s.setDisplayMode);
-  const flushSaveAndSave = useTimelineStore((s) => s.flushSaveAndSave);
-  const saveDerivedLaneFile = useTimelineStore((s) => s.saveDerivedLaneFile);
-  const saveUserDocumentContent = useTimelineStore((s) => s.saveUserDocumentContent);
-  const confirmDeleteLaneFromDocument = useTimelineStore((s) => s.confirmDeleteLaneFromDocument);
+  const applyDocumentEdits = useTimelineStore((s) => s.applyDocumentEdits);
+  const deleteDocumentCascade = useTimelineStore((s) => s.deleteDocumentCascade);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
   const selection = useTimelineStore((s) => s.selection);
   const removeBeats = useTimelineStore((s) => s.removeBeats);
@@ -103,122 +99,64 @@ export default function TimelineScreen() {
 
   const hasDraftChanges = dirtyDocIds.size > 0;
 
-  const removePaneAndDraftForDoc = useCallback(
-    (docId: string, paneId: string) => {
-      setPanes((prev) => prev.filter((p) => p.paneId !== paneId));
-      setTextDrafts((d) => {
-        const { [docId]: _, ...rest } = d;
-        return rest;
-      });
-      setActivePaneId((cur) => (cur === paneId ? null : cur));
-    },
-    []
-  );
-
-  const commitAllDirtyDrafts = useCallback((): { ok: boolean; pendingConfirm?: boolean } => {
-    const dirtyIds = Object.entries(textDrafts)
+  const commitAllDirtyDrafts = useCallback((): { ok: boolean } => {
+    const dirtyEdits = Object.entries(textDrafts)
       .filter(([, d]) => d.dirty)
-      .map(([id]) => id);
+      .map(([docId, draft]) => ({ docId, content: draft.content }));
 
-    if (dirtyIds.length === 0) {
+    if (dirtyEdits.length === 0) {
       setTextEditorCommitError(null);
       return { ok: true };
     }
 
-    const store = useTimelineStore.getState();
-    const docs = store.documents;
-
-    for (const docId of dirtyIds) {
-      const doc = docs.find((d) => d.id === docId);
-      if (!doc) continue;
-      const content = textDrafts[docId]?.content ?? doc.content;
-
-      if (doc.kind === "derived" && doc.laneId) {
-        const lane = store.lanes.find((l) => l.id === doc.laneId);
-        if (!lane) {
-          setTextEditorCommitError("Lane no longer exists.");
-          return { ok: false };
-        }
-
-        const parsed = parseLaneFileContent(content);
-        if (parsed.errors.length > 0) {
-          setTextEditorCommitError(parsed.errors.join("; "));
-          return { ok: false };
-        }
-        if (parsed.isEmpty || parsed.blocks.length === 0) {
-          const pane = panes.find((p) => p.docId === docId);
-          setLaneDeleteConfirm({
-            docId,
-            paneId: pane?.paneId ?? "",
-            laneName: doc.name,
-          });
-          return { ok: false, pendingConfirm: true };
-        }
-
-        const laneBeatIds = new Set(
-          store.beats.filter((b) => b.laneId === doc.laneId).map((b) => b.id)
-        );
-        const idErrors = validateBlockIdsForLane(parsed.blocks, laneBeatIds);
-        if (idErrors.length > 0) {
-          setTextEditorCommitError(idErrors.join("; "));
-          return { ok: false };
-        }
-      }
+    const result = applyDocumentEdits(dirtyEdits);
+    if (!result.ok) {
+      setTextEditorCommitError(result.errors.join("; "));
+      return { ok: false };
     }
 
-    let nextDrafts = { ...textDrafts };
-    for (const docId of dirtyIds) {
-      const doc = useTimelineStore.getState().documents.find((d) => d.id === docId);
-      if (!doc) continue;
-      const content = textDrafts[docId]?.content ?? doc.content;
-
-      if (doc.kind === "derived") {
-        const result = saveDerivedLaneFile(docId, content);
-        if (!result.ok) {
-          setTextEditorCommitError(result.errors.join("; ") || "Failed to save derived file.");
-          return { ok: false };
-        }
-        nextDrafts[docId] = { content: result.content, dirty: false };
-      } else {
-        saveUserDocumentContent(docId, content);
-        nextDrafts[docId] = { content, dirty: false };
-      }
+    const nextDrafts = { ...textDrafts };
+    for (const { docId } of dirtyEdits) {
+      delete nextDrafts[docId];
     }
 
     setTextDrafts(nextDrafts);
     setTextEditorCommitError(null);
     return { ok: true };
-  }, [textDrafts, panes, saveDerivedLaneFile, saveUserDocumentContent]);
-
-  const handleLaneDeleteConfirm = useCallback(async () => {
-    if (!laneDeleteConfirm) return;
-    const { docId, paneId } = laneDeleteConfirm;
-    confirmDeleteLaneFromDocument(docId);
-    if (paneId) removePaneAndDraftForDoc(docId, paneId);
-    setLaneDeleteConfirm(null);
-
-    const commitOk = commitAllDirtyDrafts();
-    if (pendingSaveAfterCommitRef.current && commitOk.ok) {
-      pendingSaveAfterCommitRef.current = false;
-      await flushSaveAndSave();
-    }
-  }, [
-    laneDeleteConfirm,
-    confirmDeleteLaneFromDocument,
-    removePaneAndDraftForDoc,
-    commitAllDirtyDrafts,
-    flushSaveAndSave,
-  ]);
+  }, [textDrafts, applyDocumentEdits]);
 
   const handleCommitDraftsForSave = useCallback((): { ok: boolean } => {
-    const result = commitAllDirtyDrafts();
-    if (!result.ok && result.pendingConfirm) {
-      pendingSaveAfterCommitRef.current = true;
-    } else if (result.ok) {
-      pendingSaveAfterCommitRef.current = false;
-    }
-    return { ok: result.ok };
+    return commitAllDirtyDrafts();
   }, [commitAllDirtyDrafts]);
+
+  const removePaneAndDraftForDoc = useCallback((docId: string, paneId?: string) => {
+    if (paneId) {
+      setPanes((prev) => prev.filter((p) => p.paneId !== paneId));
+      setActivePaneId((cur) => (cur === paneId ? null : cur));
+    } else {
+      setPanes((prev) => prev.filter((p) => p.docId !== docId));
+      setActivePaneId((cur) => {
+        const pane = panes.find((p) => p.paneId === cur);
+        return pane?.docId === docId ? null : cur;
+      });
+    }
+    setTextDrafts((d) => {
+      const { [docId]: _, ...rest } = d;
+      return rest;
+    });
+  }, [panes]);
+
+  const handleFileDeleteConfirm = useCallback(() => {
+    if (!fileDeleteConfirm) return;
+    const { docId, paneId } = fileDeleteConfirm;
+    const draftContent = textDrafts[docId]?.content;
+    const stored = useTimelineStore.getState().documents.find((d) => d.id === docId);
+    const content = draftContent ?? stored?.content ?? "";
+    deleteDocumentCascade(docId, content);
+    if (paneId) removePaneAndDraftForDoc(docId, paneId);
+    else removePaneAndDraftForDoc(docId);
+    setFileDeleteConfirm(null);
+  }, [fileDeleteConfirm, textDrafts, deleteDocumentCascade, removePaneAndDraftForDoc]);
 
   useEffect(() => {
     if (selection.length === 0) setInspectorOpen(false);
@@ -307,20 +245,26 @@ export default function TimelineScreen() {
     const paneId = crypto.randomUUID();
     setPanes((prev) => [...prev, { paneId, docId: id }]);
     setActivePaneId(paneId);
-    setTextDrafts((d) => ({ ...d, [id]: { content: "", dirty: false } }));
   }, [createUserDocument]);
 
-  const handleDeleteUserFile = useCallback((docId: string) => {
-    setPanes((prev) => prev.filter((p) => p.docId !== docId));
-    setTextDrafts((d) => {
-      const { [docId]: _, ...rest } = d;
-      return rest;
-    });
-    setActivePaneId((cur) => {
-      const pane = panes.find((p) => p.paneId === cur);
-      return pane?.docId === docId ? null : cur;
-    });
-  }, [panes]);
+  const handleDeleteUserFile = useCallback(
+    (docId: string) => {
+      const doc = useTimelineStore.getState().documents.find((d) => d.id === docId);
+      if (!doc) return;
+      const pane = panes.find((p) => p.docId === docId);
+      const content = textDrafts[docId]?.content ?? doc.content;
+      const counts = previewDocumentDeleteCounts(content);
+      setFileDeleteConfirm({
+        docId,
+        paneId: pane?.paneId ?? "",
+        fileName: doc.name,
+        laneCount: counts.laneCount,
+        beatCount: counts.beatCount,
+        crossingCount: counts.crossingCount,
+      });
+    },
+    [panes, textDrafts]
+  );
 
   const entitiesDragStart = useRef<number | null>(null);
   const entitiesStartWidth = useRef(260);
@@ -605,7 +549,7 @@ export default function TimelineScreen() {
                 onUniformPaneWidthPxChange={setUniformPaneWidthPx}
                 textScalePercent={textScalePercent}
                 onTextScalePercentChange={setTextScalePercent}
-                onRequestLaneDeleteConfirm={setLaneDeleteConfirm}
+                onRequestFileDeleteConfirm={setFileDeleteConfirm}
               />
             ) : (
               <>
@@ -654,34 +598,59 @@ export default function TimelineScreen() {
       </div>
 
       <Modal
-        isOpen={laneDeleteConfirm != null}
-        onClose={() => {
-          setLaneDeleteConfirm(null);
-          pendingSaveAfterCommitRef.current = false;
-        }}
-        title="Delete lane?"
+        isOpen={fileDeleteConfirm != null}
+        onClose={() => setFileDeleteConfirm(null)}
+        title="Delete file?"
         contentClassName="max-w-md"
       >
-        <p className="text-sm text-dark-muted mb-4">
-          Deleting this file will delete lane{" "}
-          <span className="text-dark-text font-medium">{laneDeleteConfirm?.laneName}</span> and all
-          of its beats and crossings. This cannot be undone.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setLaneDeleteConfirm(null);
-              pendingSaveAfterCommitRef.current = false;
-            }}
-          >
-            Cancel
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => void handleLaneDeleteConfirm()}>
-            Delete lane
-          </Button>
-        </div>
+        {fileDeleteConfirm && (
+          <>
+            <p className="text-sm text-dark-muted mb-4">
+              Deleting{" "}
+              <span className="text-dark-text font-medium">{fileDeleteConfirm.fileName}</span> will
+              remove{" "}
+              {fileDeleteConfirm.laneCount === 0 &&
+              fileDeleteConfirm.beatCount === 0 &&
+              fileDeleteConfirm.crossingCount === 0 ? (
+                <>no lanes or beats from the project model (file is empty or has no declarations).</>
+              ) : (
+                <>
+                  {fileDeleteConfirm.laneCount > 0 && (
+                    <>
+                      {fileDeleteConfirm.laneCount} lane
+                      {fileDeleteConfirm.laneCount === 1 ? "" : "s"}
+                    </>
+                  )}
+                  {fileDeleteConfirm.laneCount > 0 && fileDeleteConfirm.beatCount > 0 && ", "}
+                  {fileDeleteConfirm.beatCount > 0 && (
+                    <>
+                      {fileDeleteConfirm.beatCount} beat
+                      {fileDeleteConfirm.beatCount === 1 ? "" : "s"}
+                    </>
+                  )}
+                  {(fileDeleteConfirm.laneCount > 0 || fileDeleteConfirm.beatCount > 0) &&
+                    fileDeleteConfirm.crossingCount > 0 &&
+                    ", "}
+                  {fileDeleteConfirm.crossingCount > 0 && (
+                    <>
+                      {fileDeleteConfirm.crossingCount} crossing
+                      {fileDeleteConfirm.crossingCount === 1 ? "" : "s"}
+                    </>
+                  )}{" "}
+                  from the project. This cannot be undone.
+                </>
+              )}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setFileDeleteConfirm(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleFileDeleteConfirm}>
+                Delete file
+              </Button>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   );

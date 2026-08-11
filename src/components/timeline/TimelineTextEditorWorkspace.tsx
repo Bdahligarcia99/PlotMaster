@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Button from "../ui/Button";
 import BeatDocumentEditorView, {
   type BeatDocumentEditorHandle,
 } from "./beatEditor/BeatDocumentEditorView";
 import BeatEditorFieldToolbar, { type BeatEditorTool } from "./beatEditor/BeatEditorFieldToolbar";
-import { getEmptyBeatTemplateBlock } from "./beatEditor/laneFileFormat";
 import {
   applyAutoLabelsToDocument,
   assignFieldInSegment,
@@ -13,7 +12,8 @@ import {
   insertSeparatorAtCursor,
   type FieldDisableFlags,
 } from "./beatEditor/beatDocumentModel";
-import { useTimelineStore } from "../../store/timelineStore";
+import { useTimelineStore, previewDocumentDeleteCounts } from "../../store/timelineStore";
+import { insertBeatAtCursor } from "../../store/timelineTextBlocks";
 import {
   BEAT_TEXT_SCALE_PERCENT_MAX,
   BEAT_TEXT_SCALE_PERCENT_MIN,
@@ -49,10 +49,13 @@ interface TimelineTextEditorWorkspaceProps {
   onUniformPaneWidthPxChange: (px: number) => void;
   textScalePercent: number;
   onTextScalePercentChange: (pct: number) => void;
-  onRequestLaneDeleteConfirm: (payload: {
+  onRequestFileDeleteConfirm: (payload: {
     docId: string;
     paneId: string;
-    laneName: string;
+    fileName: string;
+    laneCount: number;
+    beatCount: number;
+    crossingCount: number;
   }) => void;
 }
 
@@ -73,17 +76,14 @@ export default function TimelineTextEditorWorkspace({
   onUniformPaneWidthPxChange,
   textScalePercent,
   onTextScalePercentChange,
-  onRequestLaneDeleteConfirm,
+  onRequestFileDeleteConfirm,
 }: TimelineTextEditorWorkspaceProps) {
   const documents = useTimelineStore((s) => s.documents);
+  const setDirtyDocumentIds = useTimelineStore((s) => s.setDirtyDocumentIds);
   const importLabelPrefixes = useTimelineStore((s) => s.importLabelPrefixes);
   const addImportLabelPrefix = useTimelineStore((s) => s.addImportLabelPrefix);
   const removeImportLabelPrefix = useTimelineStore((s) => s.removeImportLabelPrefix);
-  const deleteDocument = useTimelineStore((s) => s.deleteDocument);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
-  const convertUserDocumentToLane = useTimelineStore((s) => s.convertUserDocumentToLane);
-  const syncDerivedDocumentFromBeats = useTimelineStore((s) => s.syncDerivedDocumentFromBeats);
-  const ensureDerivedDocuments = useTimelineStore((s) => s.ensureDerivedDocuments);
 
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [activeTool, setActiveTool] = useState<BeatEditorTool>(null);
@@ -99,10 +99,6 @@ export default function TimelineTextEditorWorkspace({
   );
   const editorRefs = useRef<Map<string, BeatDocumentEditorHandle | null>>(new Map());
   const paneRowRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    ensureDerivedDocuments();
-  }, [ensureDerivedDocuments]);
 
   useEffect(() => {
     setActivePrefixes((prev) => {
@@ -123,45 +119,22 @@ export default function TimelineTextEditorWorkspace({
     : null;
   const activeDraft = activeFileId ? drafts[activeFileId] : null;
   const activeDirty = activeDraft?.dirty ?? false;
-  const activePrefixList = importLabelPrefixes.filter((p) => activePrefixes.has(p));
 
-  const openDocIds = useMemo(
-    () => panes.map((p) => p.docId).filter((id): id is string => id != null),
-    [panes]
+  const getDocContent = useCallback(
+    (docId: string): string => {
+      const draft = drafts[docId];
+      if (draft?.dirty) return draft.content;
+      return documents.find((d) => d.id === docId)?.content ?? "";
+    },
+    [drafts, documents]
   );
 
-  const prevOpenIdsRef = useRef<string[]>([]);
-
   useEffect(() => {
-    const prev = prevOpenIdsRef.current;
-    const newlyOpened = openDocIds.filter((id) => !prev.includes(id));
-    prevOpenIdsRef.current = openDocIds;
-
-    let next = { ...drafts };
-    let changed = false;
-
-    const seedDoc = (docId: string, forceRefresh: boolean) => {
-      const doc = documents.find((d) => d.id === docId);
-      if (!doc) return;
-      const existing = next[docId];
-      if (existing?.dirty) return;
-      if (!forceRefresh && existing) return;
-      if (doc.kind === "derived" && doc.laneId) {
-        syncDerivedDocumentFromBeats(doc.laneId);
-        const refreshed = useTimelineStore.getState().documents.find((d) => d.id === docId);
-        next[docId] = { content: refreshed?.content ?? doc.content, dirty: false };
-      } else {
-        next[docId] = { content: doc.content, dirty: false };
-      }
-      changed = true;
-    };
-
-    for (const id of newlyOpened) seedDoc(id, true);
-    for (const id of openDocIds) seedDoc(id, false);
-
-    if (changed) onDraftsChange(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- open set drives seeding
-  }, [openDocIds.join(",")]);
+    const dirtyIds = Object.entries(drafts)
+      .filter(([, d]) => d.dirty)
+      .map(([id]) => id);
+    setDirtyDocumentIds(dirtyIds);
+  }, [drafts, setDirtyDocumentIds]);
 
   const setContent = useCallback(
     (docId: string, content: string) => {
@@ -174,14 +147,15 @@ export default function TimelineTextEditorWorkspace({
     [drafts, onDraftsChange]
   );
 
+  const activePrefixList = importLabelPrefixes.filter((p) => activePrefixes.has(p));
+
   const handleApplySelection = useCallback(() => {
     if (!activeFileId || !activeTool) return;
     const handle = editorRefs.current.get(activeFileId);
     const sel = handle?.getSelection();
     if (!sel || !sel.text.trim()) return;
 
-    const doc = documents.find((d) => d.id === activeFileId);
-    const content = drafts[activeFileId]?.content ?? doc?.content ?? "";
+    const content = getDocContent(activeFileId);
     const segment = findSegmentForOffset(content, sel.from);
     if (!segment) return;
 
@@ -189,7 +163,7 @@ export default function TimelineTextEditorWorkspace({
     const before = content.slice(0, segment.start);
     const after = content.slice(segment.end);
     setContent(activeFileId, `${before}${updatedSegment}${after}`);
-  }, [activeFileId, activeTool, drafts, documents, setContent]);
+  }, [activeFileId, activeTool, getDocContent, setContent]);
 
   useEffect(() => {
     const onMouseUp = () => {
@@ -202,7 +176,7 @@ export default function TimelineTextEditorWorkspace({
 
   const handleAutoDetectFields = () => {
     if (!activeFileId || !activeDoc) return;
-    const content = drafts[activeFileId]?.content ?? activeDoc.content;
+    const content = getDocContent(activeFileId);
     const next = applyAutoLabelsToDocument(content, disabledFields, activePrefixList);
     setContent(activeFileId, next);
   };
@@ -210,7 +184,7 @@ export default function TimelineTextEditorWorkspace({
   const handleInsertSeparator = () => {
     if (!activeFileId) return;
     const handle = editorRefs.current.get(activeFileId);
-    const content = drafts[activeFileId]?.content ?? activeDoc?.content ?? "";
+    const content = getDocContent(activeFileId);
     const pos = handle?.getCursorPos() ?? content.length;
     setContent(activeFileId, insertSeparatorAtCursor(content, pos));
   };
@@ -218,12 +192,6 @@ export default function TimelineTextEditorWorkspace({
   const removePaneById = (paneId: string) => {
     onPanesChange(panes.filter((p) => p.paneId !== paneId));
     if (activePaneId === paneId) onActivePaneIdChange(null);
-  };
-
-  const removePaneAndDraftForDoc = (docId: string, paneId: string) => {
-    removePaneById(paneId);
-    const { [docId]: _, ...rest } = drafts;
-    onDraftsChange(rest);
   };
 
   const handleClosePane = (paneId: string) => {
@@ -241,63 +209,35 @@ export default function TimelineTextEditorWorkspace({
     const paneId = crypto.randomUUID();
     onPanesChange([...panes, { paneId, docId: id }]);
     onActivePaneIdChange(paneId);
-    onDraftsChange({
-      ...drafts,
-      [id]: { content: "", dirty: false },
-    });
   };
 
   const handleInsertTemplate = () => {
     if (!activeFileId) return;
+    const content = getDocContent(activeFileId);
     const handle = editorRefs.current.get(activeFileId);
-    if (handle) {
-      handle.insertAtCursor(getEmptyBeatTemplateBlock());
-    } else {
-      const cur = drafts[activeFileId]?.content ?? "";
-      setContent(
-        activeFileId,
-        cur + (cur.endsWith("\n") || !cur ? "" : "\n") + getEmptyBeatTemplateBlock()
-      );
-    }
-  };
-
-  const handleConvert = () => {
-    if (!activeFileId || !activeDoc || activeDoc.kind === "derived") return;
-    const content = drafts[activeFileId]?.content ?? activeDoc.content;
-    const result = convertUserDocumentToLane(activeFileId, content);
+    const cursorPos = handle?.getCursorPos() ?? content.length;
+    const result = insertBeatAtCursor(content, cursorPos);
     if (!result.ok) {
-      setParseErrors(result.errors);
+      setParseErrors([result.error]);
       return;
     }
     setParseErrors([]);
-    onDraftsChange({
-      ...drafts,
-      [activeFileId]: { content: result.content, dirty: false },
-    });
+    setContent(activeFileId, result.content);
   };
 
   const handleDeleteFile = () => {
     if (!activeFileId || !activeDoc || !activePane) return;
 
-    if (activeDoc.kind === "derived") {
-      onRequestLaneDeleteConfirm({
-        docId: activeFileId,
-        paneId: activePane.paneId,
-        laneName: activeDoc.name,
-      });
-      return;
-    }
-
-    if (activeDirty) {
-      const ok = window.confirm(
-        `"${activeDoc.name}" has unsaved changes. Delete anyway?`
-      );
-      if (!ok) return;
-    }
-
-    deleteDocument(activeFileId);
-    removePaneAndDraftForDoc(activeFileId, activePane.paneId);
-    setParseErrors([]);
+    const content = getDocContent(activeFileId);
+    const counts = previewDocumentDeleteCounts(content);
+    onRequestFileDeleteConfirm({
+      docId: activeFileId,
+      paneId: activePane.paneId,
+      fileName: activeDoc.name,
+      laneCount: counts.laneCount,
+      beatCount: counts.beatCount,
+      crossingCount: counts.crossingCount,
+    });
   };
 
   const handleExpandAllPanes = () => {
@@ -425,7 +365,7 @@ export default function TimelineTextEditorWorkspace({
     const doc = getDocForPane(pane);
     const isActive = pane.paneId === activePaneId;
     const frac = paneFractions[index] ?? 1 / panes.length;
-    const content = pane.docId ? drafts[pane.docId]?.content ?? doc?.content ?? "" : "";
+    const content = pane.docId ? getDocContent(pane.docId) : "";
 
     const paneStyle = uniformPaneWidth
       ? { width: uniformPaneWidthPx, flexShrink: 0 }
@@ -468,7 +408,7 @@ export default function TimelineTextEditorWorkspace({
   const renderUnifiedSection = (pane: TextEditorPane) => {
     const doc = getDocForPane(pane);
     const isActive = pane.paneId === activePaneId;
-    const content = pane.docId ? drafts[pane.docId]?.content ?? doc?.content ?? "" : "";
+    const content = pane.docId ? getDocContent(pane.docId) : "";
 
     return (
       <div
@@ -482,7 +422,6 @@ export default function TimelineTextEditorWorkspace({
             {doc ? (
               <>
                 {doc.name}
-                {doc.kind === "derived" ? " · Derived" : " · User-made"}
                 {pane.docId && drafts[pane.docId]?.dirty ? " · Unsaved" : ""}
               </>
             ) : (
@@ -517,18 +456,9 @@ export default function TimelineTextEditorWorkspace({
           size="sm"
           onClick={handleInsertTemplate}
           disabled={!activeFileId}
-          title="Insert an empty beat template at the cursor"
+          title="Insert an empty Beat block at the cursor (inside a Lane beats array)"
         >
           Insert beat
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleConvert}
-          disabled={!activeFileId || activeDoc?.kind === "derived"}
-          title="Convert this user-made file into a lane (Derived)"
-        >
-          Convert to Lane
         </Button>
         <Button
           variant="secondary"
@@ -659,7 +589,7 @@ export default function TimelineTextEditorWorkspace({
 
       {panes.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-dark-muted text-sm px-4 text-center">
-          Open a Derived or User-made file from Entities, or create a new file.
+          Open a file from Entities, or create a new file.
         </div>
       ) : unifiedScroll ? (
         <div className="flex-1 min-h-0 overflow-y-auto">

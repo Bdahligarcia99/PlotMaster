@@ -48,19 +48,23 @@ function parseNumericField(line: string, key: string): number | undefined {
 }
 
 function appendBeatDateParts(parts: string[], spec: BeatDateSpec): void {
-  if (spec.mode === "none") return;
-  parts.push(`dateMode: ${spec.mode}`);
-  if (spec.mode === "label" && spec.label?.trim()) {
-    parts.push(`dateLabel: "${escapeQuoted(spec.label.trim())}"`);
+  const mode = spec.mode ?? "none";
+  parts.push(`dateMode: ${mode}`);
+  if (mode === "none") return;
+  if (mode === "label") {
+    parts.push(`dateLabel: "${escapeQuoted(spec.label ?? "")}"`);
+    return;
   }
-  if (spec.mode === "resolved" && spec.resolved?.trim()) {
-    parts.push(`dateResolved: "${escapeQuoted(spec.resolved.trim())}"`);
+  if (mode === "resolved") {
+    parts.push(`dateResolved: "${escapeQuoted(spec.resolved ?? "")}"`);
+    return;
   }
-  if (spec.mode === "absolute" && spec.absolute?.trim()) {
-    parts.push(`dateAbsolute: ${spec.absolute.trim()}`);
+  if (mode === "absolute") {
+    parts.push(`dateAbsolute: ${spec.absolute ?? ""}`);
+    return;
   }
-  if (spec.mode === "relative" && spec.relative) {
-    const r = spec.relative;
+  if (mode === "relative") {
+    const r = spec.relative ?? { years: 0, months: 0, days: 0, originBeatId: "" };
     parts.push(
       `dateRelative: ${r.years}y ${r.months}m ${r.days}d origin: ${r.originBeatId}`
     );
@@ -104,13 +108,11 @@ function parseBeatDateSpec(line: string, kv: Record<string, string>): BeatDateSp
 }
 
 function beatFieldLines(beat: TimelineBeat): string[] {
-  const fieldLines: string[] = [`      title: "${escapeQuoted(beat.title)}"`];
-  if (beat.synopsis.trim()) {
-    fieldLines.push(`      synopsis: "${escapeQuoted(beat.synopsis)}"`);
-  }
-  if (beat.detail.trim()) {
-    fieldLines.push(`      detail: "${escapeQuoted(beat.detail)}"`);
-  }
+  const fieldLines: string[] = [
+    `      title: "${escapeQuoted(beat.title)}"`,
+    `      synopsis: "${escapeQuoted(beat.synopsis)}"`,
+    `      detail: "${escapeQuoted(beat.detail)}"`,
+  ];
   const dateParts: string[] = [];
   appendBeatDateParts(dateParts, beat.dateSpec);
   for (const part of dateParts) {
@@ -127,12 +129,18 @@ function beatHeaderLine(beat: TimelineBeat): string {
   return `${headerParts.join(" ")} {`;
 }
 
+export interface GenerateTimelineScriptOptions {
+  includeSectionMarkers?: boolean;
+}
+
 export function generateTimelineScript(
   lanes: TimelineLane[],
   beats: TimelineBeat[],
-  connections: TimelineConnection[] = []
+  connections: TimelineConnection[] = [],
+  options: GenerateTimelineScriptOptions = {}
 ): string {
-  const lines: string[] = ["@declarations", ""];
+  const includeSectionMarkers = options.includeSectionMarkers !== false;
+  const lines: string[] = includeSectionMarkers ? ["@declarations", ""] : [];
   const sortedLanes = [...lanes].sort((a, b) => a.sortOrder - b.sortOrder);
 
   for (const lane of sortedLanes) {
@@ -178,8 +186,20 @@ export function generateTimelineScript(
     lines.push("");
   }
 
-  lines.push("@timeline", "");
+  if (includeSectionMarkers) {
+    lines.push("@timeline", "");
+  }
   return lines.join("\n");
+}
+
+/** Snippet to insert at cursor inside a Lane beats array. */
+export function getEmptyBeatScriptBlock(beatId: string, slot = 0): string {
+  return `    Beat ${beatId} slot: ${slot} {
+      title: ""
+      synopsis: ""
+      detail: ""
+      dateMode: none
+    }`;
 }
 
 export interface ParsedTimelineScript {
@@ -370,10 +390,16 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
       if (line.endsWith("{")) {
         const nested = parseNestedLaneBlock(rawLines, lineIndex, line, errors);
         if (nested) {
-          lanes.push({ ...nested.lane, sortOrder: nested.lane.sortOrder ?? lanes.length });
-          laneIds.add(nested.lane.id);
+          if (laneIds.has(nested.lane.id)) {
+            errors.push(`Duplicate lane id ${nested.lane.id}`);
+          } else {
+            lanes.push({ ...nested.lane, sortOrder: nested.lane.sortOrder ?? lanes.length });
+            laneIds.add(nested.lane.id);
+          }
           for (const beat of nested.beats) {
-            if (!beatIds.has(beat.id)) {
+            if (beatIds.has(beat.id)) {
+              errors.push(`Duplicate beat id ${beat.id}`);
+            } else {
               beats.push(beat);
               beatIds.add(beat.id);
             }
@@ -388,11 +414,15 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         errors.push(`Invalid lane line: ${line}`);
         continue;
       }
-      lanes.push({
-        ...laneHeader,
-        sortOrder: Number.isFinite(laneHeader.sortOrder) ? laneHeader.sortOrder : lanes.length,
-      });
-      laneIds.add(laneHeader.id);
+      if (laneIds.has(laneHeader.id)) {
+        errors.push(`Duplicate lane id ${laneHeader.id}`);
+      } else {
+        lanes.push({
+          ...laneHeader,
+          sortOrder: Number.isFinite(laneHeader.sortOrder) ? laneHeader.sortOrder : lanes.length,
+        });
+        laneIds.add(laneHeader.id);
+      }
       continue;
     }
 
@@ -412,8 +442,12 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
       }
       const beat = parseBeatDeclaration(header, blockBody, "", errors);
       if (beat) {
-        beats.push(beat);
-        beatIds.add(beat.id);
+        if (beatIds.has(beat.id)) {
+          errors.push(`Duplicate beat id ${beat.id}`);
+        } else {
+          beats.push(beat);
+          beatIds.add(beat.id);
+        }
       }
       continue;
     }
