@@ -57,6 +57,10 @@ type FileMoveConfirm = {
   connectionIds: string[];
 };
 
+type NewFolderRequest = {
+  pendingDocIds: string[];
+};
+
 export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -85,6 +89,8 @@ export default function TimelineScreen() {
   const [folderDeleteConfirm, setFolderDeleteConfirm] = useState<FolderDeleteConfirm | null>(null);
   const [fileMoveConfirm, setFileMoveConfirm] = useState<FileMoveConfirm | null>(null);
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [newFolderRequest, setNewFolderRequest] = useState<NewFolderRequest | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
 
   const loadTimeline = useTimelineStore((s) => s.loadTimeline);
   const displayMode = useTimelineStore((s) => s.displayMode);
@@ -93,6 +99,7 @@ export default function TimelineScreen() {
   const deleteDocumentCascade = useTimelineStore((s) => s.deleteDocumentCascade);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
   const createFolder = useTimelineStore((s) => s.createFolder);
+  const folders = useTimelineStore((s) => s.folders);
   const renameFolder = useTimelineStore((s) => s.renameFolder);
   const deleteFolderCascade = useTimelineStore((s) => s.deleteFolderCascade);
   const moveDocumentsToFolder = useTimelineStore((s) => s.moveDocumentsToFolder);
@@ -299,13 +306,22 @@ export default function TimelineScreen() {
     });
   }, []);
 
-  const handleNewFolder = useCallback(
-    (name: string, docIds: string[]) => {
-      createFolder(name, docIds);
-      setSelectedFileIds(new Set());
+  const handleRequestNewFolder = useCallback(
+    (docIds: string[]) => {
+      setNewFolderName(`Outline ${folders.length + 1}`);
+      setNewFolderRequest({ pendingDocIds: docIds });
     },
-    [createFolder]
+    [folders.length]
   );
+
+  const handleConfirmNewFolder = useCallback(() => {
+    if (!newFolderRequest) return;
+    const defaultName = `Outline ${folders.length + 1}`;
+    createFolder(newFolderName.trim() || defaultName, newFolderRequest.pendingDocIds);
+    setSelectedFileIds(new Set());
+    setNewFolderRequest(null);
+    setNewFolderName("");
+  }, [newFolderRequest, newFolderName, folders.length, createFolder]);
 
   const handleRequestFolderDelete = useCallback((folderId: string, folderName: string) => {
     const docs = useTimelineStore.getState().documents.filter((d) => d.folderId === folderId);
@@ -615,7 +631,7 @@ export default function TimelineScreen() {
                   onToggleFileSelect={handleToggleFileSelect}
                   onOpenFile={handleOpenFile}
                   onNewUserFile={handleNewUserFile}
-                  onNewFolder={handleNewFolder}
+                  onRequestNewFolder={handleRequestNewFolder}
                   onDeleteUserFile={handleDeleteUserFile}
                   onRequestFolderDelete={handleRequestFolderDelete}
                   onRequestMoveFiles={handleRequestMoveFiles}
@@ -846,6 +862,33 @@ export default function TimelineScreen() {
             </div>
           </>
         )}
+      </Modal>
+
+      <Modal
+        isOpen={newFolderRequest != null}
+        onClose={() => setNewFolderRequest(null)}
+        title="New folder"
+        contentClassName="max-w-sm"
+      >
+        <input
+          type="text"
+          value={newFolderName}
+          onChange={(e) => setNewFolderName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleConfirmNewFolder();
+          }}
+          placeholder="Folder name"
+          autoFocus
+          className="w-full px-3 py-2 mb-4 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm placeholder-dark-muted focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setNewFolderRequest(null)}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" onClick={handleConfirmNewFolder}>
+            Create folder
+          </Button>
+        </div>
       </Modal>
     </div>
   );

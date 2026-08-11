@@ -29,7 +29,7 @@ interface TimelineEntitiesPanelProps {
   onToggleFileSelect?: (docId: string) => void;
   onOpenFile?: (docId: string) => void;
   onNewUserFile?: () => void;
-  onNewFolder?: (name: string, selectedDocIds: string[]) => void;
+  onRequestNewFolder?: (selectedDocIds: string[]) => void;
   onDeleteUserFile?: (docId: string) => void;
   onRequestFolderDelete?: (folderId: string, folderName: string) => void;
   onRequestMoveFiles?: (docIds: string[], targetFolderId: string) => void;
@@ -222,7 +222,7 @@ export default function TimelineEntitiesPanel({
   onToggleFileSelect,
   onOpenFile,
   onNewUserFile,
-  onNewFolder,
+  onRequestNewFolder,
   onDeleteUserFile,
   onRequestFolderDelete,
   onRequestMoveFiles,
@@ -364,11 +364,7 @@ export default function TimelineEntitiesPanel({
   };
 
   const handleNewFolderClick = () => {
-    const defaultName = `Outline ${folders.length + 1}`;
-    const name = window.prompt("Folder name:", defaultName);
-    if (name === null) return;
-    const selected = [...selectedFileIds];
-    onNewFolder?.(name.trim() || defaultName, selected);
+    onRequestNewFolder?.([...selectedFileIds]);
   };
 
   if (textEditorMode) {
@@ -498,14 +494,13 @@ export default function TimelineEntitiesPanel({
           className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm placeholder-dark-muted focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
         />
       </div>
-      {sortedFolders.length > 0 && (
-        <div className="px-3 py-2 border-b border-dark-accent/50 min-w-0">
-          <div
-            role="tablist"
-            aria-label="Outline folders"
-            className="flex-1 min-w-0 overflow-x-auto flex gap-1 pb-0.5"
-          >
-            {sortedFolders.map((folder) => {
+      <div className="px-3 py-2 border-b border-dark-accent/50 min-w-0 flex items-center gap-1">
+        <div
+          role="tablist"
+          aria-label="Outline folders"
+          className="flex-1 min-w-0 overflow-x-auto flex gap-1 pb-0.5"
+        >
+          {sortedFolders.map((folder) => {
               const isActive = activeFolderId === folder.id;
               const isRenaming = renamingFolderId === folder.id;
               if (isRenaming) {
@@ -555,9 +550,16 @@ export default function TimelineEntitiesPanel({
                 </button>
               );
             })}
-          </div>
         </div>
-      )}
+        <button
+          type="button"
+          onClick={() => onRequestNewFolder?.([])}
+          className="flex-shrink-0 px-2 py-1 rounded-md text-xs text-blue-300 hover:text-blue-200 hover:bg-dark-accent/40"
+          title="New folder"
+        >
+          + Folder
+        </button>
+      </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
         {filteredLanes.length === 0 ? (
           <p className="text-dark-muted text-sm py-4 text-center">

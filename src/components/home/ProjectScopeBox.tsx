@@ -250,7 +250,7 @@ export default function ProjectScopeBox({
                   name="storage-mode"
                   checked={storageMode === "localStorage"}
                   onChange={() => setStorageMode("localStorage")}
-                  className="text-blue-500 focus:ring-blue-500/50"
+                  className="themed-radio"
                 />
                 Keep in app storage
               </label>
@@ -260,7 +260,7 @@ export default function ProjectScopeBox({
                   name="storage-mode"
                   checked={storageMode === "file"}
                   onChange={() => setStorageMode("file")}
-                  className="text-blue-500 focus:ring-blue-500/50"
+                  className="themed-radio"
                 />
                 Save to a .synproj file
               </label>

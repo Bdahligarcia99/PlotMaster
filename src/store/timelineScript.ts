@@ -351,7 +351,7 @@ function parseNestedLaneBlock(
           break;
         }
         if (inner.startsWith("Beat ")) {
-          const result = parseBeatBlockFromLines(rawLines, lineIndex - 1, lane.id, errors);
+          const result = parseBeatBlockFromLines(rawLines, lineIndex, lane.id, errors);
           if (result.beat) beats.push(result.beat);
           lineIndex = result.nextIndex;
           continue;
