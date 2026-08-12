@@ -221,7 +221,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   return (
     <div className="flex items-center gap-2 px-3 py-2 bg-dark-surface border-b border-dark-accent/50 flex-wrap">
       <Button variant="primary" size="sm" onClick={() => addLane()} title="New lane (parallel arc)">
-        Lane
+        +Lane
       </Button>
 
       <div ref={beatContainerRef} className="relative flex rounded-lg border border-dark-accent/50">

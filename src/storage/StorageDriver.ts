@@ -132,6 +132,7 @@ export interface TimelineConnectionRecord {
   title: string;
   description: string;
   date: string;
+  color?: string;
 }
 
 /** Outline folder grouping text files into a single outline. */

@@ -203,7 +203,7 @@ export function insertBeatAtCursor(content: string, cursorPos: number): InsertBe
     beatTexts.push(text);
   }
 
-  const newBlock = getEmptyBeatScriptBlock(beatId, slot);
+  const newBlock = getEmptyBeatScriptBlock(beatId, slot, `Beat ${beats.length + 1}`);
   beatTexts.splice(insertIndex, 0, newBlock.trim());
 
   const arrayBody =

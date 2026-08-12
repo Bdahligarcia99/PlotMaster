@@ -132,7 +132,7 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
                     {dirty ? " · Unsaved" : ""}
                   </span>
                 </div>
-                <div className="min-h-[240px] h-[36vh] px-3 pb-3 pt-2">
+                <div className="min-h-[240px] h-[36vh] px-3 pb-3 pt-2 flex flex-col">
                   <BeatDocumentEditorView
                     ref={(handle) => {
                       editorRefs.current.set(doc.id, handle);

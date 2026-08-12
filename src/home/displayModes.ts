@@ -6,7 +6,7 @@ export const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
   block: "Block",
   nodes: "Nodes",
   charts: "Charts",
-  text: "Text",
+  text: "Script",
 };
 
 /** Which modes each Engram (registry id) currently supports. Empty = none yet (still shows a disabled dropdown). */

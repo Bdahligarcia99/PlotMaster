@@ -114,6 +114,9 @@ export const separatorMarkField = StateField.define<{
 });
 
 export const beatEditorTheme = EditorView.theme({
+  "&": {
+    height: "100%",
+  },
   ".cm-beat-separator-auto": {
     opacity: "0.45",
     fontStyle: "italic",

@@ -6,7 +6,7 @@ import {
 } from "../../store/timelineTypes";
 import type { TimelineBeat } from "../../store/timelineTypes";
 import { resolveBeatDate } from "../../utils/beatDate";
-import { laneColorBeatBackground, laneColorCrossingBackground } from "../../utils/color";
+import { laneColorBeatBackground, resolveCrossingBeatBackground } from "../../utils/color";
 import { useTimelineStore } from "../../store/timelineStore";
 
 interface BeatBlockProps {
@@ -14,6 +14,7 @@ interface BeatBlockProps {
   selected: boolean;
   connected: boolean;
   laneColor?: string;
+  crossingColor?: string;
   /** True while another beat is being dragged and would land on (swap with) this beat if dropped
    * right now. */
   highlightAsDropTarget?: boolean;
@@ -36,6 +37,7 @@ export default function BeatBlock({
   selected,
   connected,
   laneColor,
+  crossingColor,
   highlightAsDropTarget = false,
   ghostInPlace = false,
   beatWidthPercent,
@@ -75,14 +77,17 @@ export default function BeatBlock({
     overflowX: "hidden",
     overflowY: "auto",
     fontSize: titleFontSizePx,
-    ...(laneColor
+    ...(connected
       ? {
-          backgroundColor: connected
-            ? laneColorCrossingBackground(laneColor)
-            : laneColorBeatBackground(laneColor),
-          borderColor: selected ? undefined : laneColor,
+          backgroundColor: resolveCrossingBeatBackground(laneColor, crossingColor),
+          borderColor: selected ? undefined : crossingColor || laneColor,
         }
-      : {}),
+      : laneColor
+        ? {
+            backgroundColor: laneColorBeatBackground(laneColor),
+            borderColor: selected ? undefined : laneColor,
+          }
+        : {}),
   };
 
   return (
@@ -152,12 +157,6 @@ export default function BeatBlock({
             {displayDate}
           </span>
         )
-      )}
-      {connected && (
-        <span
-          className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-dark-bg"
-          title="Connected to another beat"
-        />
       )}
       <div
         role="separator"

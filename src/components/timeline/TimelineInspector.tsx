@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  connectionsForBeat,
   getSelectedBeat,
   getSelectedConnection,
   getSelectedLane,
@@ -171,6 +172,12 @@ export default function TimelineInspector({
         ? beats.filter((b) => b.laneId === activeLaneId).sort((a, b) => a.slot - b.slot)
         : [],
     [beats, activeLaneId]
+  );
+
+  const beatLane = editingBeat ? lanes.find((l) => l.id === editingBeat.laneId) : null;
+  const beatConnections = useMemo(
+    () => (editingBeat ? connectionsForBeat(connections, editingBeat.id) : []),
+    [connections, editingBeat?.id]
   );
 
   if (mode === "multi" && activeLaneId) {
@@ -355,6 +362,45 @@ export default function TimelineInspector({
                 updateBeat(editingBeat.id, { dateSpec: spec });
               }}
             />
+            {beatLane && (
+              <ColorInput
+                label="Beat color"
+                value={beatLane.color || "#64748b"}
+                onChange={(hex) => updateLane(beatLane.id, { color: hex })}
+                className="mb-0"
+              />
+            )}
+            {beatConnections.map((connection) => {
+              const otherMembers = connection.beatIds
+                .filter((id) => id !== editingBeat.id)
+                .map((id) => {
+                  const memberBeat = beats.find((b) => b.id === id);
+                  const memberLane = memberBeat
+                    ? lanes.find((l) => l.id === memberBeat.laneId)
+                    : null;
+                  const beatLabel = memberBeat?.title || "Beat";
+                  const laneLabel = memberLane?.label || "Lane";
+                  return `${beatLabel} (${laneLabel})`;
+                });
+              return (
+                <div key={connection.id} className="space-y-2 pt-2 border-t border-dark-accent/30">
+                  <p className="text-xs text-dark-muted">Crossing member</p>
+                  {otherMembers.length > 0 && (
+                    <ul className="text-xs text-dark-muted space-y-0.5 list-disc list-inside">
+                      {otherMembers.map((label) => (
+                        <li key={label}>{label}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <ColorInput
+                    label="Crossing color"
+                    value={connection.color || beatLane?.color || "#64748b"}
+                    onChange={(hex) => updateConnection(connection.id, { color: hex })}
+                    className="mb-0"
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
 

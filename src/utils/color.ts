@@ -39,7 +39,17 @@ export function laneColorBeatBackground(laneColor: string): string {
   return mixHexColors(laneColor, BEAT_BLOCK_BASE_BG, 0.22);
 }
 
-/** Stronger opaque tint of lane color, used to highlight beats that belong to a crossing. */
+/** Stronger opaque tint — slightly darker than the normal beat background (highlighter stripe). */
 export function laneColorCrossingBackground(laneColor: string): string {
-  return mixHexColors(laneColor, BEAT_BLOCK_BASE_BG, 0.48);
+  return mixHexColors("#000000", laneColorBeatBackground(laneColor), 0.15);
+}
+
+/** Resolve the visual background for a beat that belongs to a crossing. */
+export function resolveCrossingBeatBackground(
+  laneColor: string | undefined,
+  explicitCrossingColor?: string
+): string | undefined {
+  if (explicitCrossingColor?.trim()) return explicitCrossingColor.trim();
+  if (laneColor) return laneColorCrossingBackground(laneColor);
+  return mixHexColors("#000000", BEAT_BLOCK_BASE_BG, 0.12);
 }

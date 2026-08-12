@@ -13,6 +13,7 @@ interface LaneColumnProps {
   beats: TimelineBeat[];
   selectedBeatIds: Set<string>;
   connectedBeatIds: Set<string>;
+  crossingColorByBeatId: Map<string, string>;
   beatWidthPercent: number;
   beatsExpanded: boolean;
   expandedBeatHeightPx: number;
@@ -53,6 +54,7 @@ export default function LaneColumn({
   beats,
   selectedBeatIds,
   connectedBeatIds,
+  crossingColorByBeatId,
   beatWidthPercent,
   beatsExpanded,
   expandedBeatHeightPx,
@@ -173,6 +175,7 @@ export default function LaneColumn({
             selected={selectedBeatIds.has(item.beat.id)}
             connected={connectedBeatIds.has(item.beat.id)}
             laneColor={laneColor}
+            crossingColor={crossingColorByBeatId.get(item.beat.id)}
             highlightAsDropTarget={item.isSwapTarget}
             ghostInPlace={draggedBeatIds.has(item.beat.id)}
             beatWidthPercent={beatWidthPercent}

@@ -47,6 +47,7 @@ interface TimelineBoardProps {
   onSelectForEdit?: () => void;
   inspectorOpen?: boolean;
   inspectorWidth?: number;
+  scriptPaneOpen?: boolean;
 }
 
 interface DragPreview {
@@ -133,6 +134,7 @@ export default function TimelineBoard({
   onSelectForEdit,
   inspectorOpen = false,
   inspectorWidth = 0,
+  scriptPaneOpen = true,
 }: TimelineBoardProps) {
   const allLanes = useTimelineStore((s) => s.lanes);
   const allBeats = useTimelineStore((s) => s.beats);
@@ -247,7 +249,7 @@ export default function TimelineBoard({
     if (!el) return;
     setViewportWidth(el.clientWidth);
     setViewportHeight(el.clientHeight);
-  }, [inspectorOpen, inspectorWidth]);
+  }, [inspectorOpen, inspectorWidth, scriptPaneOpen]);
 
   const inspectorScrollPaddingPx = inspectorOpen ? inspectorWidth + 8 : 0;
 
@@ -294,6 +296,18 @@ export default function TimelineBoard({
       }
     }
     return set;
+  }, [connections]);
+
+  const crossingColorByBeatId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of connections) {
+      const color = c.color?.trim();
+      if (!color) continue;
+      for (const beatId of c.beatIds) {
+        if (!map.has(beatId)) map.set(beatId, color);
+      }
+    }
+    return map;
   }, [connections]);
 
   const selectedBeatIds = useMemo(
@@ -729,7 +743,7 @@ export default function TimelineBoard({
           >
             <div
               ref={trackContentRef}
-              className="relative flex min-h-full items-end"
+              className="relative flex min-h-full items-stretch"
               style={{ width: totalContentWidth }}
             >
               {sortedLanes.map((lane) => (
@@ -742,6 +756,7 @@ export default function TimelineBoard({
                   beats={beatsByLane.get(lane.id) ?? []}
                   selectedBeatIds={selectedBeatIds}
                   connectedBeatIds={connectedBeatIds}
+                  crossingColorByBeatId={crossingColorByBeatId}
                   beatWidthPercent={beatWidthPercent}
                   beatsExpanded={beatsExpanded}
                   expandedBeatHeightPx={expandedBeatHeightPx}
@@ -787,6 +802,8 @@ export default function TimelineBoard({
             beat={activeDragBeat}
             selected={selectedBeatIds.has(activeDragBeat.id)}
             connected={connectedBeatIds.has(activeDragBeat.id)}
+            laneColor={sortedLanes.find((l) => l.id === activeDragBeat.laneId)?.color}
+            crossingColor={crossingColorByBeatId.get(activeDragBeat.id)}
             beatWidthPercent={beatWidthPercent}
             beatsExpanded={beatsExpanded}
             expandedBeatHeightPx={expandedBeatHeightPx}

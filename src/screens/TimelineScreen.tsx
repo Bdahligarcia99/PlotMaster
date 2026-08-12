@@ -716,6 +716,7 @@ export default function TimelineScreen() {
                   onSelectForEdit={() => setInspectorOpen(true)}
                   inspectorOpen={inspectorOpen}
                   inspectorWidth={inspectorWidth}
+                  scriptPaneOpen={scriptPaneOpen}
                 />
                 {scriptPaneOpen && (
                   <>

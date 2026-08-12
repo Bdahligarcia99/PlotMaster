@@ -94,6 +94,7 @@ export interface TimelineConnection {
   title: string;
   description: string;
   date: string;
+  color?: string;
 }
 
 /** A single selectable thing on the board — a lane, a beat, or a crossing connector. */

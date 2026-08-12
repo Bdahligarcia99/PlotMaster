@@ -86,10 +86,13 @@ export default function TimelineTextEditorWorkspace({
   const removeImportLabelPrefix = useTimelineStore((s) => s.removeImportLabelPrefix);
   const createUserDocument = useTimelineStore((s) => s.createUserDocument);
   const applyDocumentEdits = useTimelineStore((s) => s.applyDocumentEdits);
+  const renameDocument = useTimelineStore((s) => s.renameDocument);
   const lanes = useTimelineStore((s) => s.lanes);
   const ensureActiveFolder = useTimelineStore((s) => s.ensureActiveFolder);
 
   const [parseErrors, setParseErrors] = useState<string[]>([]);
+  const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const [activeTool, setActiveTool] = useState<BeatEditorTool>(null);
   const [disabledFields, setDisabledFields] = useState<FieldDisableFlags>({
     synopsis: false,
@@ -396,6 +399,52 @@ export default function TimelineTextEditorWorkspace({
   const getDocForPane = (pane: TextEditorPane) =>
     pane.docId ? documents.find((d) => d.id === pane.docId) ?? null : null;
 
+  const commitRename = (docId: string) => {
+    renameDocument(docId, renameValue);
+    setRenamingDocId(null);
+  };
+
+  const renderFileNameHeader = (
+    doc: { id: string; name: string } | null,
+    isActive: boolean,
+    dirtySuffix: React.ReactNode
+  ) => {
+    if (!doc) return "Empty pane";
+    if (renamingDocId === doc.id) {
+      return (
+        <input
+          type="text"
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onBlur={() => commitRename(doc.id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename(doc.id);
+            if (e.key === "Escape") setRenamingDocId(null);
+          }}
+          className="flex-1 min-w-0 px-1 py-0.5 text-xs bg-dark-bg border border-blue-500/50 rounded text-dark-text"
+          autoFocus
+          onClick={(e) => e.stopPropagation()}
+        />
+      );
+    }
+    return (
+      <>
+        <span
+          className="flex-1 truncate"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            if (!isActive) return;
+            setRenamingDocId(doc.id);
+            setRenameValue(doc.name);
+          }}
+        >
+          {doc.name}
+        </span>
+        {dirtySuffix}
+      </>
+    );
+  };
+
   const renderSideBySidePane = (pane: TextEditorPane, index: number) => {
     const doc = getDocForPane(pane);
     const isActive = pane.paneId === activePaneId;
@@ -416,10 +465,11 @@ export default function TimelineTextEditorWorkspace({
           onPointerDown={() => onActivePaneIdChange(pane.paneId)}
         >
           <div className="px-2 py-1 text-xs text-dark-muted border-b border-dark-accent/30 flex items-center gap-1 min-w-0">
-            <span className="flex-1 truncate">
-              {doc ? doc.name : "Empty pane"}
-              {pane.docId && drafts[pane.docId]?.dirty ? " •" : ""}
-            </span>
+            {renderFileNameHeader(
+              doc,
+              isActive,
+              pane.docId && drafts[pane.docId]?.dirty ? " •" : null
+            )}
             {renderPaneCloseButton(pane.paneId)}
           </div>
           <div className="flex-1 min-h-0 p-2">
@@ -452,17 +502,12 @@ export default function TimelineTextEditorWorkspace({
         onFocusCapture={() => onActivePaneIdChange(pane.paneId)}
         onPointerDown={() => onActivePaneIdChange(pane.paneId)}
       >
-        <div className="px-3 py-1.5 text-xs font-medium text-dark-muted uppercase tracking-wide border-b border-dark-accent/30 sticky top-0 bg-dark-surface z-10 flex items-center gap-2">
-          <span className="flex-1 truncate">
-            {doc ? (
-              <>
-                {doc.name}
-                {pane.docId && drafts[pane.docId]?.dirty ? " · Unsaved" : ""}
-              </>
-            ) : (
-              "Empty pane"
-            )}
-          </span>
+        <div className="px-3 py-1.5 text-xs font-medium text-dark-muted uppercase tracking-wide border-b border-dark-accent/30 sticky top-0 bg-dark-surface z-10 flex items-center gap-2 min-w-0">
+          {renderFileNameHeader(
+            doc,
+            isActive,
+            pane.docId && drafts[pane.docId]?.dirty ? " · Unsaved" : null
+          )}
           {renderPaneCloseButton(pane.paneId)}
         </div>
         <div className="min-h-[280px] h-[40vh] px-3 pb-3 pt-2">

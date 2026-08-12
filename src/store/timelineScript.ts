@@ -133,6 +133,49 @@ export interface GenerateTimelineScriptOptions {
   includeSectionMarkers?: boolean;
 }
 
+/** One-line Crossing declarations for script text (after Lane blocks). */
+export function generateCrossingLines(connections: TimelineConnection[]): string[] {
+  if (connections.length === 0) return [];
+  const sortedConnections = [...connections].sort((a, b) => a.id.localeCompare(b.id));
+  const lines: string[] = [];
+  for (const connection of sortedConnections) {
+    const parts = [`Crossing ${connection.id} beats: ${connection.beatIds.join(",")}`];
+    if (connection.title.trim()) {
+      parts.push(`title: "${escapeQuoted(connection.title)}"`);
+    }
+    if (connection.description.trim()) {
+      parts.push(`description: "${escapeQuoted(connection.description)}"`);
+    }
+    if (connection.date.trim()) {
+      parts.push(`date: "${escapeQuoted(connection.date)}"`);
+    }
+    if (connection.color?.trim()) {
+      parts.push(`color: "${escapeQuoted(connection.color.trim())}"`);
+    }
+    lines.push(parts.join(" "));
+  }
+  return lines;
+}
+
+/** Remove all Crossing lines from document text. */
+export function stripCrossingLinesFromText(content: string): string {
+  const kept = content.split("\n").filter((line) => !line.trim().startsWith("Crossing "));
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+}
+
+/** Append relevant Crossing lines to a document whose lanes own the given beat IDs. */
+export function reconcileDocumentCrossings(
+  content: string,
+  connections: TimelineConnection[],
+  docBeatIds: Set<string>
+): string {
+  const relevant = connections.filter((c) => c.beatIds.some((id) => docBeatIds.has(id)));
+  const stripped = stripCrossingLinesFromText(content);
+  const crossingLines = generateCrossingLines(relevant);
+  if (crossingLines.length === 0) return stripped;
+  return `${stripped}${stripped ? "\n\n" : ""}${crossingLines.join("\n")}\n`;
+}
+
 export function generateTimelineScript(
   lanes: TimelineLane[],
   beats: TimelineBeat[],
@@ -169,20 +212,7 @@ export function generateTimelineScript(
   }
 
   if (connections.length > 0) {
-    const sortedConnections = [...connections].sort((a, b) => a.id.localeCompare(b.id));
-    for (const connection of sortedConnections) {
-      const parts = [`Crossing ${connection.id} beats: ${connection.beatIds.join(",")}`];
-      if (connection.title.trim()) {
-        parts.push(`title: "${escapeQuoted(connection.title)}"`);
-      }
-      if (connection.description.trim()) {
-        parts.push(`description: "${escapeQuoted(connection.description)}"`);
-      }
-      if (connection.date.trim()) {
-        parts.push(`date: "${escapeQuoted(connection.date)}"`);
-      }
-      lines.push(parts.join(" "));
-    }
+    lines.push(...generateCrossingLines(connections));
     lines.push("");
   }
 
@@ -193,9 +223,9 @@ export function generateTimelineScript(
 }
 
 /** Snippet to insert at cursor inside a Lane beats array. */
-export function getEmptyBeatScriptBlock(beatId: string, slot = 0): string {
+export function getEmptyBeatScriptBlock(beatId: string, slot = 0, title = ""): string {
   return `    Beat ${beatId} slot: ${slot} {
-      title: ""
+      title: "${escapeQuoted(title)}"
       synopsis: ""
       detail: ""
       dateMode: none
@@ -378,6 +408,7 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
   const errors: string[] = [];
   const laneIds = new Set<string>();
   const beatIds = new Set<string>();
+  const connectionIds = new Set<string>();
 
   const rawLines = text.split("\n");
   let lineIndex = 0;
@@ -459,6 +490,7 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         continue;
       }
       const id = idMatch[1];
+      if (connectionIds.has(id)) continue;
       const beatsMatch = /beats:\s*(\S+)/.exec(line);
       if (!beatsMatch) {
         errors.push(`Crossing ${id} missing beats: beat references`);
@@ -470,12 +502,14 @@ export function parseTimelineScript(text: string): ParsedTimelineScript {
         continue;
       }
       const kv = parseKeyValueRest(line);
+      connectionIds.add(id);
       connections.push({
         id,
         beatIds: beatIdsList,
         title: kv.title ?? "",
         description: kv.description ?? "",
         date: kv.date ?? "",
+        color: kv.color ?? "",
       });
     }
   }
