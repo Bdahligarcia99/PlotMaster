@@ -45,6 +45,7 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
     const viewRef = useRef<EditorView | null>(null);
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    const isSyncingFromPropsRef = useRef(false);
 
     const onPasteRef = useRef(onPaste);
     onPasteRef.current = onPaste;
@@ -132,7 +133,7 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
             beatEditorTheme,
             EditorView.lineWrapping,
             EditorView.updateListener.of((update) => {
-              if (update.docChanged) {
+              if (update.docChanged && !isSyncingFromPropsRef.current) {
                 onChangeRef.current(update.state.doc.toString());
               }
             }),
@@ -178,9 +179,11 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
       if (!view) return;
       const current = view.state.doc.toString();
       if (current !== content) {
+        isSyncingFromPropsRef.current = true;
         view.dispatch({
           changes: { from: 0, to: current.length, insert: content },
         });
+        isSyncingFromPropsRef.current = false;
       }
     }, [content]);
 

@@ -22,6 +22,7 @@ import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import BeatBlock from "./BeatBlock";
 import MagnifiedBeatOverlay from "./MagnifiedBeatOverlay";
+import CrossingHighlightOverlay from "./CrossingHighlightOverlay";
 import { computeSlotTrackContentHeightPx, getPrimarySelection, useTimelineStore } from "../../store/timelineStore";
 import {
   filterBeatsByScope,
@@ -150,10 +151,13 @@ export default function TimelineBoard({
   const expandedBeatHeightPx = useTimelineStore((s) => s.expandedBeatHeightPx);
   const magnifyToolActive = useTimelineStore((s) => s.magnifyToolActive);
   const magnifiedBeatId = useTimelineStore((s) => s.magnifiedBeatId);
+  const horizontalSelectToolActive = useTimelineStore((s) => s.horizontalSelectToolActive);
   const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
   const setExpandedBeatHeightPx = useTimelineStore((s) => s.setExpandedBeatHeightPx);
   const setMagnifiedBeatId = useTimelineStore((s) => s.setMagnifiedBeatId);
   const setMagnifyToolActive = useTimelineStore((s) => s.setMagnifyToolActive);
+  const setHorizontalSelectToolActive = useTimelineStore((s) => s.setHorizontalSelectToolActive);
+  const setSelection = useTimelineStore((s) => s.setSelection);
   const selectOnly = useTimelineStore((s) => s.selectOnly);
   const toggleSelection = useTimelineStore((s) => s.toggleSelection);
   const moveBeat = useTimelineStore((s) => s.moveBeat);
@@ -310,6 +314,14 @@ export default function TimelineBoard({
     return map;
   }, [connections]);
 
+  const laneColorById = useMemo(() => {
+    const map = new Map<string, string | undefined>();
+    for (const lane of sortedLanes) {
+      map.set(lane.id, lane.color);
+    }
+    return map;
+  }, [sortedLanes]);
+
   const selectedBeatIds = useMemo(
     () => new Set(selection.filter((s) => s.type === "beat").map((s) => s.id)),
     [selection]
@@ -378,6 +390,7 @@ export default function TimelineBoard({
     const el = verticalScrollRef.current;
     if (!el) return;
     distanceFromBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setLayoutTick((t) => t + 1);
   }, []);
 
   const registerBeatRef = useCallback((beatId: string, el: HTMLElement | null) => {
@@ -547,6 +560,17 @@ export default function TimelineBoard({
   const handleBeatClick = useCallback(
     (beatId: string, e: React.MouseEvent) => {
       e.stopPropagation();
+      if (horizontalSelectToolActive) {
+        const clickedBeat = beats.find((b) => b.id === beatId);
+        if (clickedBeat) {
+          setSelection(
+            beats
+              .filter((b) => b.slot === clickedBeat.slot)
+              .map((b) => ({ type: "beat" as const, id: b.id }))
+          );
+        }
+        return;
+      }
       if (magnifyToolActive) {
         setMagnifiedBeatId(beatId);
         const el = getBeatElement(beatId);
@@ -560,7 +584,16 @@ export default function TimelineBoard({
         selectOnly({ type: "beat", id: beatId });
       }
     },
-    [toggleSelection, selectOnly, magnifyToolActive, setMagnifiedBeatId, getBeatElement]
+    [
+      toggleSelection,
+      selectOnly,
+      magnifyToolActive,
+      horizontalSelectToolActive,
+      setMagnifiedBeatId,
+      getBeatElement,
+      beats,
+      setSelection,
+    ]
   );
 
   const handleBeatDoubleClick = useCallback(
@@ -622,6 +655,23 @@ export default function TimelineBoard({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [magnifyToolActive, setMagnifiedBeatId, setMagnifyToolActive]);
+
+  useEffect(() => {
+    if (!horizontalSelectToolActive) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHorizontalSelectToolActive(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [horizontalSelectToolActive, setHorizontalSelectToolActive]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const onScroll = () => setLayoutTick((t) => t + 1);
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, []);
 
   const handleViewportWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     const el = viewportRef.current;
@@ -746,6 +796,17 @@ export default function TimelineBoard({
               className="relative flex min-h-full items-stretch"
               style={{ width: totalContentWidth }}
             >
+              <CrossingHighlightOverlay
+                connections={connections}
+                beats={beats}
+                sortedLanes={sortedLanes}
+                laneWidthPx={laneWidthPx}
+                crossingColorByBeatId={crossingColorByBeatId}
+                laneColorById={laneColorById}
+                trackRef={trackContentRef}
+                getBeatElement={getBeatElement}
+                layoutTick={layoutTick}
+              />
               {sortedLanes.map((lane) => (
                 <LaneColumn
                   key={lane.id}

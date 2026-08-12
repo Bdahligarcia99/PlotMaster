@@ -327,6 +327,21 @@ export function connectionMatchesBeatSet(connection: TimelineConnection, beatIds
   return b.every((id) => setA.has(id));
 }
 
+/** When every selected beat shares the same slot, returns that slot; otherwise null. */
+export function isSingleSlotSelection(
+  beats: TimelineBeat[],
+  selection: TimelineSelectionItem[]
+): number | null {
+  const beatIds = selection.filter((s) => s.type === "beat").map((s) => s.id);
+  if (beatIds.length === 0) return null;
+  const slots = beatIds
+    .map((id) => beats.find((b) => b.id === id)?.slot)
+    .filter((slot): slot is number => slot !== undefined);
+  if (slots.length !== beatIds.length) return null;
+  const first = slots[0];
+  return slots.every((slot) => slot === first) ? first : null;
+}
+
 interface TimelineStore {
   activeProjectId: string | null;
   timelineOrientation: TimelineOrientation;
@@ -343,6 +358,7 @@ interface TimelineStore {
   beatPlacementMode: "auto" | "above" | "below";
   magnifyToolActive: boolean;
   magnifiedBeatId: string | null;
+  horizontalSelectToolActive: boolean;
   scriptPanelLayout: "split" | "codeOnly" | "viewOnly";
   scriptDraft: string | null;
   hasUnsavedChanges: boolean;
@@ -389,6 +405,7 @@ interface TimelineStore {
   setBeatPlacementMode: (mode: "auto" | "above" | "below") => void;
   setMagnifyToolActive: (active: boolean) => void;
   setMagnifiedBeatId: (id: string | null) => void;
+  setHorizontalSelectToolActive: (active: boolean) => void;
   setSelection: (
     items: TimelineSelectionItem[] | ((prev: TimelineSelectionItem[]) => TimelineSelectionItem[])
   ) => void;
@@ -429,6 +446,7 @@ interface TimelineStore {
    * different beat, the two beats trade places (lane + slot). */
   moveBeat: (beatId: string, targetLaneId: string, targetSlot: number) => void;
   moveBeatsGroup: (moves: { beatId: string; laneId: string; slot: number }[]) => void;
+  insertGlobalSlotSpace: (thresholdSlot: number) => void;
   removeLane: (laneId: string) => void;
   removeBeat: (beatId: string) => void;
   removeBeats: (beatIds: string[]) => void;
@@ -460,6 +478,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   beatPlacementMode: "auto",
   magnifyToolActive: false,
   magnifiedBeatId: null,
+  horizontalSelectToolActive: false,
   scriptPanelLayout: "split",
   scriptDraft: null,
   hasUnsavedChanges: false,
@@ -740,9 +759,17 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     set({
       magnifyToolActive: active,
       magnifiedBeatId: active ? get().magnifiedBeatId : null,
+      horizontalSelectToolActive: active ? false : get().horizontalSelectToolActive,
     }),
 
   setMagnifiedBeatId: (id) => set({ magnifiedBeatId: id }),
+
+  setHorizontalSelectToolActive: (active) =>
+    set({
+      horizontalSelectToolActive: active,
+      magnifyToolActive: active ? false : get().magnifyToolActive,
+      magnifiedBeatId: active ? null : get().magnifiedBeatId,
+    }),
 
   setSelection: (itemsOrFn) => {
     set((state) => ({
@@ -989,12 +1016,22 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     });
 
     const editDocIds = [...editMap.keys()];
+    const laneIds = new Set(parsed.lanes.map((l) => l.id));
+    const beatIds = new Set(parsed.beats.map((b) => b.id));
+    const connectionIds = new Set(parsed.connections.map((c) => c.id));
+    const prunedSelection = s.selection.filter((item) => {
+      if (item.type === "lane") return laneIds.has(item.id);
+      if (item.type === "beat") return beatIds.has(item.id);
+      if (item.type === "connection") return connectionIds.has(item.id);
+      return false;
+    });
     set({
       lanes: parsed.lanes,
       beats: parsed.beats,
       connections: parsed.connections,
       documents: updatedDocs,
       dirtyDocumentIds: s.dirtyDocumentIds.filter((id) => !editDocIds.includes(id)),
+      selection: prunedSelection,
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
@@ -1202,11 +1239,6 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const s = get();
     if (moves.length === 0) return;
     const movingIds = new Set(moves.map((m) => m.beatId));
-    const originalById = new Map<string, { laneId: string; slot: number }>();
-    for (const id of movingIds) {
-      const b = s.beats.find((x) => x.id === id);
-      if (b) originalById.set(id, { laneId: b.laneId, slot: b.slot });
-    }
 
     for (const move of moves) {
       const partnerIds = getCrossingPartnerIds(s.connections, move.beatId);
@@ -1227,84 +1259,50 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         partnerMoves.set(partnerId, { laneId: partner.laneId, slot: clampedSlot });
       }
     }
+
+    const finalPositions = new Map<string, { laneId: string; slot: number }>();
+    for (const move of moves) {
+      finalPositions.set(move.beatId, {
+        laneId: move.laneId,
+        slot: Math.max(0, move.slot),
+      });
+    }
     for (const [partnerId, target] of partnerMoves) {
+      finalPositions.set(partnerId, target);
+    }
+
+    const allowedIds = new Set([...movingIds, ...partnerMoves.keys()]);
+
+    for (const [beatId, target] of finalPositions) {
       const blockingOccupant = s.beats.find(
         (b) =>
-          b.id !== partnerId &&
-          !movingIds.has(b.id) &&
-          !partnerMoves.has(b.id) &&
+          b.id !== beatId &&
+          !allowedIds.has(b.id) &&
           b.laneId === target.laneId &&
           b.slot === target.slot
       );
       if (blockingOccupant) return;
     }
 
-    const occupantPartnerMoves = new Map<string, number>();
-    for (const move of moves) {
-      const origin = originalById.get(move.beatId);
-      if (!origin) continue;
-      const clampedSlot = Math.max(0, move.slot);
-      const occupant = s.beats.find(
-        (b) => !movingIds.has(b.id) && b.laneId === move.laneId && b.slot === clampedSlot
-      );
-      if (!occupant) continue;
-      const occupantPartnerIds = getCrossingPartnerIds(s.connections, occupant.id);
-      for (const opId of occupantPartnerIds) {
-        if (movingIds.has(opId) || partnerMoves.has(opId)) continue;
-        const op = s.beats.find((b) => b.id === opId);
-        if (!op || op.slot === origin.slot) continue;
-        occupantPartnerMoves.set(opId, origin.slot);
-      }
-    }
-    for (const [opId, targetSlot] of occupantPartnerMoves) {
-      const op = s.beats.find((b) => b.id === opId);
-      if (!op) continue;
-      const blockingOccupant = s.beats.find(
-        (b) =>
-          b.id !== opId &&
-          !movingIds.has(b.id) &&
-          !partnerMoves.has(b.id) &&
-          !occupantPartnerMoves.has(b.id) &&
-          b.laneId === op.laneId &&
-          b.slot === targetSlot
-      );
-      if (blockingOccupant) return;
-    }
-
-    let beats = s.beats.map((b) => {
-      const move = moves.find((m) => m.beatId === b.id);
-      if (move) return { ...b, laneId: move.laneId, slot: Math.max(0, move.slot) };
-      const partnerMove = partnerMoves.get(b.id);
-      if (partnerMove) return { ...b, slot: partnerMove.slot };
+    const beats = s.beats.map((b) => {
+      const pos = finalPositions.get(b.id);
+      if (pos) return { ...b, laneId: pos.laneId, slot: pos.slot };
       return b;
     });
 
-    for (const move of moves) {
-      const origin = originalById.get(move.beatId);
-      if (!origin) continue;
-      const clampedSlot = Math.max(0, move.slot);
-      const occupant = beats.find(
-        (b) => !movingIds.has(b.id) && b.laneId === move.laneId && b.slot === clampedSlot
-      );
-      if (occupant) {
-        beats = beats.map((b) =>
-          b.id === occupant.id ? { ...b, laneId: origin.laneId, slot: origin.slot } : b
-        );
-        const occupantPartnerIds = getCrossingPartnerIds(s.connections, occupant.id);
-        beats = beats.map((b) =>
-          occupantPartnerIds.has(b.id) && !movingIds.has(b.id) && !partnerMoves.has(b.id)
-            ? { ...b, slot: origin.slot }
-            : b
-        );
-      }
-    }
-
-    for (const [opId, targetSlot] of occupantPartnerMoves) {
-      beats = beats.map((b) => (b.id === opId ? { ...b, slot: targetSlot } : b));
-    }
-
     set({
       beats,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
+  insertGlobalSlotSpace: (thresholdSlot) => {
+    const s = get();
+    const slot = Math.max(0, thresholdSlot);
+    set({
+      beats: s.beats.map((b) => (b.slot >= slot ? { ...b, slot: b.slot + 1 } : b)),
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,

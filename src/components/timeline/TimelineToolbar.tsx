@@ -5,6 +5,7 @@ import {
   canFormCrossing,
   connectionMatchesBeatSet,
   getSelectedBeat,
+  isSingleSlotSelection,
   resolveLaneIdFromSelection,
   useTimelineStore,
   ZOOM_LANE_COUNT_STEPS,
@@ -47,6 +48,9 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const magnifyToolActive = useTimelineStore((s) => s.magnifyToolActive);
   const setMagnifyToolActive = useTimelineStore((s) => s.setMagnifyToolActive);
   const setMagnifiedBeatId = useTimelineStore((s) => s.setMagnifiedBeatId);
+  const horizontalSelectToolActive = useTimelineStore((s) => s.horizontalSelectToolActive);
+  const setHorizontalSelectToolActive = useTimelineStore((s) => s.setHorizontalSelectToolActive);
+  const insertGlobalSlotSpace = useTimelineStore((s) => s.insertGlobalSlotSpace);
   const [message, setMessage] = useState<string | null>(null);
   const [beatMenuOpen, setBeatMenuOpen] = useState(false);
   const [renameModalOpen, setRenameModalOpen] = useState(false);
@@ -81,12 +85,14 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   // Beat creation now requires an explicitly active lane or beat selection — no silent fallback
   // to "the first lane." The new beat always lands in that selection's corresponding lane.
   const primarySelection = selection[0] ?? null;
+  const selectedBeat = getSelectedBeat(beats, selection);
   const hasActiveTarget =
-    primarySelection !== null && (primarySelection.type === "lane" || primarySelection.type === "beat");
+    primarySelection !== null &&
+    ((primarySelection.type === "lane" && lanes.some((l) => l.id === primarySelection.id)) ||
+      (primarySelection.type === "beat" && selectedBeat !== null));
   const targetLaneId = hasActiveTarget ? resolveLaneIdFromSelection(lanes, beats, selection) : null;
   const canCreateBeats = hasActiveTarget && targetLaneId !== null;
 
-  const selectedBeat = getSelectedBeat(beats, selection);
   const canAddBeat = canCreateBeats;
 
   const selectedBeats = selection.filter((s) => s.type === "beat");
@@ -106,6 +112,9 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const canConnect = crossingCheck.ok;
   const setAlreadyConnected =
     canConnect && connections.some((c) => connectionMatchesBeatSet(c, selectedBeatIds));
+
+  const singleSlotSelection = isSingleSlotSelection(beats, selection);
+  const canInsertSlotSpace = singleSlotSelection !== null;
 
   const getCrossingTooltip = (): string => {
     if (selectedBeats.length < 2) {
@@ -158,7 +167,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
       setMessage("Select a lane or beat first.");
       return;
     }
-    const id = addBeat(undefined, "story");
+    const id = addBeat(targetLaneId ?? undefined, "story");
     if (!id) {
       setMessage("Select a lane or beat first.");
       return;
@@ -173,7 +182,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
       setMessage("Select a lane or beat first.");
       return;
     }
-    const id = addBeat(undefined, "anchor");
+    const id = addBeat(targetLaneId ?? undefined, "anchor");
     if (!id) {
       setMessage("Select a lane or beat first.");
       return;
@@ -354,6 +363,55 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         }
       >
         Magnify
+      </Button>
+
+      <Button
+        variant={horizontalSelectToolActive ? "primary" : "secondary"}
+        size="sm"
+        onClick={() => setHorizontalSelectToolActive(!horizontalSelectToolActive)}
+        title={
+          horizontalSelectToolActive
+            ? "Horizontal Select active — click a beat to select every beat on that row across lanes; click again to exit"
+            : "Select every beat on the same row across all lanes"
+        }
+      >
+        Horizontal Select
+      </Button>
+
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          if (singleSlotSelection === null) return;
+          insertGlobalSlotSpace(singleSlotSelection + 1);
+          setMessage("Opened space above the selected row.");
+        }}
+        disabled={!canInsertSlotSpace}
+        title={
+          canInsertSlotSpace
+            ? "Shift beats above the selected row up by one slot, opening empty space directly above it"
+            : "Select beats that all share the same row to insert space"
+        }
+      >
+        Insert Space Above
+      </Button>
+
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          if (singleSlotSelection === null) return;
+          insertGlobalSlotSpace(singleSlotSelection);
+          setMessage("Opened space below the selected row.");
+        }}
+        disabled={!canInsertSlotSpace}
+        title={
+          canInsertSlotSpace
+            ? "Shift the selected row and everything above it up by one slot, opening empty space at the row's old position"
+            : "Select beats that all share the same row to insert space"
+        }
+      >
+        Insert Space Below
       </Button>
 
       <Button
