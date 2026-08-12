@@ -134,7 +134,7 @@ export default function CrossingHighlightOverlay({
   if (bands.length === 0) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-0" aria-hidden="true">
+    <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
       {bands.map((band) => (
         <div
           key={band.id}

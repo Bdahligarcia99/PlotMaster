@@ -72,7 +72,12 @@ export default function TimelineScreen() {
   const [paneFractions, setPaneFractions] = useState<number[]>([]);
   const [uniformPaneWidth, setUniformPaneWidth] = useState(false);
   const [uniformPaneWidthPx, setUniformPaneWidthPx] = useState(UNIFORM_PANE_WIDTH_DEFAULT_PX);
-  const [textScalePercent, setTextScalePercent] = useState(DEFAULT_BEAT_TEXT_SCALE_PERCENT);
+  const [sideBySideTextScalePercent, setSideBySideTextScalePercent] = useState(
+    DEFAULT_BEAT_TEXT_SCALE_PERCENT
+  );
+  const [unifiedTextScalePercent, setUnifiedTextScalePercent] = useState(
+    DEFAULT_BEAT_TEXT_SCALE_PERCENT
+  );
   const [inspectorMode, setInspectorMode] = useState<InspectorMode>("isolation");
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [scriptPaneOpen, setScriptPaneOpen] = useState(true);
@@ -110,6 +115,19 @@ export default function TimelineScreen() {
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
 
   const isTextEditor = displayMode === "text";
+
+  // Script display mode's text size is tracked independently per layout (Side-by-side vs.
+  // Unified) so switching layouts doesn't clobber the other one's preferred size.
+  const activeTextScalePercent = unifiedScroll
+    ? unifiedTextScalePercent
+    : sideBySideTextScalePercent;
+  const handleTextScalePercentChange = useCallback(
+    (pct: number) => {
+      if (unifiedScroll) setUnifiedTextScalePercent(pct);
+      else setSideBySideTextScalePercent(pct);
+    },
+    [unifiedScroll]
+  );
 
   const openFileIds = useMemo(
     () => panes.map((p) => p.docId).filter((id): id is string => id != null),
@@ -706,8 +724,8 @@ export default function TimelineScreen() {
                 onUniformPaneWidthChange={setUniformPaneWidth}
                 uniformPaneWidthPx={uniformPaneWidthPx}
                 onUniformPaneWidthPxChange={setUniformPaneWidthPx}
-                textScalePercent={textScalePercent}
-                onTextScalePercentChange={setTextScalePercent}
+                textScalePercent={activeTextScalePercent}
+                onTextScalePercentChange={handleTextScalePercentChange}
                 onRequestFileDeleteConfirm={setFileDeleteConfirm}
               />
             ) : (

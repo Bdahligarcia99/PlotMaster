@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import BeatDocumentEditorView, {
   type BeatDocumentEditorHandle,
 } from "./beatEditor/BeatDocumentEditorView";
-import { getSelectedBeatIds, lineReferencesTimelineEntity, useTimelineStore } from "../../store/timelineStore";
+import {
+  getFullySelectedConnectionIds,
+  getSelectedBeatIds,
+  lineReferencesTimelineEntity,
+  useTimelineStore,
+} from "../../store/timelineStore";
 import type { TextEditorDrafts } from "./TimelineTextEditorWorkspace";
 
 interface TimelineScriptPaneProps {
@@ -10,9 +15,16 @@ interface TimelineScriptPaneProps {
   onDraftsChange: (drafts: TextEditorDrafts) => void;
 }
 
-/** Given a document's text and a set of entity IDs (beats/lanes), returns the 0-based line
- * indices that should be highlighted. A match on a header line that opens a `{ ... }` block also
- * highlights the rest of that block, matching the old View pane's behavior. */
+const CROSSING_LINE_ID = /^Crossing\s+(\S+)/;
+
+/** Given a document's text and a set of entity IDs (beats/lanes/fully-selected connections),
+ * returns the 0-based line indices that should be highlighted. A match on a header line that
+ * opens a `{ ... }` block also highlights the rest of that block, matching the old View pane's
+ * behavior.
+ *
+ * A `Crossing <id> beats: ...` declaration line is matched only against its own connection id —
+ * never against the member beat ids listed in its `beats:` clause — so selecting a single member
+ * of a crossing highlights just that beat, not the crossing's own line. */
 function computeHighlightLines(content: string, entityIds: Set<string>): number[] {
   if (entityIds.size === 0) return [];
   const lines = content.split("\n");
@@ -26,7 +38,10 @@ function computeHighlightLines(content: string, entityIds: Set<string>): number[
       if (trimmed === "}") insideHighlightedBlock = false;
       continue;
     }
-    const matches = [...entityIds].some((id) => lineReferencesTimelineEntity(line, id));
+    const crossingMatch = CROSSING_LINE_ID.exec(trimmed);
+    const matches = crossingMatch
+      ? entityIds.has(crossingMatch[1])
+      : [...entityIds].some((id) => lineReferencesTimelineEntity(line, id));
     if (matches) {
       result.push(i);
       if (trimmed.endsWith("{")) insideHighlightedBlock = true;
@@ -40,6 +55,7 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
   const folders = useTimelineStore((s) => s.folders);
   const activeFolderId = useTimelineStore((s) => s.activeFolderId);
   const selection = useTimelineStore((s) => s.selection);
+  const connections = useTimelineStore((s) => s.connections);
 
   const [copied, setCopied] = useState(false);
   const editorRefs = useRef<Map<string, BeatDocumentEditorHandle | null>>(new Map());
@@ -71,8 +87,9 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
       new Set([
         ...getSelectedBeatIds(selection),
         ...selection.filter((s) => s.type === "lane").map((s) => s.id),
+        ...getFullySelectedConnectionIds(connections, selection),
       ]),
-    [selection]
+    [selection, connections]
   );
 
   useEffect(() => {

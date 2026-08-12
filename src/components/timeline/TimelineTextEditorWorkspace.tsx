@@ -29,7 +29,6 @@ export interface TextEditorPane {
   docId: string | null;
 }
 
-const TEXT_SCALE_STEP = 10;
 const UNIFORM_PANE_WIDTH_MIN = 240;
 const UNIFORM_PANE_WIDTH_MAX = 1200;
 
@@ -350,17 +349,6 @@ export default function TimelineTextEditorWorkspace({
     }
   }, [panes.length, paneFractions.length, onPaneFractionsChange]);
 
-  const decreaseTextScale = () => {
-    onTextScalePercentChange(
-      Math.max(BEAT_TEXT_SCALE_PERCENT_MIN, textScalePercent - TEXT_SCALE_STEP)
-    );
-  };
-  const increaseTextScale = () => {
-    onTextScalePercentChange(
-      Math.min(BEAT_TEXT_SCALE_PERCENT_MAX, textScalePercent + TEXT_SCALE_STEP)
-    );
-  };
-
   const renderEditor = (docId: string, content: string) => (
     <BeatDocumentEditorView
       key={docId}
@@ -597,26 +585,22 @@ export default function TimelineTextEditorWorkspace({
         >
           Expand all panes
         </button>
-        <div className="flex items-center gap-1" title="Text size in all open editors">
-          <button
-            type="button"
-            onClick={decreaseTextScale}
-            disabled={textScalePercent <= BEAT_TEXT_SCALE_PERCENT_MIN}
-            className="w-6 h-6 flex items-center justify-center rounded bg-dark-accent/50 hover:bg-dark-accent text-dark-muted hover:text-dark-text text-sm disabled:opacity-50"
-          >
-            −
-          </button>
-          <span className="text-xs text-dark-muted min-w-[3rem] text-center">
-            {textScalePercent}%
+        <div
+          className="flex items-center gap-2"
+          title={`Text size in ${unifiedScroll ? "Unified" : "Side-by-side"} view (tracked independently per layout)`}
+        >
+          <span className="text-xs text-dark-muted whitespace-nowrap">
+            Text size: {textScalePercent}%
           </span>
-          <button
-            type="button"
-            onClick={increaseTextScale}
-            disabled={textScalePercent >= BEAT_TEXT_SCALE_PERCENT_MAX}
-            className="w-6 h-6 flex items-center justify-center rounded bg-dark-accent/50 hover:bg-dark-accent text-dark-muted hover:text-dark-text text-sm disabled:opacity-50"
-          >
-            +
-          </button>
+          <input
+            type="range"
+            min={BEAT_TEXT_SCALE_PERCENT_MIN}
+            max={BEAT_TEXT_SCALE_PERCENT_MAX}
+            step={5}
+            value={textScalePercent}
+            onChange={(e) => onTextScalePercentChange(Number(e.target.value))}
+            className="w-20 h-1 accent-blue-500 cursor-pointer"
+          />
         </div>
         <div className="flex-1" />
         <button

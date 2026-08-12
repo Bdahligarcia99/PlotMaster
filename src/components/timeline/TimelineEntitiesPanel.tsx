@@ -10,7 +10,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { isSelected, useTimelineStore } from "../../store/timelineStore";
+import { getFullySelectedConnectionIds, isSelected, useTimelineStore } from "../../store/timelineStore";
 import {
   filterBeatsByScope,
   filterConnectionsForActiveFolder,
@@ -266,6 +266,10 @@ export default function TimelineEntitiesPanel({
   const connections = useMemo(
     () => filterConnectionsForActiveFolder(allConnections, allBeats, scopedLaneIds),
     [allConnections, allBeats, scopedLaneIds]
+  );
+  const fullySelectedConnectionIds = useMemo(
+    () => getFullySelectedConnectionIds(allConnections, selection),
+    [allConnections, selection]
   );
 
   const sortedLanes = useMemo(
@@ -676,7 +680,8 @@ export default function TimelineEntitiesPanel({
               <div className="border-t border-dark-accent/20 py-1">
                 {connections.map((connection) => {
                   const item: TimelineSelectionItem = { type: "connection", id: connection.id };
-                  const selected = isSelected(selection, item);
+                  const selected =
+                    isSelected(selection, item) || fullySelectedConnectionIds.has(connection.id);
                   const beatLabels = connection.beatIds.map((beatId) => {
                     const beat = beatsById.get(beatId);
                     return beat?.title || "Beat";

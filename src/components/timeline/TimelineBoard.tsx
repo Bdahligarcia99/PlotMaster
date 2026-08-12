@@ -665,6 +665,15 @@ export default function TimelineBoard({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [horizontalSelectToolActive, setHorizontalSelectToolActive]);
 
+  // If the row selection Horizontal Select made gets cleared some other way (clicking empty
+  // background, deleting the selected beats, etc.), turn the tool off automatically instead of
+  // leaving it active with nothing selected.
+  useEffect(() => {
+    if (horizontalSelectToolActive && selection.length === 0) {
+      setHorizontalSelectToolActive(false);
+    }
+  }, [horizontalSelectToolActive, selection, setHorizontalSelectToolActive]);
+
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -793,20 +802,9 @@ export default function TimelineBoard({
           >
             <div
               ref={trackContentRef}
-              className="relative flex min-h-full items-stretch"
+              className="relative isolate flex min-h-full items-stretch"
               style={{ width: totalContentWidth }}
             >
-              <CrossingHighlightOverlay
-                connections={connections}
-                beats={beats}
-                sortedLanes={sortedLanes}
-                laneWidthPx={laneWidthPx}
-                crossingColorByBeatId={crossingColorByBeatId}
-                laneColorById={laneColorById}
-                trackRef={trackContentRef}
-                getBeatElement={getBeatElement}
-                layoutTick={layoutTick}
-              />
               {sortedLanes.map((lane) => (
                 <LaneColumn
                   key={lane.id}
@@ -832,6 +830,22 @@ export default function TimelineBoard({
                   dropTargetSlots={dropTargetsByLane.get(lane.id) ?? new Set()}
                 />
               ))}
+              {/* Rendered after the lane columns (not before) so its layout effect commits once
+                  every beat ref for this commit is guaranteed to be attached — mounting it first
+                  meant its measurement always ran a beat behind, permanently seeing stale/missing
+                  refs. A negative z-index keeps it visually behind the beats despite the later DOM
+                  position. */}
+              <CrossingHighlightOverlay
+                connections={connections}
+                beats={beats}
+                sortedLanes={sortedLanes}
+                laneWidthPx={laneWidthPx}
+                crossingColorByBeatId={crossingColorByBeatId}
+                laneColorById={laneColorById}
+                trackRef={trackContentRef}
+                getBeatElement={getBeatElement}
+                layoutTick={layoutTick}
+              />
             </div>
           </div>
 

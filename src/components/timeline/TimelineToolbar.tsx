@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import Button from "../ui/Button";
 import {
   canFormCrossing,
-  connectionMatchesBeatSet,
   getSelectedBeat,
   isSingleSlotSelection,
   resolveLaneIdFromSelection,
@@ -39,6 +38,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const insertStoryBeatRelativeToBeat = useTimelineStore((s) => s.insertStoryBeatRelativeToBeat);
   const connections = useTimelineStore((s) => s.connections);
   const toggleConnection = useTimelineStore((s) => s.toggleConnection);
+  const removeBeatsFromCrossing = useTimelineStore((s) => s.removeBeatsFromCrossing);
   const setZoomLaneCount = useTimelineStore((s) => s.setZoomLaneCount);
   const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
   const setBeatTextScalePercent = useTimelineStore((s) => s.setBeatTextScalePercent);
@@ -110,21 +110,30 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const canBulkRename = bulkRenameBeatIds.length >= 1;
   const crossingCheck = canFormCrossing(selectedBeatIds, beats);
   const canConnect = crossingCheck.ok;
-  const setAlreadyConnected =
-    canConnect && connections.some((c) => connectionMatchesBeatSet(c, selectedBeatIds));
+  // Uncross is driven by common-connection membership rather than an exact-set match, so it
+  // stays active for a single beat (or any subset) of an existing crossing — not just when every
+  // member of that crossing is selected.
+  const commonConnection =
+    selectedBeatIds.length > 0
+      ? connections.find((c) => selectedBeatIds.every((id) => c.beatIds.includes(id)))
+      : undefined;
+  const isUncross = commonConnection !== undefined;
+  const crossingButtonEnabled = isUncross || canConnect;
 
   const singleSlotSelection = isSingleSlotSelection(beats, selection);
   const canInsertSlotSpace = singleSlotSelection !== null;
 
   const getCrossingTooltip = (): string => {
+    if (isUncross && commonConnection) {
+      return selectedBeatIds.length === commonConnection.beatIds.length
+        ? "Remove this crossing entirely"
+        : "Remove the selected beat(s) from this crossing (interior single-beat selections also remove their immediate crossing neighbors)";
+    }
     if (selectedBeats.length < 2) {
       return "Select two or more beats (shift-click) on different lanes to connect them";
     }
     if (crossingCheck.reason === "same-lane") {
       return "Each beat in a crossing must be on a different lane — you have two selected beats in the same lane";
-    }
-    if (canConnect && setAlreadyConnected) {
-      return "Remove the crossing between the selected beats";
     }
     if (canConnect) {
       return "Connect the selected beats";
@@ -203,6 +212,11 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   };
 
   const handleConnect = () => {
+    if (isUncross && commonConnection) {
+      removeBeatsFromCrossing(commonConnection.id, selectedBeatIds);
+      setMessage("Crossing removed.");
+      return;
+    }
     if (!canConnect) return;
     const result = toggleConnection(selectedBeatIds);
     if (!result.connectionId) {
@@ -341,11 +355,11 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         variant="secondary"
         size="sm"
         onClick={handleConnect}
-        disabled={!canConnect}
+        disabled={!crossingButtonEnabled}
         title={getCrossingTooltip()}
-        className={!canConnect ? "opacity-50 cursor-not-allowed" : ""}
+        className={!crossingButtonEnabled ? "opacity-50 cursor-not-allowed" : ""}
       >
-        {canConnect && setAlreadyConnected ? "Uncross" : "Crossing"}
+        {isUncross ? "Uncross" : "Crossing"}
       </Button>
 
       <Button
@@ -378,41 +392,45 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         Horizontal Select
       </Button>
 
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => {
-          if (singleSlotSelection === null) return;
-          insertGlobalSlotSpace(singleSlotSelection + 1);
-          setMessage("Opened space above the selected row.");
-        }}
-        disabled={!canInsertSlotSpace}
-        title={
-          canInsertSlotSpace
-            ? "Shift beats above the selected row up by one slot, opening empty space directly above it"
-            : "Select beats that all share the same row to insert space"
-        }
-      >
-        Insert Space Above
-      </Button>
-
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => {
-          if (singleSlotSelection === null) return;
-          insertGlobalSlotSpace(singleSlotSelection);
-          setMessage("Opened space below the selected row.");
-        }}
-        disabled={!canInsertSlotSpace}
-        title={
-          canInsertSlotSpace
-            ? "Shift the selected row and everything above it up by one slot, opening empty space at the row's old position"
-            : "Select beats that all share the same row to insert space"
-        }
-      >
-        Insert Space Below
-      </Button>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-dark-muted whitespace-nowrap">Insert Space:</span>
+        <div className="flex rounded-lg border border-dark-accent/50 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => {
+              if (singleSlotSelection === null) return;
+              insertGlobalSlotSpace(singleSlotSelection + 1);
+              setMessage("Opened space above the selected row.");
+            }}
+            disabled={!canInsertSlotSpace}
+            title={
+              canInsertSlotSpace
+                ? "Shift beats above the selected row up by one slot, opening empty space directly above it"
+                : "Select beats that all share the same row to insert space"
+            }
+            className="px-2 py-1 text-xs text-dark-muted hover:text-dark-text hover:bg-dark-accent/40 border-r border-dark-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Above
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (singleSlotSelection === null) return;
+              insertGlobalSlotSpace(singleSlotSelection);
+              setMessage("Opened space below the selected row.");
+            }}
+            disabled={!canInsertSlotSpace}
+            title={
+              canInsertSlotSpace
+                ? "Shift the selected row and everything above it up by one slot, opening empty space at the row's old position"
+                : "Select beats that all share the same row to insert space"
+            }
+            className="px-2 py-1 text-xs text-dark-muted hover:text-dark-text hover:bg-dark-accent/40 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Below
+          </button>
+        </div>
+      </div>
 
       <Button
         variant="secondary"

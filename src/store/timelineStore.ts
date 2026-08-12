@@ -457,6 +457,7 @@ interface TimelineStore {
   ) => void;
   removeConnection: (connectionId: string) => void;
   toggleConnection: (beatIds: string[]) => { created: boolean; connectionId: string | null };
+  removeBeatsFromCrossing: (connectionId: string, selectedBeatIds: string[]) => void;
   reorderLane: (laneId: string, newIndex: number) => void;
   applyScriptText: (text: string) => { ok: boolean; errors: string[] };
   syncScriptDraftFromModel: () => string;
@@ -1435,6 +1436,68 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     return { created: true, connectionId: id };
   },
 
+  removeBeatsFromCrossing: (connectionId, selectedBeatIds) => {
+    const s = get();
+    const connection = s.connections.find((c) => c.id === connectionId);
+    if (!connection) return;
+
+    const laneSortById = new Map(s.lanes.map((l) => [l.id, l.sortOrder]));
+    const beatById = new Map(s.beats.map((b) => [b.id, b]));
+    const orderedMembers = [...connection.beatIds].sort((a, b) => {
+      const laneA = beatById.get(a)?.laneId;
+      const laneB = beatById.get(b)?.laneId;
+      return (laneSortById.get(laneA ?? "") ?? 0) - (laneSortById.get(laneB ?? "") ?? 0);
+    });
+
+    const selectedSet = new Set(selectedBeatIds.filter((id) => orderedMembers.includes(id)));
+    if (selectedSet.size === 0) return;
+
+    let removalSet: Set<string>;
+    if (selectedSet.size === orderedMembers.length) {
+      removalSet = new Set(orderedMembers);
+    } else if (selectedSet.size === 1) {
+      const soleId = [...selectedSet][0];
+      const index = orderedMembers.indexOf(soleId);
+      const hasLeftNeighbor = index > 0;
+      const hasRightNeighbor = index < orderedMembers.length - 1;
+      removalSet =
+        hasLeftNeighbor && hasRightNeighbor
+          ? new Set([orderedMembers[index - 1], soleId, orderedMembers[index + 1]])
+          : new Set([soleId]);
+    } else {
+      const indices = orderedMembers
+        .map((id, i) => (selectedSet.has(id) ? i : -1))
+        .filter((i) => i >= 0);
+      const minIndex = Math.min(...indices);
+      const maxIndex = Math.max(...indices);
+      removalSet = new Set(orderedMembers.slice(minIndex, maxIndex + 1));
+    }
+
+    const remainingMembers = orderedMembers.filter((id) => !removalSet.has(id));
+
+    if (remainingMembers.length < 2) {
+      set({
+        connections: s.connections.filter((c) => c.id !== connectionId),
+        selection: s.selection.filter(
+          (item) => !(item.type === "connection" && item.id === connectionId)
+        ),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+        scriptDraft: null,
+      });
+      return;
+    }
+
+    set({
+      connections: s.connections.map((c) =>
+        c.id === connectionId ? { ...c, beatIds: remainingMembers } : c
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+  },
+
   reorderLane: (laneId, newIndex) => {
     const s = get();
     const sorted = [...s.lanes].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -1572,6 +1635,30 @@ export function isSelected(selection: TimelineSelectionItem[], item: TimelineSel
 
 export function getSelectedBeatIds(selection: TimelineSelectionItem[]): string[] {
   return selection.filter((s) => s.type === "beat").map((s) => s.id);
+}
+
+/** Connections that are "fully selected" — every one of their member beats is in the current
+ * selection, or the connection itself is directly selected. Used to gate crossing-level
+ * highlighting (script line + Sub Entities row) so that selecting just one member of a crossing
+ * only highlights that beat, not the whole crossing. */
+export function getFullySelectedConnectionIds(
+  connections: TimelineConnection[],
+  selection: TimelineSelectionItem[]
+): Set<string> {
+  const selectedBeatIds = new Set(getSelectedBeatIds(selection));
+  const directlySelectedConnectionIds = new Set(
+    selection.filter((s) => s.type === "connection").map((s) => s.id)
+  );
+  const result = new Set<string>();
+  for (const connection of connections) {
+    if (
+      directlySelectedConnectionIds.has(connection.id) ||
+      (connection.beatIds.length > 0 && connection.beatIds.every((id) => selectedBeatIds.has(id)))
+    ) {
+      result.add(connection.id);
+    }
+  }
+  return result;
 }
 
 /** All connections that include the given beat. */
