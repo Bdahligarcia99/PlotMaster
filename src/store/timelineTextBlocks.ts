@@ -240,7 +240,7 @@ export function insertLaneAtCursor(
       {
         id: laneId,
         label,
-        laneType: "character",
+        laneType: "none",
         sortOrder,
       },
     ],

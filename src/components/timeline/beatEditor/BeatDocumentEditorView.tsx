@@ -5,9 +5,11 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import {
   beatEditorTheme,
   findAutoSeparatorLines,
+  highlightMarkField,
   separatorMarkField,
   setAutoSeparatorLines,
   setCommittedSeparators,
+  setHighlightLines,
 } from "./beatDocumentExtensions";
 import { insertAutoSeparatorsInText } from "./beatDocumentModel";
 import { isTauri } from "../../../tauri/openProjectInNewWindow";
@@ -19,6 +21,9 @@ export interface BeatDocumentEditorHandle {
   replaceSelection: (text: string) => void;
   getCursorPos: () => number;
   setContentWithCursor: (content: string, cursorPos: number) => void;
+  /** Highlights the given 0-based line indices and scrolls the first one into view. Pass an empty
+   * array to clear. */
+  setHighlightLines: (lines: number[]) => void;
 }
 
 interface BeatDocumentEditorViewProps {
@@ -81,6 +86,18 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
           selection: { anchor: cursorPos },
         });
       },
+      setHighlightLines: (lines: number[]) => {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({ effects: [setHighlightLines.of(lines)] });
+        if (lines.length > 0) {
+          const lineNumber = Math.min(lines[0] + 1, view.state.doc.lines);
+          const pos = view.state.doc.line(Math.max(1, lineNumber)).from;
+          view.dispatch({
+            effects: EditorView.scrollIntoView(pos, { y: "center" }),
+          });
+        }
+      },
     }));
 
     useEffect(() => {
@@ -111,6 +128,7 @@ const BeatDocumentEditorView = forwardRef<BeatDocumentEditorHandle, BeatDocument
             history(),
             keymap.of([...defaultKeymap, ...historyKeymap]),
             separatorMarkField,
+            highlightMarkField,
             beatEditorTheme,
             EditorView.lineWrapping,
             EditorView.updateListener.of((update) => {

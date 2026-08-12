@@ -18,7 +18,6 @@ import {
 } from "@dnd-kit/sortable";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import ConnectorOverlay from "./ConnectorOverlay";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import BeatBlock from "./BeatBlock";
@@ -328,11 +327,6 @@ export default function TimelineBoard({
     () => new Set(selection.filter((s) => s.type === "lane").map((s) => s.id)),
     [selection]
   );
-  const selectedConnectionId = useMemo(() => {
-    const item = selection.find((s) => s.type === "connection");
-    return item?.id ?? null;
-  }, [selection]);
-
   useEffect(() => {
     setLayoutTick((t) => t + 1);
   }, [beats, lanes, laneWidthPx, beatsExpanded, expandedBeatHeightPx]);
@@ -585,23 +579,6 @@ export default function TimelineBoard({
     [selectOnly, onSelectForEdit]
   );
 
-  const handleSelectConnection = useCallback(
-    (id: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      selectOnly({ type: "connection", id });
-    },
-    [selectOnly]
-  );
-
-  const handleOpenConnection = useCallback(
-    (id: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      selectOnly({ type: "connection", id });
-      onSelectForEdit?.();
-    },
-    [selectOnly, onSelectForEdit]
-  );
-
   const handleBackgroundClick = useCallback(() => {
     if (magnifiedBeatId) {
       setMagnifiedBeatId(null);
@@ -779,15 +756,6 @@ export default function TimelineBoard({
                   dropTargetSlots={dropTargetsByLane.get(lane.id) ?? new Set()}
                 />
               ))}
-              <ConnectorOverlay
-                containerRef={trackContentRef}
-                getBeatElement={getBeatElement}
-                connections={connections}
-                selectedConnectionId={selectedConnectionId}
-                onSelectConnection={handleSelectConnection}
-                onOpenConnection={handleOpenConnection}
-                recomputeToken={layoutTick}
-              />
             </div>
           </div>
 

@@ -9,6 +9,43 @@ const fieldLabelDeco = Decoration.line({ class: "cm-beat-field-label" });
 export const setAutoSeparatorLines = StateEffect.define<number[]>();
 export const setCommittedSeparators = StateEffect.define<boolean>();
 
+const highlightLineDeco = Decoration.line({ class: "cm-beat-highlight-line" });
+
+export const setHighlightLines = StateEffect.define<number[]>();
+
+/** Highlights a fixed set of 0-based line indices — used by the Script pane to mark the lines
+ * belonging to the currently selected beat/lane on the canvas. */
+export const highlightMarkField = StateField.define<Set<number>>({
+  create() {
+    return new Set();
+  },
+  update(value, tr) {
+    let lines = value;
+    for (const effect of tr.effects) {
+      if (effect.is(setHighlightLines)) {
+        lines = new Set(effect.value);
+      }
+    }
+    if (tr.docChanged && lines.size > 0) {
+      lines = new Set();
+    }
+    return lines;
+  },
+  provide: (f) =>
+    EditorView.decorations.compute([f], (state) => {
+      const lines = state.field(f);
+      if (lines.size === 0) return Decoration.none;
+      const builder = new RangeSetBuilder<Decoration>();
+      for (let i = 1; i <= state.doc.lines; i++) {
+        if (lines.has(i - 1)) {
+          const line = state.doc.line(i);
+          builder.add(line.from, line.from, highlightLineDeco);
+        }
+      }
+      return builder.finish();
+    }),
+});
+
 export const separatorMarkField = StateField.define<{
   autoLines: Set<number>;
   committed: boolean;
@@ -87,6 +124,9 @@ export const beatEditorTheme = EditorView.theme({
   },
   ".cm-beat-field-label": {
     color: "#93c5fd",
+  },
+  ".cm-beat-highlight-line": {
+    backgroundColor: "rgba(59, 130, 246, 0.15)",
   },
   "&.cm-focused": {
     outline: "none",

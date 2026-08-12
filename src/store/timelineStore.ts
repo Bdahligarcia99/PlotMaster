@@ -755,7 +755,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const lane: TimelineLane = {
       id,
       label: getDefaultLaneLabel(sortOrder),
-      laneType: "character",
+      laneType: "none",
       sortOrder,
     };
     const now = Date.now();
@@ -1119,6 +1119,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const clampedSlot = Math.max(0, targetSlot);
     if (beat.laneId === targetLaneId && beat.slot === clampedSlot) return;
 
+    // Crossing vertical lock: beats that share a crossing with the dragged beat stay aligned to
+    // the same slot in their own lane. If that would collide with an unrelated beat, the whole
+    // move is cancelled (moving onto a fellow crossing member is still a normal swap — see the
+    // occupant-swap logic below, which already covers that case generically).
+    const partnerIds = getCrossingPartnerIds(s.connections, beatId);
+
     // If the target slot is already occupied by a different beat, the two trade places (lane +
     // slot) instead of one silently overwriting the other — there's no "renumbering" step needed
     // since slots are absolute, not a compact per-lane sequence.
@@ -1126,9 +1132,25 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       (b) => b.id !== beatId && b.laneId === targetLaneId && b.slot === clampedSlot
     );
 
+    for (const partnerId of partnerIds) {
+      if (occupant && partnerId === occupant.id) continue;
+      const partner = s.beats.find((b) => b.id === partnerId);
+      if (!partner || partner.slot === clampedSlot) continue;
+      const blockingOccupant = s.beats.find(
+        (b) =>
+          b.id !== partnerId &&
+          b.id !== beatId &&
+          !partnerIds.has(b.id) &&
+          b.laneId === partner.laneId &&
+          b.slot === clampedSlot
+      );
+      if (blockingOccupant) return;
+    }
+
     const beats = s.beats.map((b) => {
       if (b.id === beatId) return { ...b, laneId: targetLaneId, slot: clampedSlot };
       if (occupant && b.id === occupant.id) return { ...b, laneId: beat.laneId, slot: beat.slot };
+      if (partnerIds.has(b.id)) return { ...b, slot: clampedSlot };
       return b;
     });
 
@@ -1150,9 +1172,37 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       if (b) originalById.set(id, { laneId: b.laneId, slot: b.slot });
     }
 
+    // Crossing vertical lock: for each primary move, any crossing partner not already part of
+    // this group must follow to the same slot in its own lane. Validate all of these up front —
+    // if any would collide with an unrelated beat, cancel the whole group move.
+    const partnerMoves = new Map<string, { laneId: string; slot: number }>();
+    for (const move of moves) {
+      const clampedSlot = Math.max(0, move.slot);
+      const partnerIds = getCrossingPartnerIds(s.connections, move.beatId);
+      for (const partnerId of partnerIds) {
+        if (movingIds.has(partnerId)) continue;
+        const partner = s.beats.find((b) => b.id === partnerId);
+        if (!partner || partner.slot === clampedSlot) continue;
+        partnerMoves.set(partnerId, { laneId: partner.laneId, slot: clampedSlot });
+      }
+    }
+    for (const [partnerId, target] of partnerMoves) {
+      const blockingOccupant = s.beats.find(
+        (b) =>
+          b.id !== partnerId &&
+          !movingIds.has(b.id) &&
+          !partnerMoves.has(b.id) &&
+          b.laneId === target.laneId &&
+          b.slot === target.slot
+      );
+      if (blockingOccupant) return;
+    }
+
     let beats = s.beats.map((b) => {
       const move = moves.find((m) => m.beatId === b.id);
       if (move) return { ...b, laneId: move.laneId, slot: Math.max(0, move.slot) };
+      const partnerMove = partnerMoves.get(b.id);
+      if (partnerMove) return { ...b, slot: partnerMove.slot };
       return b;
     });
 
@@ -1440,4 +1490,19 @@ export function isSelected(selection: TimelineSelectionItem[], item: TimelineSel
 
 export function getSelectedBeatIds(selection: TimelineSelectionItem[]): string[] {
   return selection.filter((s) => s.type === "beat").map((s) => s.id);
+}
+
+/** All other beat IDs that share a crossing (connection) with the given beat. */
+function getCrossingPartnerIds(
+  connections: TimelineConnection[],
+  beatId: string
+): Set<string> {
+  const partnerIds = new Set<string>();
+  for (const conn of connections) {
+    if (!conn.beatIds.includes(beatId)) continue;
+    for (const id of conn.beatIds) {
+      if (id !== beatId) partnerIds.add(id);
+    }
+  }
+  return partnerIds;
 }

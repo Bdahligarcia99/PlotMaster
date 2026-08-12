@@ -10,6 +10,9 @@ export interface ProjectSaveControlsProps {
   onSave?: () => void | Promise<void>;
   exportSlot?: ReactNode;
   saveAsFileProjectName?: string;
+  /** Hides the manual Save button — for modules that save automatically and only need the status
+   * pill plus "Save as file". */
+  hideSaveButton?: boolean;
 }
 
 export default function ProjectSaveControls({
@@ -20,6 +23,7 @@ export default function ProjectSaveControls({
   onSave,
   exportSlot,
   saveAsFileProjectName,
+  hideSaveButton = false,
 }: ProjectSaveControlsProps) {
   const saveDisabled = !activeProjectId || isSaving || !onSave;
   const exportDisabled = !exportSlot;
@@ -59,22 +63,24 @@ export default function ProjectSaveControls({
           </button>
         </div>
       )}
-      <Button
-        variant="primary"
-        size="sm"
-        onClick={() => void onSave?.()}
-        disabled={saveDisabled}
-        title={
-          !onSave
-            ? "Save is not available for this module yet"
-            : activeProjectId
-              ? "Save project"
-              : "No project loaded"
-        }
-        className={!onSave ? "opacity-50 cursor-not-allowed" : undefined}
-      >
-        {showSavedCheck ? "Saved ✓" : isSaving ? "Saving…" : "Save"}
-      </Button>
+      {!hideSaveButton && (
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => void onSave?.()}
+          disabled={saveDisabled}
+          title={
+            !onSave
+              ? "Save is not available for this module yet"
+              : activeProjectId
+                ? "Save project"
+                : "No project loaded"
+          }
+          className={!onSave ? "opacity-50 cursor-not-allowed" : undefined}
+        >
+          {showSavedCheck ? "Saved ✓" : isSaving ? "Saving…" : "Save"}
+        </Button>
+      )}
       <SaveAsSynprojButton
         projectId={activeProjectId}
         projectName={saveAsFileProjectName ?? "Project"}

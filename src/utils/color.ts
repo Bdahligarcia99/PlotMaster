@@ -38,3 +38,8 @@ export const BEAT_BLOCK_BASE_BG = "#1a1a2e";
 export function laneColorBeatBackground(laneColor: string): string {
   return mixHexColors(laneColor, BEAT_BLOCK_BASE_BG, 0.22);
 }
+
+/** Stronger opaque tint of lane color, used to highlight beats that belong to a crossing. */
+export function laneColorCrossingBackground(laneColor: string): string {
+  return mixHexColors(laneColor, BEAT_BLOCK_BASE_BG, 0.48);
+}

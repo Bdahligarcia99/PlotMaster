@@ -104,6 +104,7 @@ export default function TimelineScreen() {
   const deleteFolderCascade = useTimelineStore((s) => s.deleteFolderCascade);
   const moveDocumentsToFolder = useTimelineStore((s) => s.moveDocumentsToFolder);
   const previewMoveCrossingTermination = useTimelineStore((s) => s.previewMoveCrossingTermination);
+  const activeFolderId = useTimelineStore((s) => s.activeFolderId);
   const selection = useTimelineStore((s) => s.selection);
   const removeBeats = useTimelineStore((s) => s.removeBeats);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
@@ -159,6 +160,35 @@ export default function TimelineScreen() {
   const handleCommitDraftsForSave = useCallback((): { ok: boolean } => {
     return commitAllDirtyDrafts();
   }, [commitAllDirtyDrafts]);
+
+  // Autosave-only: dirty text-editor drafts (Text mode panes and the Block-mode Script pane) are
+  // committed to the model automatically a short pause after the user stops typing, rather than
+  // requiring a manual Save click. Once committed, the model's own autosave subscription
+  // (timelineStore.ts) persists it to disk/storage.
+  const draftCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commitAllDirtyDraftsRef = useRef(commitAllDirtyDrafts);
+  commitAllDirtyDraftsRef.current = commitAllDirtyDrafts;
+
+  useEffect(() => {
+    if (!hasDraftChanges) return;
+    if (draftCommitTimerRef.current) clearTimeout(draftCommitTimerRef.current);
+    draftCommitTimerRef.current = setTimeout(() => {
+      commitAllDirtyDrafts();
+    }, 800);
+    return () => {
+      if (draftCommitTimerRef.current) clearTimeout(draftCommitTimerRef.current);
+    };
+  }, [textDrafts, hasDraftChanges, commitAllDirtyDrafts]);
+
+  // Flush any pending dirty drafts immediately when switching outlines/folders or leaving the
+  // screen, so edits are never silently lost while waiting on the debounce above. The cleanup
+  // fires both when activeFolderId is about to change and on unmount.
+  useEffect(() => {
+    return () => {
+      if (draftCommitTimerRef.current) clearTimeout(draftCommitTimerRef.current);
+      commitAllDirtyDraftsRef.current();
+    };
+  }, [activeFolderId]);
 
   const removePaneAndDraftForDoc = useCallback((docId: string, paneId?: string) => {
     if (paneId) {
@@ -698,7 +728,7 @@ export default function TimelineScreen() {
                       <div className="h-0.5 w-8 rounded-full bg-dark-muted/40" />
                     </div>
                     <div className="flex-shrink-0 overflow-hidden" style={{ height: scriptHeight }}>
-                      <TimelineScriptPane />
+                      <TimelineScriptPane drafts={textDrafts} onDraftsChange={setTextDrafts} />
                     </div>
                   </>
                 )}

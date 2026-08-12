@@ -285,7 +285,7 @@ export default function WorkspaceShell() {
                 className="flex-shrink-0 overflow-hidden transition-[height] duration-200 ease-in-out"
                 style={{ height: scriptPaneOpen ? 240 : 0 }}
               >
-                <TimelineScriptPane />
+                <TimelineScriptPane drafts={{}} onDraftsChange={() => {}} />
               </div>
               {!scriptPaneOpen && (
                 <button

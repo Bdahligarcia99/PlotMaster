@@ -62,6 +62,7 @@ export default function TimelineSaveControls({
       showSavedCheck={showSavedCheck}
       onSave={handleSave}
       saveAsFileProjectName="Timeline Outliner"
+      hideSaveButton
     />
   );
 }

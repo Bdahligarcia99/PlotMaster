@@ -125,7 +125,7 @@ export default function TimelineInspector({
   const activeLaneId = resolveLaneIdFromSelection(lanes, beats, selection);
 
   const [laneLabel, setLaneLabel] = useState("");
-  const [laneType, setLaneType] = useState("character");
+  const [laneType, setLaneType] = useState("none");
   const [laneTypeCustom, setLaneTypeCustom] = useState("");
   const [laneColor, setLaneColor] = useState("");
   const [beatTitle, setBeatTitle] = useState("");

@@ -1,4 +1,4 @@
-export const LANE_TYPE_PRESETS = ["character", "act", "theme", "subplot"] as const;
+export const LANE_TYPE_PRESETS = ["none", "character", "act", "theme", "subplot"] as const;
 
 /** Discrete zoom steps: how many lane columns are targeted to fit the viewport at once. */
 export const ZOOM_LANE_COUNT_STEPS = [3, 4, 5, 6, 8, 10, 12] as const;

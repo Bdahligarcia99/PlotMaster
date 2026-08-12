@@ -217,7 +217,7 @@ function parseLaneHeader(line: string): Omit<TimelineLane, "sortOrder"> & { sort
   const labelMatch = parseQuotedString(afterId, afterId.indexOf('"'));
   const label = labelMatch?.value ?? "Lane";
   const sortOrder = parseNumericField(line, "sort") ?? 0;
-  const laneType = parseBareField(line, "type") ?? "character";
+  const laneType = parseBareField(line, "type") ?? "none";
   const colorKv = parseKeyValueRest(line);
   const color = colorKv.color?.trim() || undefined;
   return {
