@@ -327,6 +327,66 @@ export function connectionMatchesBeatSet(connection: TimelineConnection, beatIds
   return b.every((id) => setA.has(id));
 }
 
+/** Lane sortOrder span for a connection's member beats. */
+function connectionLaneSortSpan(
+  connection: TimelineConnection,
+  beats: TimelineBeat[],
+  laneSortById: Map<string, number>
+): { min: number; max: number } | null {
+  const orders: number[] = [];
+  for (const beatId of connection.beatIds) {
+    const beat = beats.find((b) => b.id === beatId);
+    if (!beat) continue;
+    const order = laneSortById.get(beat.laneId);
+    if (order !== undefined) orders.push(order);
+  }
+  if (orders.length === 0) return null;
+  return { min: Math.min(...orders), max: Math.max(...orders) };
+}
+
+/** True when two connections can merge into one valid crossing (same row, back-to-back lanes, no lane overlap). */
+export function canUniteConnections(
+  connA: TimelineConnection,
+  connB: TimelineConnection,
+  beats: TimelineBeat[],
+  lanes: TimelineLane[]
+): boolean {
+  const laneSortById = new Map(lanes.map((l) => [l.id, l.sortOrder]));
+  const beatById = new Map(beats.map((b) => [b.id, b]));
+  const unionBeatIds = [...new Set([...connA.beatIds, ...connB.beatIds])];
+  if (!canFormCrossing(unionBeatIds, beats).ok) return false;
+
+  const slots = unionBeatIds
+    .map((id) => beatById.get(id)?.slot)
+    .filter((slot): slot is number => slot !== undefined);
+  if (slots.length !== unionBeatIds.length) return false;
+  const firstSlot = slots[0];
+  if (!slots.every((slot) => slot === firstSlot)) return false;
+
+  const spanA = connectionLaneSortSpan(connA, beats, laneSortById);
+  const spanB = connectionLaneSortSpan(connB, beats, laneSortById);
+  if (!spanA || !spanB) return false;
+
+  const backToBack =
+    spanA.max + 1 === spanB.min || spanB.max + 1 === spanA.min;
+  return backToBack;
+}
+
+/** Sort connection beat ids by lane sortOrder. */
+export function sortConnectionBeatIds(
+  beatIds: string[],
+  beats: TimelineBeat[],
+  lanes: TimelineLane[]
+): string[] {
+  const laneSortById = new Map(lanes.map((l) => [l.id, l.sortOrder]));
+  const beatById = new Map(beats.map((b) => [b.id, b]));
+  return [...beatIds].sort((a, b) => {
+    const laneA = beatById.get(a)?.laneId;
+    const laneB = beatById.get(b)?.laneId;
+    return (laneSortById.get(laneA ?? "") ?? 0) - (laneSortById.get(laneB ?? "") ?? 0);
+  });
+}
+
 /** When every selected beat shares the same slot, returns that slot; otherwise null. */
 export function isSingleSlotSelection(
   beats: TimelineBeat[],
@@ -458,6 +518,7 @@ interface TimelineStore {
   removeConnection: (connectionId: string) => void;
   toggleConnection: (beatIds: string[]) => { created: boolean; connectionId: string | null };
   removeBeatsFromCrossing: (connectionId: string, selectedBeatIds: string[]) => void;
+  uniteConnections: (connectionIdA: string, connectionIdB: string, color: string) => string | null;
   reorderLane: (laneId: string, newIndex: number) => void;
   applyScriptText: (text: string) => { ok: boolean; errors: string[] };
   syncScriptDraftFromModel: () => string;
@@ -1441,43 +1502,30 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     const connection = s.connections.find((c) => c.id === connectionId);
     if (!connection) return;
 
-    const laneSortById = new Map(s.lanes.map((l) => [l.id, l.sortOrder]));
-    const beatById = new Map(s.beats.map((b) => [b.id, b]));
-    const orderedMembers = [...connection.beatIds].sort((a, b) => {
-      const laneA = beatById.get(a)?.laneId;
-      const laneB = beatById.get(b)?.laneId;
-      return (laneSortById.get(laneA ?? "") ?? 0) - (laneSortById.get(laneB ?? "") ?? 0);
-    });
-
+    const orderedMembers = sortConnectionBeatIds(connection.beatIds, s.beats, s.lanes);
     const selectedSet = new Set(selectedBeatIds.filter((id) => orderedMembers.includes(id)));
     if (selectedSet.size === 0) return;
 
-    let removalSet: Set<string>;
-    if (selectedSet.size === orderedMembers.length) {
-      removalSet = new Set(orderedMembers);
-    } else if (selectedSet.size === 1) {
-      const soleId = [...selectedSet][0];
-      const index = orderedMembers.indexOf(soleId);
-      const hasLeftNeighbor = index > 0;
-      const hasRightNeighbor = index < orderedMembers.length - 1;
-      removalSet =
-        hasLeftNeighbor && hasRightNeighbor
-          ? new Set([orderedMembers[index - 1], soleId, orderedMembers[index + 1]])
-          : new Set([soleId]);
-    } else {
-      const indices = orderedMembers
-        .map((id, i) => (selectedSet.has(id) ? i : -1))
-        .filter((i) => i >= 0);
-      const minIndex = Math.min(...indices);
-      const maxIndex = Math.max(...indices);
-      removalSet = new Set(orderedMembers.slice(minIndex, maxIndex + 1));
+    const runs: string[][] = [];
+    let currentRun: string[] = [];
+    for (const id of orderedMembers) {
+      if (selectedSet.has(id)) {
+        if (currentRun.length > 0) {
+          runs.push(currentRun);
+          currentRun = [];
+        }
+      } else {
+        currentRun.push(id);
+      }
     }
+    if (currentRun.length > 0) runs.push(currentRun);
 
-    const remainingMembers = orderedMembers.filter((id) => !removalSet.has(id));
+    const validRuns = runs.filter((run) => run.length >= 2);
+    const otherConnections = s.connections.filter((c) => c.id !== connectionId);
 
-    if (remainingMembers.length < 2) {
+    if (validRuns.length === 0) {
       set({
-        connections: s.connections.filter((c) => c.id !== connectionId),
+        connections: otherConnections,
         selection: s.selection.filter(
           (item) => !(item.type === "connection" && item.id === connectionId)
         ),
@@ -1488,14 +1536,57 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       return;
     }
 
+    const newConnections: TimelineConnection[] = validRuns.map((run, index) => {
+      if (index === 0) {
+        return { ...connection, beatIds: run };
+      }
+      return {
+        id: generateTimelineId(),
+        beatIds: run,
+        title: "",
+        description: "",
+        date: "",
+        color: connection.color ?? "",
+      };
+    });
+
     set({
-      connections: s.connections.map((c) =>
-        c.id === connectionId ? { ...c, beatIds: remainingMembers } : c
-      ),
+      connections: [...otherConnections, ...newConnections],
       hasUnsavedChanges: true,
       lastSaveError: null,
       scriptDraft: null,
     });
+  },
+
+  uniteConnections: (connectionIdA, connectionIdB, color) => {
+    const s = get();
+    const connA = s.connections.find((c) => c.id === connectionIdA);
+    const connB = s.connections.find((c) => c.id === connectionIdB);
+    if (!connA || !connB) return null;
+    if (!canUniteConnections(connA, connB, s.beats, s.lanes)) return null;
+
+    const mergedBeatIds = sortConnectionBeatIds(
+      [...new Set([...connA.beatIds, ...connB.beatIds])],
+      s.beats,
+      s.lanes
+    );
+    const merged: TimelineConnection = {
+      ...connA,
+      beatIds: mergedBeatIds,
+      color,
+    };
+    const connections = s.connections
+      .filter((c) => c.id !== connectionIdB)
+      .map((c) => (c.id === connectionIdA ? merged : c));
+
+    set({
+      connections,
+      selection: [{ type: "connection", id: connectionIdA }],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+      scriptDraft: null,
+    });
+    return connectionIdA;
   },
 
   reorderLane: (laneId, newIndex) => {

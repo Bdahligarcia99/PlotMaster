@@ -333,11 +333,16 @@ export default function TimelineEntitiesPanel({
   const isLaneExpanded = (laneId: string) => expandedLanes[laneId] !== false;
 
   const allCollapsed =
-    sortedLanes.length > 0 && sortedLanes.every((lane) => !isLaneExpanded(lane.id));
+    sortedLanes.length > 0 &&
+    sortedLanes.every((lane) => !isLaneExpanded(lane.id)) &&
+    (connections.length === 0 || !connectionsExpanded);
 
   const toggleAllLanes = () => {
     const nextExpanded = allCollapsed;
     setExpandedLanes(Object.fromEntries(sortedLanes.map((lane) => [lane.id, nextExpanded])));
+    if (connections.length > 0) {
+      setConnectionsExpanded(nextExpanded);
+    }
   };
 
   const isFolderExpanded = (folderId: string) => expandedFolders[folderId] !== false;

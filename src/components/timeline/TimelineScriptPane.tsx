@@ -35,7 +35,7 @@ function computeHighlightLines(content: string, entityIds: Set<string>): number[
     const trimmed = line.trim();
     if (insideHighlightedBlock) {
       result.push(i);
-      if (trimmed === "}") insideHighlightedBlock = false;
+      if (trimmed === "}" || trimmed === "},") insideHighlightedBlock = false;
       continue;
     }
     const crossingMatch = CROSSING_LINE_ID.exec(trimmed);

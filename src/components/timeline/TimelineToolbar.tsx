@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import Button from "../ui/Button";
 import {
   canFormCrossing,
+  canUniteConnections,
   getSelectedBeat,
   isSingleSlotSelection,
   resolveLaneIdFromSelection,
@@ -18,6 +19,7 @@ import {
   EXPANDED_BEAT_HEIGHT_MIN,
 } from "../../store/timelineTypes";
 import TimelineBulkRenameModal from "./TimelineBulkRenameModal";
+import TimelineUniteCrossingsModal from "./TimelineUniteCrossingsModal";
 
 interface TimelineToolbarProps {
   onSelectForEdit?: () => void;
@@ -39,6 +41,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const connections = useTimelineStore((s) => s.connections);
   const toggleConnection = useTimelineStore((s) => s.toggleConnection);
   const removeBeatsFromCrossing = useTimelineStore((s) => s.removeBeatsFromCrossing);
+  const uniteConnections = useTimelineStore((s) => s.uniteConnections);
   const setZoomLaneCount = useTimelineStore((s) => s.setZoomLaneCount);
   const setBeatWidthPercent = useTimelineStore((s) => s.setBeatWidthPercent);
   const setBeatTextScalePercent = useTimelineStore((s) => s.setBeatTextScalePercent);
@@ -54,6 +57,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
   const [message, setMessage] = useState<string | null>(null);
   const [beatMenuOpen, setBeatMenuOpen] = useState(false);
   const [renameModalOpen, setRenameModalOpen] = useState(false);
+  const [uniteModalOpen, setUniteModalOpen] = useState(false);
   const beatContainerRef = useRef<HTMLDivElement>(null);
   const beatDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +101,8 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
 
   const selectedBeats = selection.filter((s) => s.type === "beat");
   const selectedBeatIds = selectedBeats.map((s) => s.id);
+  const selectedConnectionItems = selection.filter((s) => s.type === "connection");
+  const selectedConnectionIds = selectedConnectionItems.map((s) => s.id);
   const bulkRenameBeatIds = useMemo(() => {
     if (selectedBeatIds.length >= 2) return selectedBeatIds;
     if (targetLaneId) {
@@ -118,16 +124,38 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
       ? connections.find((c) => selectedBeatIds.every((id) => c.beatIds.includes(id)))
       : undefined;
   const isUncross = commonConnection !== undefined;
-  const crossingButtonEnabled = isUncross || canConnect;
+
+  const uniteConnectionA =
+    selectedConnectionIds.length === 2 && selectedBeatIds.length === 0
+      ? connections.find((c) => c.id === selectedConnectionIds[0])
+      : undefined;
+  const uniteConnectionB =
+    selectedConnectionIds.length === 2 && selectedBeatIds.length === 0
+      ? connections.find((c) => c.id === selectedConnectionIds[1])
+      : undefined;
+  const canUnite =
+    uniteConnectionA !== undefined &&
+    uniteConnectionB !== undefined &&
+    canUniteConnections(uniteConnectionA, uniteConnectionB, beats, lanes);
+  const isUnite = canUnite;
+
+  const crossingButtonEnabled = isUnite || isUncross || canConnect;
+  const crossingButtonLabel = isUnite ? "Unite" : isUncross ? "Uncross" : "Crossing";
 
   const singleSlotSelection = isSingleSlotSelection(beats, selection);
   const canInsertSlotSpace = singleSlotSelection !== null;
 
   const getCrossingTooltip = (): string => {
+    if (isUnite && uniteConnectionA && uniteConnectionB) {
+      return "Merge the two selected crossings into one";
+    }
+    if (selectedConnectionIds.length === 2 && selectedBeatIds.length === 0 && !canUnite) {
+      return "Selected crossings must be on the same row with adjacent lanes (no gap between them) to unite";
+    }
     if (isUncross && commonConnection) {
       return selectedBeatIds.length === commonConnection.beatIds.length
         ? "Remove this crossing entirely"
-        : "Remove the selected beat(s) from this crossing (interior single-beat selections also remove their immediate crossing neighbors)";
+        : "Remove the selected beat(s) from this crossing; remaining members may split into separate crossings";
     }
     if (selectedBeats.length < 2) {
       return "Select two or more beats (shift-click) on different lanes to connect them";
@@ -211,7 +239,28 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
     return "New beat, added to the top of the selected lane";
   };
 
+  const performUnite = (color: string) => {
+    if (!uniteConnectionA || !uniteConnectionB) return;
+    const mergedId = uniteConnections(uniteConnectionA.id, uniteConnectionB.id, color);
+    if (!mergedId) {
+      setMessage("Could not unite those crossings.");
+      return;
+    }
+    setMessage("Crossings united.");
+    setUniteModalOpen(false);
+  };
+
   const handleConnect = () => {
+    if (isUnite && uniteConnectionA && uniteConnectionB) {
+      const colorA = uniteConnectionA.color?.trim() ?? "";
+      const colorB = uniteConnectionB.color?.trim() ?? "";
+      if (colorA !== colorB) {
+        setUniteModalOpen(true);
+        return;
+      }
+      performUnite(colorA || colorB);
+      return;
+    }
     if (isUncross && commonConnection) {
       removeBeatsFromCrossing(commonConnection.id, selectedBeatIds);
       setMessage("Crossing removed.");
@@ -359,7 +408,7 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         title={getCrossingTooltip()}
         className={!crossingButtonEnabled ? "opacity-50 cursor-not-allowed" : ""}
       >
-        {isUncross ? "Uncross" : "Crossing"}
+        {crossingButtonLabel}
       </Button>
 
       <Button
@@ -529,6 +578,16 @@ export default function TimelineToolbar({ onSelectForEdit }: TimelineToolbarProp
         onClose={() => setRenameModalOpen(false)}
         beatIds={bulkRenameBeatIds}
       />
+
+      {uniteConnectionA && uniteConnectionB && (
+        <TimelineUniteCrossingsModal
+          isOpen={uniteModalOpen}
+          onClose={() => setUniteModalOpen(false)}
+          connectionA={uniteConnectionA}
+          connectionB={uniteConnectionB}
+          onChooseColor={(color) => performUnite(color)}
+        />
+      )}
     </div>
   );
 }
