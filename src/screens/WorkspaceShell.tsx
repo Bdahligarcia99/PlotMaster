@@ -15,6 +15,7 @@ import FamilyTreeToolbar from "../components/family-tree/FamilyTreeToolbar";
 import { useFamilyTreeStore } from "../store/familyTreeStore";
 import FamilyTreeLeftSidebar from "../components/family-tree/FamilyTreeLeftSidebar";
 import FamilyTreeScriptPane from "../components/family-tree/FamilyTreeScriptPane";
+import type { TextEditorDrafts } from "../components/family-tree/FamilyTreeTextEditorWorkspace";
 import FamilyTreeInspector from "../components/family-tree/FamilyTreeInspector";
 import TimelineEntitiesPanel from "../components/timeline/TimelineEntitiesPanel";
 import TimelineCanvasPlaceholder from "../components/timeline/TimelineCanvasPlaceholder";
@@ -36,6 +37,7 @@ export default function WorkspaceShell() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [scriptPaneOpen, setScriptPaneOpen] = useState(true);
+  const [familyTreeTextDrafts, setFamilyTreeTextDrafts] = useState<TextEditorDrafts>({});
 
   const standaloneProjects = useAppStore((s) => s.standaloneProjects);
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
@@ -245,7 +247,10 @@ export default function WorkspaceShell() {
                   className="flex-shrink-0 overflow-hidden transition-[height] duration-200 ease-in-out"
                   style={{ height: scriptPaneOpen ? 240 : 0 }}
                 >
-                  <FamilyTreeScriptPane />
+                  <FamilyTreeScriptPane
+                    drafts={familyTreeTextDrafts}
+                    onDraftsChange={setFamilyTreeTextDrafts}
+                  />
                 </div>
                 {!scriptPaneOpen && (
                   <button

@@ -7,7 +7,17 @@ import {
 } from "./ExportGuidesOverlay";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 
-export default function FamilyTreeSaveControls() {
+interface FamilyTreeSaveControlsProps {
+  hasDraftChanges?: boolean;
+  onCommitDrafts?: () => { ok: boolean };
+  commitError?: string | null;
+}
+
+export default function FamilyTreeSaveControls({
+  hasDraftChanges = false,
+  onCommitDrafts,
+  commitError = null,
+}: FamilyTreeSaveControlsProps) {
   const {
     activeProjectId,
     hasUnsavedChanges,
@@ -20,6 +30,9 @@ export default function FamilyTreeSaveControls() {
     exportGuideScale,
     setExportGuideScale,
   } = useFamilyTreeStore();
+
+  const hasAnyUnsaved = hasUnsavedChanges || hasDraftChanges;
+  const statusError = lastSaveError ?? commitError;
 
   const [savedFeedbackUntil, setSavedFeedbackUntil] = useState(0);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
@@ -54,6 +67,10 @@ export default function FamilyTreeSaveControls() {
   const showSavedCheck = savedFeedbackUntil > Date.now();
 
   const handleSave = async () => {
+    if (onCommitDrafts) {
+      const commitOk = onCommitDrafts();
+      if (!commitOk.ok) return;
+    }
     const ok = await flushSaveAndSave();
     if (ok) {
       setSavedFeedbackUntil(Date.now() + 1200);
@@ -61,10 +78,10 @@ export default function FamilyTreeSaveControls() {
   };
 
   const status =
-    activeProjectId && (isSaving || lastSaveError || hasUnsavedChanges)
+    activeProjectId && (isSaving || statusError || hasAnyUnsaved)
       ? {
-          text: isSaving ? "Saving…" : lastSaveError ? "Save failed" : "Unsaved changes",
-          isError: !!lastSaveError,
+          text: isSaving ? "Saving…" : statusError ? "Save failed" : "Unsaved changes",
+          isError: !!statusError,
         }
       : null;
 

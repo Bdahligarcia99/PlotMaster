@@ -68,11 +68,30 @@ export interface PersistedFamilyRecord {
   parentFamilyIds?: [string, string];
 }
 
+/** Persisted branch — downward subtree from a root person. */
+export interface PersistedBranchRecord {
+  id: string;
+  name: string;
+  description: string;
+  mode: "hidden" | "tab";
+  rootPersonId: string;
+  familyId: string | null;
+  createdAt: number;
+}
+
+/** Plain text file in Family Tree Script display mode. */
+export interface PersistedFamilyTreeDocumentRecord {
+  id: string;
+  name: string;
+  content: string;
+  updatedAt: number;
+}
+
 /** Project payload (family tree). */
 export interface ProjectPayload {
   version: 1;
   moduleType: "familyTree";
-  displayMode?: "nodes";
+  displayMode?: "nodes" | "text";
   nodes: Node<unknown>[];
   edges: Edge[];
   anchorNodeId: string | null;
@@ -80,6 +99,10 @@ export interface ProjectPayload {
   connectionStyles?: ConnectionStyleDef[];
   /** Persisted family tabs with frozen union membership. */
   families?: PersistedFamilyRecord[];
+  /** Persisted branches (hidden groups and branch tabs). */
+  branches?: PersistedBranchRecord[];
+  /** Script display mode text files (family grouping is derived, not stored). */
+  documents?: PersistedFamilyTreeDocumentRecord[];
   /** @deprecated Read-only migration source; use `families` instead. */
   customFamilyNames?: { unionIds: string[]; name: string; description?: string }[];
   ui?: FamilyTreeUIFlags;

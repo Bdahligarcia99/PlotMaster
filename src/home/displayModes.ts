@@ -12,7 +12,7 @@ export const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
 /** Which modes each Engram (registry id) currently supports. Empty = none yet (still shows a disabled dropdown). */
 export const ENGRAM_DISPLAY_MODES: Record<string, DisplayMode[]> = {
   timeline: ["block", "text"],
-  familyTree: ["nodes"],
+  familyTree: ["nodes", "text"],
   charts: ["charts"],
   ideaPlayground: [],
   imagePlayground: [],

@@ -14,6 +14,7 @@ import {
   resolveUnionConnectionStyle,
   getConnectionStyleName,
   formatGenerationAnchorLabel,
+  computeBranchMemberIds,
   getPersonDisplayName,
   getPersonNameParts,
   getUnionIdsForPerson,
@@ -711,10 +712,35 @@ export default function FamilyTreeInspector() {
   const inspectorFamilyId = useFamilyTreeStore((s) => s.inspectorFamilyId);
   const setFamilyCustomName = useFamilyTreeStore((s) => s.setFamilyCustomName);
   const setFamilyDescription = useFamilyTreeStore((s) => s.setFamilyDescription);
+  const inspectorBranchId = useFamilyTreeStore((s) => s.inspectorBranchId);
+  const branches = useFamilyTreeStore((s) => s.branches);
+  const setBranchCustomName = useFamilyTreeStore((s) => s.setBranchCustomName);
+  const setBranchDescription = useFamilyTreeStore((s) => s.setBranchDescription);
+  const deleteBranch = useFamilyTreeStore((s) => s.deleteBranch);
 
   const inspectorFamily = inspectorFamilyId
     ? families.find((f) => f.id === inspectorFamilyId)
     : null;
+
+  const inspectorBranch = inspectorBranchId
+    ? branches.find((b) => b.id === inspectorBranchId)
+    : null;
+
+  const [branchNameDraft, setBranchNameDraft] = useState("");
+  const [branchDescriptionDraft, setBranchDescriptionDraft] = useState("");
+  const branchNameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (inspectorBranch) {
+      setBranchNameDraft(inspectorBranch.name);
+      setBranchDescriptionDraft(inspectorBranch.description ?? "");
+      const t = setTimeout(() => {
+        branchNameRef.current?.focus();
+        branchNameRef.current?.select();
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [inspectorBranch?.id, inspectorBranch?.name, inspectorBranch?.description]);
 
   const [familyNameDraft, setFamilyNameDraft] = useState("");
   const [familyDescriptionDraft, setFamilyDescriptionDraft] = useState("");
@@ -732,7 +758,7 @@ export default function FamilyTreeInspector() {
     }
   }, [inspectorFamily?.id, inspectorFamily?.name, inspectorFamily?.description]);
 
-  const selectedNode = !inspectorFamily && primarySelectedNodeId
+  const selectedNode = !inspectorFamily && !inspectorBranch && primarySelectedNodeId
     ? nodes.find((n) => n.id === primarySelectedNodeId)
     : null;
 
@@ -789,6 +815,87 @@ export default function FamilyTreeInspector() {
     const nextIndex = shift ? (index - 1 + n) % n : (index + 1) % n;
     refs[nextIndex]?.current?.focus();
   };
+
+  if (inspectorBranch) {
+    const memberIds = computeBranchMemberIds(inspectorBranch.rootPersonId, nodes, edges);
+    const anchorIndices: number[] = [];
+    for (const nodeId of memberIds) {
+      const personNode = nodes.find((n) => n.id === nodeId);
+      if (!personNode || (personNode.data as { kind?: string }).kind !== "person") continue;
+      const genAnchorId = (personNode.data as PersonNodeData).genAnchorId;
+      if (!genAnchorId) continue;
+      const anchor = generationAnchors.find((a) => a.id === genAnchorId);
+      if (anchor != null) anchorIndices.push(anchor.index);
+    }
+    let genRangeLabel = "—";
+    if (anchorIndices.length > 0) {
+      const minIdx = Math.min(...anchorIndices);
+      const maxIdx = Math.max(...anchorIndices);
+      const minAnchor = generationAnchors.find((a) => a.index === minIdx);
+      const maxAnchor = generationAnchors.find((a) => a.index === maxIdx);
+      if (minAnchor && maxAnchor) {
+        const minLabel = formatGenerationAnchorLabel(minAnchor, genLabelMode);
+        const maxLabel = formatGenerationAnchorLabel(maxAnchor, genLabelMode);
+        genRangeLabel = minIdx === maxIdx ? minLabel : `${minLabel} to ${maxLabel}`;
+      }
+    }
+
+    return (
+      <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
+        <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide mb-3">
+          Inspector — Branch
+        </h3>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-2">Name</label>
+          <input
+            ref={branchNameRef}
+            type="text"
+            value={branchNameDraft}
+            onChange={(e) => setBranchNameDraft(e.target.value)}
+            onBlur={() => setBranchCustomName(inspectorBranch.id, branchNameDraft)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setBranchCustomName(inspectorBranch.id, branchNameDraft);
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-2">Description</label>
+          <textarea
+            value={branchDescriptionDraft}
+            onChange={(e) => setBranchDescriptionDraft(e.target.value)}
+            onBlur={() => setBranchDescription(inspectorBranch.id, branchDescriptionDraft)}
+            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm resize-y min-h-[80px] focus:outline-none focus:border-blue-500"
+            placeholder="Branch description..."
+          />
+        </div>
+        <div className="mb-3">
+          <label className="block text-dark-muted text-sm mb-1">Location</label>
+          <div className="text-dark-text text-sm">
+            {inspectorBranch.mode === "tab" ? "On its own branch tab" : "Hidden on main canvas"}
+          </div>
+        </div>
+        <div className="mb-3">
+          <label className="block text-dark-muted text-sm mb-1">Generations</label>
+          <div className="text-dark-text text-sm">{genRangeLabel}</div>
+        </div>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-1">Nodes involved</label>
+          <div className="text-dark-text text-sm">{memberIds.length}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => deleteBranch(inspectorBranch.id)}
+          className="w-full px-3 py-2 text-sm rounded-lg border border-red-500/50 text-red-400 hover:bg-red-500/10 transition-colors"
+        >
+          Delete Branch
+        </button>
+      </div>
+    );
+  }
 
   if (inspectorFamily) {
     const styleCounts = new Map<string, number>();

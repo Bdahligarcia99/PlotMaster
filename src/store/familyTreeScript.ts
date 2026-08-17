@@ -231,6 +231,7 @@ export function parseFamilyTreeScript(
               meta.nicknames,
               meta.genAnchorId
             ),
+            ...(meta.position && { position: meta.position }),
           });
         }
       } else if (line.startsWith("Union ")) {
@@ -346,10 +347,14 @@ export function parseFamilyTreeScript(
 
     const leftExisting = existingById.get(leftId);
     const rightExisting = existingById.get(rightId);
+    const leftRec = personRecords.get(leftId);
+    const rightRec = personRecords.get(rightId);
     const leftPos =
+      leftRec?.position ??
       leftExisting?.position ??
       defaultPersonPosition(existingNodes, nodes.filter((n) => n.data.kind === "person").length);
     const rightPos =
+      rightRec?.position ??
       rightExisting?.position ??
       defaultPersonPosition(existingNodes, nodes.filter((n) => n.data.kind === "person").length + 1);
     const unionPosition =
@@ -410,11 +415,20 @@ export function parseFamilyTreeScript(
       id,
       type: "person",
       position:
-        existing?.position ??
         rec.position ??
+        existing?.position ??
         defaultPersonPosition([...existingNodes, ...nodes], newPersonIndex++),
       data: rec.data,
     });
+  }
+
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]!;
+    if (n.data.kind !== "person") continue;
+    const rec = personRecords.get(n.id);
+    if (rec?.position) {
+      nodes[i] = { ...n, position: rec.position };
+    }
   }
 
   const keptPersonIds = new Set(

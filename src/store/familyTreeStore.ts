@@ -2,6 +2,17 @@ import { create } from "zustand";
 import type { Node, Edge } from "reactflow";
 import { getStorageDriver, type PersistedFamilyRecord } from "../storage/StorageDriver";
 import { parseFamilyTreeScript } from "./familyTreeScript";
+import {
+  type FamilyTreeDocumentRecord,
+  combineFamilyDocumentContents,
+  generateDocumentDisplayContent,
+  getScopeIdsForFamily,
+  getUnassignedPersonIds,
+  previewFamilyDocumentDeleteCounts,
+  scanDocumentDeclaredIds,
+} from "./familyTreeDocumentHelpers";
+
+export type { FamilyTreeDocumentRecord };
 
 export type { PersistedFamilyRecord };
 
@@ -321,6 +332,19 @@ export interface CustomFamilyNameRecord {
 /** Persisted family tab — union membership is frozen until explicitly changed. */
 export interface FamilyGroup extends PersistedFamilyRecord {
   memberPersonIds: string[];
+}
+
+export type BranchMode = "hidden" | "tab";
+
+/** Persisted branch — downward subtree from a root person. */
+export interface BranchRecord {
+  id: string;
+  name: string;
+  description: string;
+  mode: BranchMode;
+  rootPersonId: string;
+  familyId: string | null;
+  createdAt: number;
 }
 
 export type RemoveConnectionTarget =
@@ -780,6 +804,98 @@ export function getFamilyMemberPersonIds(
   return Array.from(ids);
 }
 
+/** Union IDs where this person is a partner (parent role), not child. */
+export function getParentUnionIdsForPerson(personId: string, edges: Edge[]): string[] {
+  return edges
+    .filter((e) => isPartnerEdge(e) && e.source === personId)
+    .map((e) => e.target);
+}
+
+/**
+ * All person + union ids in the downward subtree below rootPersonId.
+ * Unions where root is a parent, their other partners, children, and recursive descendants.
+ * Excludes rootPersonId itself.
+ */
+export function computeBranchMemberIds(
+  rootPersonId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  const result = new Set<string>();
+
+  const addDownwardFromPerson = (personId: string) => {
+    for (const unionId of getParentUnionIdsForPerson(personId, edges)) {
+      if (result.has(unionId)) continue;
+      result.add(unionId);
+
+      const unionNode = nodes.find((n) => n.id === unionId);
+      if (unionNode) {
+        const d = unionNode.data as UnionNodeData;
+        const partnerIds = [d.leftPartnerId, d.rightPartnerId, ...(d.partnerIds ?? [])].filter(
+          (pid): pid is string => pid != null && pid !== personId
+        );
+        for (const pid of partnerIds) {
+          if (!result.has(pid)) {
+            result.add(pid);
+            addDownwardFromPerson(pid);
+          }
+        }
+      }
+
+      const childIds = edges
+        .filter((e) => e.source === unionId && isChildEdge(e))
+        .map((e) => e.target);
+      for (const childId of childIds) {
+        if (!result.has(childId)) {
+          result.add(childId);
+          addDownwardFromPerson(childId);
+        }
+      }
+    }
+  };
+
+  addDownwardFromPerson(rootPersonId);
+  return Array.from(result);
+}
+
+export function canBranchFromPerson(
+  personId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): boolean {
+  return computeBranchMemberIds(personId, nodes, edges).length > 0;
+}
+
+/** Union of all branch member ids (hidden + tab) for canvas exclusion on main view. */
+export function getBranchExcludedNodeIds(
+  branches: BranchRecord[],
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): Set<string> {
+  const excluded = new Set<string>();
+  for (const b of branches) {
+    for (const id of computeBranchMemberIds(b.rootPersonId, nodes, edges)) {
+      excluded.add(id);
+    }
+  }
+  return excluded;
+}
+
+function findFamilyIdForPerson(
+  personId: string,
+  families: FamilyGroup[],
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string | null {
+  for (const f of families) {
+    const members = f.memberPersonIds.length
+      ? f.memberPersonIds
+      : getFamilyMemberPersonIds(f.unionIds, nodes, edges);
+    if (members.includes(personId)) return f.id;
+  }
+  return null;
+}
+
 /** Union nodes + member person nodes for canvas/script filtering. */
 export function getFamilyMemberNodeIds(
   unionIds: string[],
@@ -803,6 +919,11 @@ function getEarliestUnionCreatedAt(unionIds: string[], nodes: Node<FamilyTreeNod
 }
 
 const generateFamilyId = () => `fam_${Math.random().toString(36).slice(2, 11)}`;
+const generateBranchId = () => `br_${Math.random().toString(36).slice(2, 11)}`;
+
+function branchesToPersisted(branches: BranchRecord[]): BranchRecord[] {
+  return branches.map((b) => ({ ...b }));
+}
 
 function toFamilyGroup(
   record: PersistedFamilyRecord,
@@ -1378,6 +1499,10 @@ export function generateFamilyTreeScript(
     generationAnchors?: GenerationAnchor[];
     genLabelMode?: "letters" | "numbers" | "both";
     connectionStyles?: ConnectionStyleDef[];
+    /** When set, only emit declarations/blocks for these node ids. */
+    scopeNodeIds?: Set<string>;
+    /** When false, omit connection style header (default true unless scoped). */
+    includeConnectionStyles?: boolean;
   }
 ): string {
   const compactDeclarations = options?.compactDeclarations ?? false;
@@ -1389,6 +1514,9 @@ export function generateFamilyTreeScript(
   const generationAnchors = options?.generationAnchors ?? [];
   const genLabelMode = options?.genLabelMode ?? "letters";
   const connectionStyles = options?.connectionStyles ?? [];
+  const scopeNodeIds = options?.scopeNodeIds;
+  const includeConnectionStyles =
+    options?.includeConnectionStyles ?? scopeNodeIds == null;
 
   const anchorById = new Map(generationAnchors.map((a) => [a.id, a]));
   const hasAnchors = generationAnchors.length > 0;
@@ -1428,6 +1556,7 @@ export function generateFamilyTreeScript(
 
   const personNodes = nodes
     .filter((n): n is Node<PersonNodeData> => n.data.kind === "person")
+    .filter((n) => scopeNodeIds == null || scopeNodeIds.has(n.id))
     .sort((a, b) => {
       const nameA = (a.data.name || "").toLowerCase();
       const nameB = (b.data.name || "").toLowerCase();
@@ -1441,6 +1570,7 @@ export function generateFamilyTreeScript(
       (n): n is Node<UnionNodeData> =>
         n.type === "union" && (n.data as UnionNodeData).kind === "union"
     )
+    .filter((n) => scopeNodeIds == null || scopeNodeIds.has(n.id))
     .sort((a, b) => {
       const yA = a.position.y;
       const yB = b.position.y;
@@ -1490,7 +1620,7 @@ export function generateFamilyTreeScript(
     return parts.length > 0 ? ` [${parts.join(" | ")}]` : "";
   };
 
-  if (connectionStyles.length > 0) {
+  if (includeConnectionStyles && connectionStyles.length > 0) {
     lines.push("# Connection Styles");
     for (const style of connectionStyles) {
       const dash = `[${style.dashPattern.join(", ")}]`;
@@ -1563,7 +1693,8 @@ export function generateFamilyTreeScript(
   } else {
     for (const n of personNodes) {
       const bracket = formatPersonDeclarationBracket(n.data);
-      lines.push(`${bracket} # id: ${n.id}${formatNicknameTag(n.data.nicknames)}${getGenTagForPerson(n)}`);
+      const xy = ` x: ${Math.round(n.position.x)} y: ${Math.round(n.position.y)}`;
+      lines.push(`${bracket} # id: ${n.id}${xy}${formatNicknameTag(n.data.nicknames)}${getGenTagForPerson(n)}`);
     }
   }
   lines.push("");
@@ -1756,11 +1887,17 @@ function parseCommaSeparatedWithQuotes(s: string): string[] {
 /**
  * Parse person declaration metadata from a script line.
  * Supports formats:
- *   [First, Middle, Last] # id: _abc123 nickname: a, b gen: 0
+ *   [First, Middle, Last] # id: _abc123 x: 120 y: 340 nickname: a, b gen: 0
  *   [Full Name] # id: _abc123  (legacy)
- *   [First, Middle, Last](id) nickname: a, b gen: 0  (compact)
+ *   [First, Middle, Last](id) x: 120 y: 340 nickname: a, b gen: 0  (compact)
  * @returns Parsed result or null if no declaration found.
  */
+function parseDeclarationPosition(line: string): { x: number; y: number } | undefined {
+  const m = line.match(/\bx:\s*(-?\d+(?:\.\d+)?)\s+y:\s*(-?\d+(?:\.\d+)?)/);
+  if (!m) return undefined;
+  return { x: Math.round(parseFloat(m[1]!)), y: Math.round(parseFloat(m[2]!)) };
+}
+
 export function parsePersonDeclarationMetadata(
   line: string,
   generationAnchors: GenerationAnchor[] = []
@@ -1771,6 +1908,7 @@ export function parsePersonDeclarationMetadata(
   lastName?: string;
   nicknames?: string[];
   genAnchorId?: string;
+  position?: { x: number; y: number };
 } | null {
   const bracket = parsePersonDeclarationBracket(line);
   if (!bracket) return null;
@@ -1797,6 +1935,7 @@ export function parsePersonDeclarationMetadata(
       lastName: bracket.last || undefined,
       nicknames,
       genAnchorId,
+      position: parseDeclarationPosition(line),
     };
   }
   const id = metaMatch[1]!.trim();
@@ -1817,6 +1956,7 @@ export function parsePersonDeclarationMetadata(
     lastName: bracket.last || undefined,
     nicknames,
     genAnchorId,
+    position: parseDeclarationPosition(line),
   };
 }
 
@@ -2032,6 +2172,24 @@ interface FamilyTreeStore {
   familyConnectionNotice: string | null;
   /** When set, Inspector shows family-level properties instead of node properties. */
   inspectorFamilyId: string | null;
+  /** Persisted branches (hidden groups and branch tabs). */
+  branches: BranchRecord[];
+  /** Active branch tab id; isolates canvas to that branch's members. */
+  activeBranchTabId: string | null;
+  /** When set, Inspector shows branch-level properties. */
+  inspectorBranchId: string | null;
+  branchToolActive: boolean;
+  /** Set when a branch tab is clicked to trigger canvas focus. */
+  pendingFocusBranchId: string | null;
+  setBranchToolActive: (v: boolean) => void;
+  setActiveBranchTabId: (id: string | null) => void;
+  setInspectorBranchId: (id: string | null) => void;
+  setPendingFocusBranchId: (id: string | null) => void;
+  toggleHideForPerson: (personId: string) => void;
+  createOrConvertBranchTab: (personId: string) => void;
+  setBranchCustomName: (branchId: string, name: string) => void;
+  setBranchDescription: (branchId: string, description: string) => void;
+  deleteBranch: (branchId: string) => void;
   recomputeFamilies: () => void;
   setActiveFamilyTabId: (id: string | null) => void;
   setIsolationModeActive: (v: boolean) => void;
@@ -2064,6 +2222,24 @@ interface FamilyTreeStore {
   applyAverageChildSpacing: (unionId: string) => boolean;
   applyAverageVerticalSpacing: (unionId: string) => boolean;
   applyParentAlignment: (unionId: string, alignment: "left" | "center" | "right") => boolean;
+  /** Script display mode: nodes canvas vs full text editor. */
+  displayMode: "nodes" | "text";
+  /** Persisted script text files (family grouping derived at runtime). */
+  documents: FamilyTreeDocumentRecord[];
+  dirtyDocumentIds: string[];
+  setDisplayMode: (mode: "nodes" | "text") => void;
+  setDirtyDocumentIds: (ids: string[]) => void;
+  createFamilyDocument: (name?: string, ownerFamilyId?: string | null) => string;
+  renameFamilyDocument: (id: string, name: string) => void;
+  deleteFamilyDocumentCascade: (
+    docId: string,
+    content: string
+  ) => { personCount: number; unionCount: number };
+  applyFamilyDocumentEdits: (
+    edits: { docId: string; content: string }[]
+  ) => { ok: boolean; errors: string[] };
+  ensureDefaultDocuments: () => void;
+  getDocumentDisplayContent: (docId: string) => string;
 }
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
@@ -2088,6 +2264,9 @@ let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
 let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
 let prevFamiliesJson: string | null = null;
+let prevBranchesJson: string | null = null;
+let prevDocumentsJson: string | null = null;
+let prevDisplayMode: "nodes" | "text" | null = null;
 
 function applyNodePositionUpdates(
   get: () => FamilyTreeStore,
@@ -2959,6 +3138,109 @@ function reconcileFamiliesImpl(
   });
 }
 
+function getScriptGenOptions(s: FamilyTreeStore) {
+  return {
+    compactDeclarations: s.scriptCompactDeclarations,
+    showNodeInfo: s.showNodeInfoEnabled,
+    nodeInfoTopLeft: s.nodeInfoTopLeft,
+    nodeInfoCenter: s.nodeInfoCenter,
+    nodeInfoSize: s.nodeInfoSize,
+    nodeSizesById: s.nodeSizesById,
+    generationAnchors: s.generationAnchors,
+    genLabelMode: s.genLabelMode,
+    connectionStyles: s.connectionStyles,
+  };
+}
+
+function syncFamilyDocumentsFromModel(
+  get: () => FamilyTreeStore,
+  set: (partial: Partial<FamilyTreeStore>) => void
+) {
+  const s = get();
+  if (s.documents.length === 0) return;
+  const dirtySet = new Set(s.dirtyDocumentIds);
+  let anyChanged = false;
+  const opts = getScriptGenOptions(s);
+  const updated = s.documents.map((doc) => {
+    if (dirtySet.has(doc.id)) return doc;
+    const nextContent = generateDocumentDisplayContent(
+      doc,
+      s.documents,
+      s.nodes,
+      s.edges,
+      opts
+    );
+    if (nextContent === doc.content) return doc;
+    anyChanged = true;
+    return { ...doc, content: nextContent, updatedAt: Date.now() };
+  });
+  if (anyChanged) {
+    set({ documents: updated, hasUnsavedChanges: true, lastSaveError: null });
+  }
+}
+
+function ensureDefaultDocumentsImpl(
+  get: () => FamilyTreeStore,
+  set: (partial: Partial<FamilyTreeStore>) => void
+) {
+  const s = get();
+  if (s.nodes.length === 0) return;
+  const opts = getScriptGenOptions(s);
+  const additions: FamilyTreeDocumentRecord[] = [];
+  const now = Date.now();
+
+  for (const family of s.families) {
+    const existing = s.documents.filter(
+      (d) =>
+        scanDocumentDeclaredIds(d.content).unionIds.some((uid) => family.unionIds.includes(uid)) ||
+        scanDocumentDeclaredIds(d.content).personIds.some((pid) =>
+          family.memberPersonIds.includes(pid)
+        )
+    );
+    if (existing.length > 0) continue;
+    const scopeIds = getScopeIdsForFamily(family, s.nodes, s.edges);
+    if (scopeIds.size === 0) continue;
+    additions.push({
+      id: generateId(),
+      name: family.name,
+      content: generateFamilyTreeScript(s.nodes, s.edges, {
+        ...opts,
+        scopeNodeIds: scopeIds,
+      }),
+      updatedAt: now,
+    });
+  }
+
+  const unassignedIds = getUnassignedPersonIds(s.families, s.nodes);
+  if (unassignedIds.length > 0) {
+    const hasUnassignedDoc = s.documents.some((d) => {
+      const scanned = scanDocumentDeclaredIds(d.content);
+      return scanned.personIds.some((pid) => unassignedIds.includes(pid));
+    });
+    if (!hasUnassignedDoc) {
+      additions.push({
+        id: generateId(),
+        name: "Unassigned",
+        content: generateFamilyTreeScript(s.nodes, s.edges, {
+          ...opts,
+          scopeNodeIds: new Set(unassignedIds),
+        }),
+        updatedAt: now,
+      });
+    }
+  }
+
+  if (additions.length > 0) {
+    set({
+      documents: [...s.documents, ...additions],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  }
+}
+
+export { previewFamilyDocumentDeleteCounts };
+
 export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   nodes: [],
   edges: [],
@@ -3020,6 +3302,14 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   pendingBloodlineWarning: null as PendingBloodlineWarning | null,
   familyConnectionNotice: null as string | null,
   inspectorFamilyId: null as string | null,
+  branches: [] as BranchRecord[],
+  activeBranchTabId: null as string | null,
+  inspectorBranchId: null as string | null,
+  branchToolActive: false,
+  pendingFocusBranchId: null as string | null,
+  displayMode: "nodes" as "nodes" | "text",
+  documents: [] as FamilyTreeDocumentRecord[],
+  dirtyDocumentIds: [] as string[],
 
   setExportViewportEl: (el) => set({ exportViewportEl: el }),
   setFitViewForExport: (fn) => set({ fitViewForExport: fn }),
@@ -3038,11 +3328,132 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   },
   setReviewNodesModalOpen: (v) => set({ reviewNodesModalOpen: v }),
   setHoveredConnectionInfo: (info) => set({ hoveredConnectionInfo: info }),
-  recomputeFamilies: () => reconcileFamiliesImpl(get, set),
+  recomputeFamilies: () => {
+    reconcileFamiliesImpl(get, set);
+    ensureDefaultDocumentsImpl(get, set);
+  },
   setActiveFamilyTabId: (id) => set({ activeFamilyTabId: id }),
   setIsolationModeActive: (v) => set({ isolationModeActive: v }),
   setPendingFocusFamilyId: (id) => set({ pendingFocusFamilyId: id }),
-  setInspectorFamilyId: (id) => set({ inspectorFamilyId: id }),
+  setInspectorFamilyId: (id) => set({ inspectorFamilyId: id, inspectorBranchId: id != null ? null : get().inspectorBranchId }),
+  setBranchToolActive: (v) => set({ branchToolActive: v }),
+  setActiveBranchTabId: (id) => set({ activeBranchTabId: id }),
+  setInspectorBranchId: (id) => set({ inspectorBranchId: id, inspectorFamilyId: id != null ? null : get().inspectorFamilyId }),
+  setPendingFocusBranchId: (id) => set({ pendingFocusBranchId: id }),
+  toggleHideForPerson: (personId) => {
+    const s = get();
+    const existingHidden = s.branches.find((b) => b.rootPersonId === personId && b.mode === "hidden");
+    if (existingHidden) {
+      set({
+        branches: s.branches.filter((b) => b.id !== existingHidden.id),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      });
+      return;
+    }
+    if (!canBranchFromPerson(personId, s.nodes, s.edges)) return;
+    if (s.branches.some((b) => b.rootPersonId === personId && b.mode === "tab")) return;
+
+    const personNode = s.nodes.find((n) => n.id === personId);
+    const personName = personNode
+      ? getPersonDisplayName(personNode.data as PersonNodeData, personId, s.nodes)
+      : "Person";
+    const branch: BranchRecord = {
+      id: generateBranchId(),
+      name: `${personName} (hidden)`,
+      description: "",
+      mode: "hidden",
+      rootPersonId: personId,
+      familyId: findFamilyIdForPerson(personId, s.families, s.nodes, s.edges),
+      createdAt: Date.now(),
+    };
+    set({ branches: [...s.branches, branch], hasUnsavedChanges: true, lastSaveError: null });
+  },
+  createOrConvertBranchTab: (personId) => {
+    const s = get();
+    const existingTab = s.branches.find((b) => b.rootPersonId === personId && b.mode === "tab");
+    if (existingTab) {
+      set({
+        activeBranchTabId: existingTab.id,
+        pendingFocusBranchId: existingTab.id,
+        inspectorBranchId: null,
+        inspectorFamilyId: null,
+      });
+      return;
+    }
+    if (!canBranchFromPerson(personId, s.nodes, s.edges)) return;
+
+    const personNode = s.nodes.find((n) => n.id === personId);
+    const personName = personNode
+      ? getPersonDisplayName(personNode.data as PersonNodeData, personId, s.nodes)
+      : "Person";
+    const hidden = s.branches.find((b) => b.rootPersonId === personId && b.mode === "hidden");
+    if (hidden) {
+      const converted: BranchRecord = {
+        ...hidden,
+        mode: "tab",
+        name: `${personName}'s Branch`,
+      };
+      set({
+        branches: s.branches.map((b) => (b.id === hidden.id ? converted : b)),
+        activeBranchTabId: hidden.id,
+        pendingFocusBranchId: hidden.id,
+        inspectorBranchId: null,
+        inspectorFamilyId: null,
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      });
+      return;
+    }
+
+    const branch: BranchRecord = {
+      id: generateBranchId(),
+      name: `${personName}'s Branch`,
+      description: "",
+      mode: "tab",
+      rootPersonId: personId,
+      familyId: findFamilyIdForPerson(personId, s.families, s.nodes, s.edges),
+      createdAt: Date.now(),
+    };
+    set({
+      branches: [...s.branches, branch],
+      activeBranchTabId: branch.id,
+      pendingFocusBranchId: branch.id,
+      inspectorBranchId: null,
+      inspectorFamilyId: null,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  },
+  setBranchCustomName: (branchId, name) => {
+    const s = get();
+    const trimmed = name.trim();
+    set({
+      branches: s.branches.map((b) =>
+        b.id === branchId ? { ...b, name: trimmed || b.name } : b
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  },
+  setBranchDescription: (branchId, description) => {
+    const s = get();
+    set({
+      branches: s.branches.map((b) => (b.id === branchId ? { ...b, description } : b)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  },
+  deleteBranch: (branchId) => {
+    const s = get();
+    set({
+      branches: s.branches.filter((b) => b.id !== branchId),
+      activeBranchTabId: s.activeBranchTabId === branchId ? null : s.activeBranchTabId,
+      inspectorBranchId: s.inspectorBranchId === branchId ? null : s.inspectorBranchId,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  },
   setFamilyCustomName: (familyId, name) => {
     const s = get();
     const trimmed = name.trim();
@@ -4342,6 +4753,144 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     return didSwap;
   },
 
+  setDisplayMode: (mode) => {
+    set({ displayMode: mode, hasUnsavedChanges: true, lastSaveError: null });
+  },
+  setDirtyDocumentIds: (ids) => set({ dirtyDocumentIds: ids }),
+  createFamilyDocument: (name, ownerFamilyId) => {
+    const s = get();
+    const id = generateId();
+    const opts = getScriptGenOptions(s);
+    let content = "@declarations\n\n@familyTree\n\n";
+    if (ownerFamilyId === null) {
+      const scopeIds = new Set(getUnassignedPersonIds(s.families, s.nodes));
+      if (scopeIds.size > 0) {
+        content = generateFamilyTreeScript(s.nodes, s.edges, { ...opts, scopeNodeIds: scopeIds });
+      }
+    } else if (ownerFamilyId != null) {
+      const family = s.families.find((f) => f.id === ownerFamilyId);
+      if (family) {
+        const scopeIds = getScopeIdsForFamily(family, s.nodes, s.edges);
+        content = generateFamilyTreeScript(s.nodes, s.edges, { ...opts, scopeNodeIds: scopeIds });
+      }
+    }
+    const doc: FamilyTreeDocumentRecord = {
+      id,
+      name: (name ?? "Untitled").trim() || "Untitled",
+      content,
+      updatedAt: Date.now(),
+    };
+    set({ documents: [...s.documents, doc], hasUnsavedChanges: true, lastSaveError: null });
+    return id;
+  },
+  renameFamilyDocument: (docId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    set((s) => ({
+      documents: s.documents.map((d) =>
+        d.id === docId ? { ...d, name: trimmed, updatedAt: Date.now() } : d
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+  },
+  deleteFamilyDocumentCascade: (docId, content) => {
+    const s = get();
+    const counts = previewFamilyDocumentDeleteCounts(content);
+    const { personIds, unionIds } = scanDocumentDeclaredIds(content);
+    const declaredIds = [...personIds, ...unionIds];
+    const idToDocs = new Map<string, Set<string>>();
+    for (const doc of s.documents) {
+      const scanned = scanDocumentDeclaredIds(doc.id === docId ? content : doc.content);
+      for (const pid of scanned.personIds) {
+        if (!idToDocs.has(pid)) idToDocs.set(pid, new Set());
+        idToDocs.get(pid)!.add(doc.id);
+      }
+      for (const uid of scanned.unionIds) {
+        if (!idToDocs.has(uid)) idToDocs.set(uid, new Set());
+        idToDocs.get(uid)!.add(doc.id);
+      }
+    }
+    const uniqueIds = declaredIds.filter((nodeId) => {
+      const docs = idToDocs.get(nodeId);
+      return docs?.size === 1 && docs.has(docId);
+    });
+    const removeSet = new Set(uniqueIds);
+    set((state) => {
+      const newNodes = state.nodes.filter((n) => !removeSet.has(n.id));
+      const newEdges = state.edges.filter(
+        (e) => !removeSet.has(e.source) && !removeSet.has(e.target)
+      );
+      const newSelectedIds = state.selectedNodeIds.filter((id) => !removeSet.has(id));
+      return {
+        nodes: newNodes,
+        edges: newEdges,
+        documents: state.documents.filter((d) => d.id !== docId),
+        dirtyDocumentIds: state.dirtyDocumentIds.filter((id) => id !== docId),
+        selectedNodeIds: newSelectedIds,
+        primarySelectedNodeId: newSelectedIds[0] ?? null,
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    });
+    get().runNameRoleAnalysis();
+    get().recomputeFamilies();
+    return counts;
+  },
+  applyFamilyDocumentEdits: (edits) => {
+    const s = get();
+    const editMap = new Map(edits.map((e) => [e.docId, e.content]));
+    const combined = combineFamilyDocumentContents(s.documents, editMap);
+    const parsed = parseFamilyTreeScript(
+      combined,
+      s.nodes,
+      s.edges,
+      s.connectionStyles,
+      s.generationAnchors
+    );
+    if (parsed.errors.length > 0) {
+      return { ok: false, errors: parsed.errors };
+    }
+    const now = Date.now();
+    const updatedDocs = s.documents.map((doc) => {
+      const newContent = editMap.get(doc.id);
+      if (newContent !== undefined) {
+        return { ...doc, content: newContent, updatedAt: now };
+      }
+      return doc;
+    });
+    const editDocIds = [...editMap.keys()];
+    const nodeIds = new Set(parsed.nodes.map((n) => n.id));
+    const prunedSelection = s.selectedNodeIds.filter((id) => nodeIds.has(id));
+    set({
+      nodes: parsed.nodes,
+      edges: parsed.edges,
+      connectionStyles: parsed.connectionStyles,
+      documents: updatedDocs,
+      dirtyDocumentIds: s.dirtyDocumentIds.filter((id) => !editDocIds.includes(id)),
+      selectedNodeIds: prunedSelection,
+      primarySelectedNodeId: prunedSelection[0] ?? null,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    get().runNameRoleAnalysis();
+    get().recomputeFamilies();
+    return { ok: true, errors: [] };
+  },
+  ensureDefaultDocuments: () => ensureDefaultDocumentsImpl(get, set),
+  getDocumentDisplayContent: (docId) => {
+    const s = get();
+    const doc = s.documents.find((d) => d.id === docId);
+    if (!doc) return "";
+    return generateDocumentDisplayContent(
+      doc,
+      s.documents,
+      s.nodes,
+      s.edges,
+      getScriptGenOptions(s)
+    );
+  },
+
   loadTree: async (projectId) => {
     const driver = getStorageDriver();
     const raw = await driver.loadProjectData(projectId);
@@ -4370,6 +4919,11 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       generationAnchors: (payload as { generationAnchors?: GenerationAnchor[] })?.generationAnchors ?? [],
       connectionStyles: payload?.connectionStyles ?? [],
       families: initialFamilies,
+      branches: (payload?.branches ?? []) as BranchRecord[],
+      documents: (payload?.documents ?? []) as FamilyTreeDocumentRecord[],
+      displayMode:
+        payload?.displayMode === "text" ? "text" : "nodes",
+      dirtyDocumentIds: [],
       snapToGrid: payload?.ui?.snapToGrid ?? true,
       genLabelMode:
         (payload?.ui?.genLabelMode === "numbers" || payload?.ui?.genLabelMode === "both"
@@ -4417,9 +4971,14 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       pendingBloodlineWarning: null,
       familyConnectionNotice: null,
       inspectorFamilyId: null,
+      activeBranchTabId: null,
+      inspectorBranchId: null,
+      branchToolActive: false,
+      pendingFocusBranchId: null,
     });
     get().runNameRoleAnalysis();
     get().recomputeFamilies();
+    get().ensureDefaultDocuments();
     return { hadData };
   },
 
@@ -4462,13 +5021,15 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       const payload = {
         version: 1 as const,
         moduleType: "familyTree" as const,
-        displayMode: "nodes" as const,
+        displayMode: s.displayMode,
         nodes: s.nodes,
         edges: s.edges,
         anchorNodeId: s.anchorNodeId,
         generationAnchors: s.generationAnchors,
         connectionStyles: s.connectionStyles,
         families: familiesToPersisted(s.families),
+        branches: branchesToPersisted(s.branches),
+        documents: s.documents.map((d) => ({ ...d })),
         ui: {
           genLabelMode: s.genLabelMode,
           showGenerationAnchors: s.showGenerationAnchors,
@@ -4523,6 +5084,10 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       for (const id of ids) delete newNodeSizesById[id];
       const newGenInheritFlash = { ...s.genInheritFlashByNodeId };
       for (const id of ids) delete newGenInheritFlash[id];
+      const prunedBranches = s.branches.filter((b) => !ids.has(b.rootPersonId));
+      const removedBranchIds = new Set(
+        s.branches.filter((b) => ids.has(b.rootPersonId)).map((b) => b.id)
+      );
       return {
         nodes: newNodes,
         edges: newEdges,
@@ -4532,6 +5097,11 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         nodeSizesById: newNodeSizesById,
         genInheritFlashByNodeId: newGenInheritFlash,
         pendingGenChangePrompt: newPendingGen,
+        branches: prunedBranches,
+        activeBranchTabId:
+          s.activeBranchTabId && removedBranchIds.has(s.activeBranchTabId) ? null : s.activeBranchTabId,
+        inspectorBranchId:
+          s.inspectorBranchId && removedBranchIds.has(s.inspectorBranchId) ? null : s.inspectorBranchId,
         hasUnsavedChanges: true,
         lastSaveError: null,
       };
@@ -4546,6 +5116,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       generationAnchors: [],
       connectionStyles: [],
       families: [],
+      branches: [],
       editingAnchorIds: [],
       selectedNodeIds: [],
       primarySelectedNodeId: null,
@@ -4563,6 +5134,13 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       pendingBloodlineWarning: null,
       familyConnectionNotice: null,
       inspectorFamilyId: null,
+      activeBranchTabId: null,
+      inspectorBranchId: null,
+      branchToolActive: false,
+      pendingFocusBranchId: null,
+      displayMode: "nodes",
+      documents: [],
+      dirtyDocumentIds: [],
     });
     if (pid) {
       const driver = getStorageDriver();
@@ -4576,6 +5154,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         generationAnchors: [],
         connectionStyles: [],
         families: [],
+        branches: [],
+        documents: [],
         ui: {
           genLabelMode: "letters",
           showGenerationAnchors: true,
@@ -4601,6 +5181,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
 useFamilyTreeStore.subscribe((state) => {
   const nodesOrEdgesChanged =
     state.nodes !== prevNodes || state.edges !== prevEdges;
+  if (nodesOrEdgesChanged && state.documents.length > 0) {
+    syncFamilyDocumentsFromModel(
+      () => useFamilyTreeStore.getState(),
+      (partial) => useFamilyTreeStore.setState(partial)
+    );
+  }
   const uiPrefsChanged =
     state.showNodeInfoEnabled !== prevShowNodeInfoEnabled ||
     state.nodeInfoTopLeft !== prevNodeInfoTopLeft ||
@@ -4617,7 +5203,10 @@ useFamilyTreeStore.subscribe((state) => {
     state.genLabelMode !== prevGenLabelMode ||
     JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson ||
     JSON.stringify(state.connectionStyles) !== prevConnectionStylesJson ||
-    JSON.stringify(familiesToPersisted(state.families)) !== prevFamiliesJson;
+    JSON.stringify(familiesToPersisted(state.families)) !== prevFamiliesJson ||
+    JSON.stringify(branchesToPersisted(state.branches)) !== prevBranchesJson ||
+    JSON.stringify(state.documents) !== prevDocumentsJson ||
+    state.displayMode !== prevDisplayMode;
   prevNodes = state.nodes;
   prevEdges = state.edges;
   prevShowNodeInfoEnabled = state.showNodeInfoEnabled;
@@ -4636,6 +5225,9 @@ useFamilyTreeStore.subscribe((state) => {
   prevGenerationAnchorsJson = JSON.stringify(state.generationAnchors);
   prevConnectionStylesJson = JSON.stringify(state.connectionStyles);
   prevFamiliesJson = JSON.stringify(familiesToPersisted(state.families));
+  prevBranchesJson = JSON.stringify(branchesToPersisted(state.branches));
+  prevDocumentsJson = JSON.stringify(state.documents);
+  prevDisplayMode = state.displayMode;
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&
     state.activeProjectId &&

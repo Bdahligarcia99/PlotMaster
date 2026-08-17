@@ -65,6 +65,8 @@ export default function FamilyTreeToolbar() {
     setGenLabelMode,
     marqueeToolActive,
     setMarqueeToolActive,
+    branchToolActive,
+    setBranchToolActive,
     showLegend,
     setShowLegend,
     sortUnion,
@@ -645,6 +647,14 @@ export default function FamilyTreeToolbar() {
         title="Marquee Select (M) - drag box to select multiple nodes"
       >
         Marquee Select
+      </Button>
+      <Button
+        variant={branchToolActive ? "primary" : "secondary"}
+        size="sm"
+        onClick={() => setBranchToolActive(!branchToolActive)}
+        title="Branch tool — hide or extract descendant subtrees from a person"
+      >
+        Branch
       </Button>
       <Button
         variant={showLegend ? "primary" : "secondary"}

@@ -3,7 +3,11 @@ import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds } from "../../store/familyTreeStore";
+import {
+  getDocumentsForFamily,
+  getUnassignedDocuments,
+} from "../../store/familyTreeDocumentHelpers";
 import Button from "../ui/Button";
 
 function HazardTriangleIcon({ title, className = "" }: { title?: string; className?: string }) {
@@ -109,6 +113,13 @@ function getPersonName(nodes: Node<PersonNodeData | UnionNodeData>[], id: string
 
 interface FamilyTreeLeftSidebarProps {
   onSelectNode?: () => void;
+  textEditorMode?: boolean;
+  openFileIds?: string[];
+  activeFileId?: string | null;
+  dirtyDocIds?: Set<string>;
+  onOpenFile?: (docId: string) => void;
+  onNewUserFile?: (familyId: string | null) => void;
+  onDeleteUserFile?: (docId: string) => void;
 }
 
 function getDisplayName(
@@ -127,9 +138,19 @@ function getDisplayName(
   return `${leftName} ↔ ${rightName}`;
 }
 
-export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSidebarProps) {
+export default function FamilyTreeLeftSidebar({
+  onSelectNode,
+  textEditorMode = false,
+  openFileIds = [],
+  activeFileId = null,
+  dirtyDocIds = new Set(),
+  onOpenFile,
+  onNewUserFile,
+  onDeleteUserFile,
+}: FamilyTreeLeftSidebarProps) {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
+  const documents = useFamilyTreeStore((s) => s.documents);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
@@ -141,12 +162,24 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
   const setIsolationModeActive = useFamilyTreeStore((s) => s.setIsolationModeActive);
   const setPendingFocusFamilyId = useFamilyTreeStore((s) => s.setPendingFocusFamilyId);
   const setInspectorFamilyId = useFamilyTreeStore((s) => s.setInspectorFamilyId);
+  const branches = useFamilyTreeStore((s) => s.branches);
+  const activeBranchTabId = useFamilyTreeStore((s) => s.activeBranchTabId);
+  const setActiveBranchTabId = useFamilyTreeStore((s) => s.setActiveBranchTabId);
+  const setPendingFocusBranchId = useFamilyTreeStore((s) => s.setPendingFocusBranchId);
+  const setInspectorBranchId = useFamilyTreeStore((s) => s.setInspectorBranchId);
+  const deleteBranch = useFamilyTreeStore((s) => s.deleteBranch);
+  const setBranchCustomName = useFamilyTreeStore((s) => s.setBranchCustomName);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
+  const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
+  const [branchDraftName, setBranchDraftName] = useState("");
   const [draftName, setDraftName] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [collapseAllActive, setCollapseAllActive] = useState(false);
+  const [expandedFamilyGroups, setExpandedFamilyGroups] = useState<Set<string>>(
+    () => new Set(["__all__", "__unassigned__"])
+  );
 
   const isSelected = (id: string) => selectedNodeIds.includes(id);
 
@@ -201,16 +234,37 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
     [families, activeFamilyTabId]
   );
 
+  const activeBranch = useMemo(
+    () => (activeBranchTabId != null ? branches.find((b) => b.id === activeBranchTabId) : null),
+    [branches, activeBranchTabId]
+  );
+
+  const branchMemberIds = useMemo(() => {
+    if (!activeBranch) return null;
+    return new Set(computeBranchMemberIds(activeBranch.rootPersonId, nodes, edges));
+  }, [activeBranch, nodes, edges]);
+
+  const visibleBranches = useMemo(() => {
+    if (activeFamilyTabId == null) return branches;
+    return branches.filter((b) => b.familyId === activeFamilyTabId);
+  }, [branches, activeFamilyTabId]);
+
   const filteredFamilyUnits = useMemo(() => {
+    if (branchMemberIds) {
+      return familyUnits.filter((u) => branchMemberIds.has(u.unionId));
+    }
     if (!activeFamily) return familyUnits;
     const unionSet = new Set(activeFamily.unionIds);
     return familyUnits.filter((u) => unionSet.has(u.unionId));
-  }, [familyUnits, activeFamily]);
+  }, [familyUnits, activeFamily, branchMemberIds]);
 
   const filteredUnlinkedPeople = useMemo(() => {
+    if (branchMemberIds) {
+      return unlinkedPeople.filter((p) => branchMemberIds.has(p.id));
+    }
     if (activeFamilyTabId != null) return [];
     return unlinkedPeople;
-  }, [unlinkedPeople, activeFamilyTabId]);
+  }, [unlinkedPeople, activeFamilyTabId, branchMemberIds]);
 
   const visibleEntityOrder = useMemo(() => {
     const order: string[] = [];
@@ -275,6 +329,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
 
   const handleFamilyTabClick = (familyId: string | null) => {
     setActiveFamilyTabId(familyId);
+    setActiveBranchTabId(null);
     if (familyId == null) {
       setIsolationModeActive(false);
     } else {
@@ -290,6 +345,43 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
     setInspectorFamilyId(familyId);
     onSelectNode?.();
   };
+
+  const handleBranchTabClick = (branchId: string) => {
+    setActiveBranchTabId(branchId);
+    setPendingFocusBranchId(branchId);
+    setInspectorBranchId(null);
+    setInspectorFamilyId(null);
+  };
+
+  const handleBranchTabDoubleClick = (e: React.MouseEvent, branchId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActiveBranchTabId(branchId);
+    setPendingFocusBranchId(branchId);
+    setInspectorBranchId(branchId);
+    setInspectorFamilyId(null);
+    onSelectNode?.();
+  };
+
+  const startEditingBranch = (e: React.MouseEvent, branchId: string, currentName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEditingBranchId(branchId);
+    setBranchDraftName(currentName);
+  };
+
+  const saveBranchName = (branchId: string) => {
+    setBranchCustomName(branchId, branchDraftName);
+    setEditingBranchId(null);
+    setBranchDraftName("");
+  };
+
+  const cancelBranchEditing = () => {
+    setEditingBranchId(null);
+    setBranchDraftName("");
+  };
+
+  const getBranchRootName = (rootPersonId: string) => getPersonName(nodes, rootPersonId);
 
   const handleEntityClick = (e: React.MouseEvent, id: string) => {
     if (e.shiftKey) {
@@ -372,6 +464,131 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
         })()
       : `Delete ${selectedNodeIds.length} selected entities? This will remove them and their connections. This action cannot be undone.`;
 
+  const toggleFamilyGroup = (groupId: string) => {
+    setExpandedFamilyGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
+  const unassignedDocs = useMemo(
+    () => getUnassignedDocuments(documents, families, nodes, edges),
+    [documents, families, nodes, edges]
+  );
+
+  if (textEditorMode) {
+    const renderFileRow = (doc: { id: string; name: string }) => {
+      const isActive = activeFileId === doc.id;
+      const isOpen = openFileIds.includes(doc.id);
+      const dirty = dirtyDocIds.has(doc.id);
+      return (
+        <div
+          key={doc.id}
+          className={`flex items-center gap-1 rounded border overflow-hidden ${
+            isActive
+              ? "border-blue-500/50 ring-1 ring-blue-500/50"
+              : isOpen
+                ? "border-dark-accent/50"
+                : "border-dark-accent/30"
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => onOpenFile?.(doc.id)}
+            className="flex-1 min-w-0 text-left px-2 py-1.5 text-xs text-dark-text hover:bg-dark-accent/40 truncate"
+            title={doc.name}
+          >
+            {dirty && <span className="text-amber-400 mr-1">●</span>}
+            {doc.name}
+          </button>
+          <button
+            type="button"
+            onClick={() => onDeleteUserFile?.(doc.id)}
+            className="flex-shrink-0 px-1.5 py-1 text-dark-muted hover:text-red-400 hover:bg-dark-accent/40"
+            title="Delete file"
+          >
+            ×
+          </button>
+        </div>
+      );
+    };
+
+    const renderFamilyGroup = (
+      groupId: string,
+      label: string,
+      familyDocs: typeof documents,
+      ownerFamilyId: string | null
+    ) => {
+      const isExpanded = expandedFamilyGroups.has(groupId);
+      return (
+        <div key={groupId} className="rounded-lg border border-dark-accent/30 overflow-hidden">
+          <div className="flex items-center gap-1 bg-dark-bg/40 px-2 py-1.5">
+            <button
+              type="button"
+              onClick={() => toggleFamilyGroup(groupId)}
+              className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-dark-muted hover:text-dark-text"
+              aria-expanded={isExpanded}
+            >
+              {isExpanded ? "▾" : "▸"}
+            </button>
+            <span className="flex-1 min-w-0 text-xs font-medium text-dark-text truncate">{label}</span>
+            <button
+              type="button"
+              onClick={() => onNewUserFile?.(ownerFamilyId)}
+              className="flex-shrink-0 text-[11px] text-blue-300 hover:text-blue-200 px-1.5 py-0.5"
+              title={`New file in ${label}`}
+            >
+              + File
+            </button>
+          </div>
+          {isExpanded && (
+            <div className="px-2 pb-2 pt-1 space-y-1">
+              {familyDocs.length === 0 ? (
+                <p className="text-dark-muted text-[10px] px-1 py-1">No files</p>
+              ) : (
+                familyDocs.map(renderFileRow)
+              )}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div className="w-full min-w-0 flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden h-full">
+        <div className="p-4 border-b border-dark-accent/50">
+          <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
+            Sub Entities
+          </h2>
+          <p className="text-dark-muted text-xs mt-1">Families → Files</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          {families.length === 0 && unassignedDocs.length === 0 && documents.length === 0 ? (
+            <p className="text-dark-muted text-xs py-2 px-2">
+              No script files yet. Add people and unions on the canvas, or switch to Script mode to
+              auto-create files per family.
+            </p>
+          ) : (
+            <>
+              {families.map((family) =>
+                renderFamilyGroup(
+                  family.id,
+                  family.name,
+                  getDocumentsForFamily(documents, family.id, families, nodes, edges),
+                  family.id
+                )
+              )}
+              {(unassignedDocs.length > 0 || families.length > 0) &&
+                renderFamilyGroup("__unassigned__", "Unassigned", unassignedDocs, null)}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full min-w-0 flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden">
       <div className="p-4 border-b border-dark-accent/50">
@@ -442,6 +659,89 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 overflow-y-auto p-2">
+        {visibleBranches.length > 0 && (
+          <section className="mb-3">
+            <h3 className="text-xs font-medium text-dark-muted uppercase tracking-wide mb-2 px-1">
+              Branches
+            </h3>
+            <div className="space-y-1">
+              {visibleBranches.map((branch) => {
+                if (branch.mode === "hidden") {
+                  const rootName = getBranchRootName(branch.rootPersonId);
+                  return (
+                    <div
+                      key={branch.id}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-dark-accent/20 border border-dark-accent/30"
+                    >
+                      <span className="flex-1 min-w-0 text-sm text-dark-muted truncate">
+                        {rootName} (hidden)
+                      </span>
+                      <button
+                        type="button"
+                        title="Unhide branch"
+                        onClick={() => deleteBranch(branch.id)}
+                        className="flex-shrink-0 p-1 text-dark-muted hover:text-blue-400 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </button>
+                    </div>
+                  );
+                }
+
+                const isActiveBranch = activeBranchTabId === branch.id;
+                if (editingBranchId === branch.id) {
+                  return (
+                    <div
+                      key={branch.id}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
+                        isActiveBranch ? "bg-blue-500/20 ring-1 ring-blue-500/50" : "bg-dark-accent/30"
+                      }`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="text"
+                        value={branchDraftName}
+                        onChange={(e) => setBranchDraftName(e.target.value)}
+                        onBlur={() => saveBranchName(branch.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveBranchName(branch.id);
+                          if (e.key === "Escape") cancelBranchEditing();
+                        }}
+                        autoFocus
+                        className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  );
+                }
+
+                return (
+                  <button
+                    key={branch.id}
+                    type="button"
+                    onClick={() => handleBranchTabClick(branch.id)}
+                    onDoubleClick={(e) => handleBranchTabDoubleClick(e, branch.id)}
+                    title="Double-click to open in Inspector; double-click name to rename"
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left text-sm transition-colors ${
+                      isActiveBranch
+                        ? "bg-blue-500/20 ring-1 ring-blue-500/50 text-blue-300"
+                        : "text-dark-text hover:bg-dark-accent/30"
+                    }`}
+                  >
+                    <span
+                      className="flex-1 min-w-0 truncate"
+                      onDoubleClick={(e) => startEditingBranch(e, branch.id, branch.name)}
+                    >
+                      {branch.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
         {filteredFamilyUnits.length === 0 && filteredUnlinkedPeople.length === 0 ? (
           <p className="text-dark-muted text-sm py-4 text-center">No entities yet.</p>
         ) : (

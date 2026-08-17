@@ -2,14 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BeatDocumentEditorView, {
   type BeatDocumentEditorHandle,
 } from "../timeline/beatEditor/BeatDocumentEditorView";
-import { useFamilyTreeStore, generateFamilyTreeScript } from "../../store/familyTreeStore";
+import {
+  getDocumentsForFamily,
+  getUnassignedDocuments,
+} from "../../store/familyTreeDocumentHelpers";
+import { useFamilyTreeStore } from "../../store/familyTreeStore";
+import type { TextEditorDrafts } from "./FamilyTreeTextEditorWorkspace";
 
 /** Escape string for use in RegExp. */
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** True if line references the given node by its unique ID. */
 function lineReferencesNode(line: string, nodeId: string): boolean {
   const idEscaped = escapeRegex(nodeId);
   const idRe = new RegExp(`(?:^|[^a-zA-Z0-9_])${idEscaped}(?:$|[^a-zA-Z0-9_])`);
@@ -38,89 +42,138 @@ function computeHighlightLines(content: string, nodeIds: Set<string>): number[] 
   return result;
 }
 
-export default function FamilyTreeScriptPane() {
+interface FamilyTreeScriptPaneProps {
+  drafts: TextEditorDrafts;
+  onDraftsChange: (drafts: TextEditorDrafts) => void;
+}
+
+export default function FamilyTreeScriptPane({ drafts, onDraftsChange }: FamilyTreeScriptPaneProps) {
+  const documents = useFamilyTreeStore((s) => s.documents);
+  const families = useFamilyTreeStore((s) => s.families);
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
+  const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
-  const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
-  const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
-  const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
-  const applyFamilyTreeScriptEdits = useFamilyTreeStore((s) => s.applyFamilyTreeScriptEdits);
+  const getDocumentDisplayContent = useFamilyTreeStore((s) => s.getDocumentDisplayContent);
+  const applyFamilyDocumentEdits = useFamilyTreeStore((s) => s.applyFamilyDocumentEdits);
 
-  const [draft, setDraft] = useState<{ content: string; dirty: boolean } | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const editorRef = useRef<BeatDocumentEditorHandle | null>(null);
+  const editorRefs = useRef<Map<string, BeatDocumentEditorHandle | null>>(new Map());
   const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const generatedScript = useMemo(
-    () =>
-      generateFamilyTreeScript(nodes, edges, {
-        compactDeclarations: false,
-        showNodeInfo: false,
-        generationAnchors,
-        genLabelMode,
-        connectionStyles,
-      }),
-    [nodes, edges, generationAnchors, genLabelMode, connectionStyles]
+  const familyScopedDocs = useMemo(() => {
+    if (documents.length === 0) return [];
+    if (activeFamilyTabId == null) return documents;
+    return getDocumentsForFamily(documents, activeFamilyTabId, families, nodes, edges);
+  }, [documents, activeFamilyTabId, families, nodes, edges]);
+
+  const showUnassigned =
+    activeFamilyTabId == null &&
+    getUnassignedDocuments(documents, families, nodes, edges).length > 0;
+
+  const visibleDocs = useMemo(() => {
+    if (activeFamilyTabId != null) return familyScopedDocs;
+    if (showUnassigned) return documents;
+    return documents.filter(
+      (d) => getUnassignedDocuments([d], families, nodes, edges).length === 0 || documents.length === 1
+    );
+  }, [activeFamilyTabId, familyScopedDocs, showUnassigned, documents, families, nodes, edges]);
+
+  const getDocContent = useCallback(
+    (docId: string): string => {
+      const draft = drafts[docId];
+      if (draft?.dirty) return draft.content;
+      return getDocumentDisplayContent(docId);
+    },
+    [drafts, getDocumentDisplayContent]
   );
 
-  const editorContent = draft?.dirty ? draft.content : generatedScript;
-
-  const commitDraft = useCallback((): { ok: boolean } => {
-    if (!draft?.dirty) {
+  const commitAllDirtyDrafts = useCallback((): { ok: boolean } => {
+    const dirtyEdits = Object.entries(drafts)
+      .filter(([, d]) => d.dirty)
+      .map(([docId, draft]) => ({ docId, content: draft.content }));
+    if (dirtyEdits.length === 0) {
       setCommitError(null);
       return { ok: true };
     }
-    const result = applyFamilyTreeScriptEdits(draft.content);
+    const result = applyFamilyDocumentEdits(dirtyEdits);
     if (!result.ok) {
       setCommitError(result.errors.join("; "));
       return { ok: false };
     }
-    setDraft(null);
+    const nextDrafts = { ...drafts };
+    for (const { docId } of dirtyEdits) delete nextDrafts[docId];
+    onDraftsChange(nextDrafts);
     setCommitError(null);
     return { ok: true };
-  }, [draft, applyFamilyTreeScriptEdits]);
+  }, [drafts, onDraftsChange, applyFamilyDocumentEdits]);
 
-  const commitDraftRef = useRef(commitDraft);
-  commitDraftRef.current = commitDraft;
+  const commitRef = useRef(commitAllDirtyDrafts);
+  commitRef.current = commitAllDirtyDrafts;
+
+  const hasDraftChanges = Object.values(drafts).some((d) => d.dirty);
 
   useEffect(() => {
-    if (!draft?.dirty) return;
+    if (!hasDraftChanges) return;
     if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
     commitTimerRef.current = setTimeout(() => {
-      commitDraftRef.current();
+      commitRef.current();
     }, 800);
     return () => {
       if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
     };
-  }, [draft]);
+  }, [drafts, hasDraftChanges]);
 
   useEffect(() => {
     return () => {
       if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
-      commitDraftRef.current();
+      commitRef.current();
     };
   }, []);
 
   const highlightNodeIds = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
 
   useEffect(() => {
-    const handle = editorRef.current;
-    if (!handle) return;
-    const lines = computeHighlightLines(editorContent, highlightNodeIds);
-    handle.setHighlightLines(lines);
-  }, [highlightNodeIds, editorContent]);
+    for (const doc of visibleDocs) {
+      const handle = editorRefs.current.get(doc.id);
+      if (!handle) continue;
+      const content = getDocContent(doc.id);
+      handle.setHighlightLines(computeHighlightLines(content, highlightNodeIds));
+    }
+  }, [highlightNodeIds, visibleDocs, drafts, getDocContent]);
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(editorContent);
+      const combined = visibleDocs.map((d) => getDocContent(d.id)).join("\n\n");
+      await navigator.clipboard.writeText(combined);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       /* ignored */
     }
   };
+
+  const setContent = (docId: string, content: string) => {
+    onDraftsChange({
+      ...drafts,
+      [docId]: { content, dirty: true },
+    });
+    setCommitError(null);
+  };
+
+  if (documents.length === 0) {
+    return (
+      <div className="h-full flex flex-col border-t border-dark-accent/50 bg-dark-surface">
+        <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-dark-accent/50 shrink-0">
+          <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Script</span>
+        </div>
+        <div className="flex-1 flex items-center justify-center text-dark-muted text-sm px-4 text-center">
+          No script files yet. Add nodes on the canvas to seed family files.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col border-t border-dark-accent/50 bg-dark-surface">
@@ -129,32 +182,54 @@ export default function FamilyTreeScriptPane() {
           <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Script</span>
           <span className="text-dark-accent/50">|</span>
           <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Code</span>
-          {draft?.dirty ? (
+          {hasDraftChanges ? (
             <span className="text-xs text-amber-400/90">· Unsaved</span>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50"
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50"
+        >
+          {copied ? "Copied!" : "Copy"}
+        </button>
       </div>
       {commitError && (
         <div className="px-3 py-2 text-xs text-red-400 border-b border-red-500/30 bg-red-500/10 shrink-0">
           {commitError}
         </div>
       )}
-      <div className="flex-1 min-h-0 overflow-hidden px-3 pb-3 pt-2 flex flex-col">
-        <BeatDocumentEditorView
-          ref={editorRef}
-          content={editorContent}
-          onChange={(text) => setDraft({ content: text, dirty: true })}
-          separatorsCommitted={true}
-        />
+      <div className="flex-1 min-h-0 overflow-auto">
+        {visibleDocs.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-dark-muted text-sm px-4 text-center">
+            No files for this family yet.
+          </div>
+        ) : (
+          visibleDocs.map((doc) => {
+            const content = getDocContent(doc.id);
+            const dirty = drafts[doc.id]?.dirty ?? false;
+            return (
+              <div key={doc.id} className="border-b border-dark-accent/40">
+                <div className="px-3 py-1.5 text-xs font-medium text-dark-muted uppercase tracking-wide border-b border-dark-accent/30 sticky top-0 bg-dark-surface z-10 flex items-center gap-2">
+                  <span className="flex-1 truncate">
+                    {doc.name}
+                    {dirty ? " · Unsaved" : ""}
+                  </span>
+                </div>
+                <div className="min-h-[240px] h-[36vh] px-3 pb-3 pt-2 flex flex-col">
+                  <BeatDocumentEditorView
+                    ref={(handle) => {
+                      editorRefs.current.set(doc.id, handle);
+                    }}
+                    content={content}
+                    onChange={(text) => setContent(doc.id, text)}
+                    separatorsCommitted={true}
+                  />
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

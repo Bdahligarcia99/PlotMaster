@@ -34,6 +34,8 @@ import {
   formatGenerationAnchorLabel,
   getUnionFamilyMemberIds,
   getFamilyMemberNodeIds,
+  computeBranchMemberIds,
+  getBranchExcludedNodeIds,
 } from "../../store/familyTreeStore";
 import PersonNode from "./PersonNode";
 import UnionNode from "./UnionNode";
@@ -108,6 +110,32 @@ function FamilyFocusController() {
     }
     setPendingFocusFamilyId(null);
   }, [pendingFocusFamilyId, families, nodes, edges, fitView, setPendingFocusFamilyId]);
+
+  return null;
+}
+
+function FamilyBranchFocusController() {
+  const { fitView } = useReactFlow();
+  const pendingFocusBranchId = useFamilyTreeStore((s) => s.pendingFocusBranchId);
+  const setPendingFocusBranchId = useFamilyTreeStore((s) => s.setPendingFocusBranchId);
+  const branches = useFamilyTreeStore((s) => s.branches);
+  const nodes = useFamilyTreeStore((s) => s.nodes);
+  const edges = useFamilyTreeStore((s) => s.edges);
+
+  useEffect(() => {
+    if (!pendingFocusBranchId) return;
+    const branch = branches.find((b) => b.id === pendingFocusBranchId && b.mode === "tab");
+    if (!branch) {
+      setPendingFocusBranchId(null);
+      return;
+    }
+    const memberIds = new Set(computeBranchMemberIds(branch.rootPersonId, nodes, edges));
+    const subset = nodes.filter((n) => memberIds.has(n.id)).map((n) => ({ id: n.id }));
+    if (subset.length > 0) {
+      void fitView({ nodes: subset, padding: 0.25, duration: 400 });
+    }
+    setPendingFocusBranchId(null);
+  }, [pendingFocusBranchId, branches, nodes, edges, fitView, setPendingFocusBranchId]);
 
   return null;
 }
@@ -441,16 +469,34 @@ export default function FamilyTreeCanvas({
   const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const families = useFamilyTreeStore((s) => s.families);
+  const branches = useFamilyTreeStore((s) => s.branches);
+  const activeBranchTabId = useFamilyTreeStore((s) => s.activeBranchTabId);
   const pendingBloodlineWarning = useFamilyTreeStore((s) => s.pendingBloodlineWarning);
   const resolveBloodlineWarning = useFamilyTreeStore((s) => s.resolveBloodlineWarning);
   const familyConnectionNotice = useFamilyTreeStore((s) => s.familyConnectionNotice);
 
   const visibleNodeIds = useMemo(() => {
-    if (!isolationModeActive || activeFamilyTabId == null) return null;
-    const family = families.find((f) => f.id === activeFamilyTabId);
-    if (!family) return null;
-    return new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
-  }, [isolationModeActive, activeFamilyTabId, families, nodes, edges]);
+    if (activeBranchTabId != null) {
+      const branch = branches.find((b) => b.id === activeBranchTabId && b.mode === "tab");
+      if (branch) {
+        return new Set(computeBranchMemberIds(branch.rootPersonId, nodes, edges));
+      }
+    }
+
+    const excluded = getBranchExcludedNodeIds(branches, nodes, edges);
+
+    if (isolationModeActive && activeFamilyTabId != null) {
+      const family = families.find((f) => f.id === activeFamilyTabId);
+      if (family) {
+        const familyIds = getFamilyMemberNodeIds(family.unionIds, nodes, edges);
+        if (excluded.size === 0) return new Set(familyIds);
+        return new Set(familyIds.filter((id) => !excluded.has(id)));
+      }
+    }
+
+    if (excluded.size === 0) return null;
+    return new Set(nodes.filter((n) => !excluded.has(n.id)).map((n) => n.id));
+  }, [activeBranchTabId, branches, isolationModeActive, activeFamilyTabId, families, nodes, edges]);
 
   const canvasNodes = useMemo(() => {
     if (!visibleNodeIds) return nodes;
@@ -820,6 +866,7 @@ export default function FamilyTreeCanvas({
         <ViewportBoundsSync />
         <ExportViewportRegister />
         <FamilyFocusController />
+        <FamilyBranchFocusController />
         <GenerationAnchorsOverlay />
         <GenerationRuler />
         <NodeSpacingOverlay />

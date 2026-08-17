@@ -1,7 +1,7 @@
 import { memo, useRef, useEffect, useCallback } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import type { PersonNodeData } from "../../store/familyTreeStore";
-import { useFamilyTreeStore, DEFAULT_PERSON_W, DEFAULT_PERSON_H, getPersonDisplayName } from "../../store/familyTreeStore";
+import { useFamilyTreeStore, DEFAULT_PERSON_W, DEFAULT_PERSON_H, getPersonDisplayName, canBranchFromPerson } from "../../store/familyTreeStore";
 
 function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData>) {
   const nodeData = data;
@@ -22,6 +22,13 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const nameRoleSuggestions = useFamilyTreeStore((s) => s.nameRoleSuggestions);
   const genInheritFlashByNodeId = useFamilyTreeStore((s) => s.genInheritFlashByNodeId);
   const exportCaptureFlags = useFamilyTreeStore((s) => s.exportCaptureFlags);
+  const branchToolActive = useFamilyTreeStore((s) => s.branchToolActive);
+  const branches = useFamilyTreeStore((s) => s.branches);
+  const toggleHideForPerson = useFamilyTreeStore((s) => s.toggleHideForPerson);
+  const createOrConvertBranchTab = useFamilyTreeStore((s) => s.createOrConvertBranchTab);
+  const deleteBranch = useFamilyTreeStore((s) => s.deleteBranch);
+  const setActiveBranchTabId = useFamilyTreeStore((s) => s.setActiveBranchTabId);
+  const setPendingFocusBranchId = useFamilyTreeStore((s) => s.setPendingFocusBranchId);
   const inheritFlash = genInheritFlashByNodeId[id];
   const showGenInheritFlash = !!inheritFlash;
   const showNotesForExport = exportCaptureFlags?.includeNotes && nodeData.notes?.trim();
@@ -193,8 +200,97 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
     if (err) alert(err);
   };
 
+  const canBranch = canBranchFromPerson(id, nodes, edges);
+  const hiddenBranch = branches.find((b) => b.rootPersonId === id && b.mode === "hidden");
+  const tabBranch = branches.find((b) => b.rootPersonId === id && b.mode === "tab");
+  const hideDisabled = !canBranch || (!!tabBranch && !hiddenBranch);
+  const tabDisabled = !canBranch;
+
+  const cornerButtonClass = (active: boolean, disabled: boolean) =>
+    `absolute w-5 h-5 flex items-center justify-center rounded-full bg-dark-surface border transition-opacity z-20 ${
+      disabled
+        ? "border-dark-accent/40 text-dark-muted/40 opacity-0 group-hover:opacity-40 cursor-not-allowed"
+        : active
+          ? "border-amber-500 text-amber-400 opacity-100 cursor-pointer"
+          : "border-dark-accent text-dark-muted hover:text-dark-text hover:border-blue-500 opacity-0 group-hover:opacity-100 cursor-pointer"
+    }`;
+
+  const handleHideBranchButton = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (hideDisabled) return;
+    if (hiddenBranch) {
+      deleteBranch(hiddenBranch.id);
+      return;
+    }
+    toggleHideForPerson(id);
+  };
+
+  const handleTabBranchButton = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (tabDisabled) return;
+    if (tabBranch) {
+      setActiveBranchTabId(tabBranch.id);
+      setPendingFocusBranchId(tabBranch.id);
+      return;
+    }
+    createOrConvertBranchTab(id);
+  };
+
   return (
     <div className="relative group" onPointerDown={handleRootPointerDown}>
+      {branchToolActive ? (
+        <>
+          <button
+            type="button"
+            title={
+              hiddenBranch
+                ? "Unhide descendant branch"
+                : tabBranch
+                  ? "Already on a branch tab"
+                  : canBranch
+                    ? "Hide descendants on main canvas"
+                    : "No downward connections to branch"
+            }
+            disabled={hideDisabled}
+            onClick={handleHideBranchButton}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${cornerButtonClass(!!hiddenBranch, hideDisabled)} -top-1.5 -left-1.5`}
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {hiddenBranch ? (
+                <>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </>
+              ) : (
+                <>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                </>
+              )}
+            </svg>
+          </button>
+          <button
+            type="button"
+            title={
+              tabBranch
+                ? "Open branch tab"
+                : canBranch
+                  ? "Create branch tab for descendants"
+                  : "No downward connections to branch"
+            }
+            disabled={tabDisabled}
+            onClick={handleTabBranchButton}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${cornerButtonClass(!!tabBranch, tabDisabled)} -top-1.5 -right-1.5`}
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h10v10H7z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2" />
+            </svg>
+          </button>
+        </>
+      ) : (
+        <>
       <button
         type="button"
         title={
@@ -247,6 +343,8 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
           )}
         </svg>
       </button>
+        </>
+      )}
 
       {/* Node info overlay: only when enabled */}
       {showNodeInfoEnabled && (nodeInfoTopLeft || nodeInfoCenter || nodeInfoSize) && (
