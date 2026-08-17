@@ -79,8 +79,8 @@ export default function FamilyTreeToolbar() {
     updatePersonNameParts,
     updateUnionPartnerRole,
     flushSaveAndSave,
-    reviewNamesModalOpen,
-    setReviewNamesModalOpen,
+    reviewNodesModalOpen,
+    setReviewNodesModalOpen,
   } = useFamilyTreeStore();
 
   const [message, setMessage] = useState<string | null>(null);
@@ -301,7 +301,8 @@ export default function FamilyTreeToolbar() {
     (selectedUnionId != null ? getUnionVerticalGap(selectedUnionId, nodes, edges) : null) ??
     CHILD_DY;
   const canAddParent =
-    selectedUnion &&
+    selectedNodeIds.length === 1 &&
+    selectedUnions.length === 1 &&
     (selectedUnionData?.partnerIds?.filter((id): id is string => id != null).length ?? 0) < 2;
 
   function getCreateUnionTooltip(): string {
@@ -391,7 +392,7 @@ export default function FamilyTreeToolbar() {
   ) => {
     const personNodes = nodes.filter((n) => (n.data as { kind?: string }).kind === "person");
     for (const { s, idx } of toApply) {
-      if (s.field === "unionHealth") continue;
+      if (s.field === "unionHealth" || s.field === "genConflict") continue;
       const resolved = resolvedValues.get(idx) ?? s.proposedValue;
       if (s.field === "firstName") {
         const node = personNodes.find((n) => n.id === s.nodeId);
@@ -423,7 +424,7 @@ export default function FamilyTreeToolbar() {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          Person
+          {canAddParent ? "Parent" : "Person"}
         </Button>
         <button
           type="button"
@@ -917,14 +918,14 @@ export default function FamilyTreeToolbar() {
       <Button
         variant="secondary"
         size="sm"
-        onClick={() => setReviewNamesModalOpen(true)}
+        onClick={() => setReviewNodesModalOpen(true)}
         title={
           nameRoleSuggestions.length > 0
             ? `${nameRoleSuggestions.length} suggestion(s) – click to review`
-            : "Review names – analysis runs when you open"
+            : "Review nodes – analysis runs when you open"
         }
       >
-        Review names{nameRoleSuggestions.length > 0 ? ` (${nameRoleSuggestions.length})` : ""}
+        Review nodes{nameRoleSuggestions.length > 0 ? ` (${nameRoleSuggestions.length})` : ""}
       </Button>
       <Button
         variant="secondary"
@@ -1058,8 +1059,8 @@ export default function FamilyTreeToolbar() {
         onExportComplete={() => setMessage("Export coming soon")}
       />
       <FamilyTreeReviewSuggestionsModal
-        isOpen={reviewNamesModalOpen}
-        onClose={() => setReviewNamesModalOpen(false)}
+        isOpen={reviewNodesModalOpen}
+        onClose={() => setReviewNodesModalOpen(false)}
         suggestions={nameRoleSuggestions}
         nodes={nodes}
         onApply={handleApplySuggestions}

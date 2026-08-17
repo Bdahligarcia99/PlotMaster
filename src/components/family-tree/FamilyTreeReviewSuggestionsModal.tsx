@@ -30,7 +30,7 @@ export default function FamilyTreeReviewSuggestionsModal({
   const [resolvedValues, setResolvedValues] = useState<Map<number, string>>(new Map());
 
   const actionableIndices = useMemo(
-    () => suggestions.map((s, i) => (s.field === "unionHealth" ? -1 : i)).filter((i) => i >= 0),
+    () => suggestions.map((s, i) => (s.field === "unionHealth" || s.field === "genConflict" ? -1 : i)).filter((i) => i >= 0),
     [suggestions]
   );
 
@@ -60,7 +60,8 @@ export default function FamilyTreeReviewSuggestionsModal({
     s.field === "firstName" && s.proposedValue === "Mr./Mrs.";
   const needsFatherMotherChoice = (s: NameRoleSuggestion): boolean =>
     s.field === "role" && s.proposedValue === "father/mother";
-  const isInformational = (s: NameRoleSuggestion): boolean => s.field === "unionHealth";
+  const isInformational = (s: NameRoleSuggestion): boolean =>
+    s.field === "unionHealth" || s.field === "genConflict";
 
   const getEffectiveProposed = (s: NameRoleSuggestion, idx: number): string => {
     const r = resolvedValues.get(idx);

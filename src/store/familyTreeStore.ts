@@ -221,6 +221,63 @@ export function getConnectionStyleName(
   return "Default";
 }
 
+export interface FamilyTreeEdgeData {
+  type: "partner" | "child";
+  connectionStyleId?: string;
+  connectionStyleOverride?: ConnectionVisualStyle;
+}
+
+/** Resolve visual style for a single edge, falling back to its union's default style. */
+export function resolveEdgeConnectionStyle(
+  edge: Edge,
+  unionData: UnionNodeData,
+  connectionStyles: ConnectionStyleDef[]
+): ConnectionVisualStyle {
+  const edgeData = edge.data as FamilyTreeEdgeData | undefined;
+  if (edgeData?.connectionStyleOverride) return edgeData.connectionStyleOverride;
+  if (edgeData?.connectionStyleId) {
+    const found = connectionStyles.find((s) => s.id === edgeData.connectionStyleId);
+    if (found) return found;
+  }
+  return resolveUnionConnectionStyle(unionData, connectionStyles);
+}
+
+/** Resolve display name for a single edge's connection style. */
+export function getEdgeConnectionStyleName(
+  edge: Edge,
+  unionData: UnionNodeData,
+  connectionStyles: ConnectionStyleDef[]
+): string {
+  const edgeData = edge.data as FamilyTreeEdgeData | undefined;
+  if (edgeData?.connectionStyleOverride) return "Custom";
+  if (edgeData?.connectionStyleId) {
+    const found = connectionStyles.find((s) => s.id === edgeData.connectionStyleId);
+    if (found) return found.name;
+  }
+  return getConnectionStyleName(unionData, connectionStyles);
+}
+
+/** Find the partner or child edge connecting a person to a union. */
+export function getEdgeForPersonAtUnion(
+  unionId: string,
+  personId: string,
+  edges: Edge[]
+): Edge | undefined {
+  const partner = edges.find(
+    (e) =>
+      (e.data as FamilyTreeEdgeData)?.type === "partner" &&
+      e.target === unionId &&
+      e.source === personId
+  );
+  if (partner) return partner;
+  return edges.find(
+    (e) =>
+      (e.data as FamilyTreeEdgeData)?.type === "child" &&
+      e.source === unionId &&
+      e.target === personId
+  );
+}
+
 export interface UnionNodeData {
   kind: "union";
   partnerIds: [string | null, string | null]; // Parent IDs; null = slot not yet filled (backward union in progress)
@@ -1027,7 +1084,7 @@ function showFamilyConnectionNotice(
 /** Suggestion from the name/role analysis engine. Exposed for consent UI. */
 export interface NameRoleSuggestion {
   nodeId: string;
-  field: "firstName" | "role" | "unionHealth";
+  field: "firstName" | "role" | "unionHealth" | "genConflict";
   currentValue: string;
   proposedValue: string;
   reason: string;
@@ -1231,6 +1288,69 @@ export function analyzeDegenerateUnionSuggestions(
         proposedValue: "—",
         reason:
           "This union has only one partner and no children. Consider adding a partner, adding children, or removing the union.",
+        unionId: u.id,
+      });
+    }
+  }
+
+  return suggestions;
+}
+
+/** Flag unions where a parent and child share the same generation anchor. */
+export function analyzeGenConflictSuggestions(
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): NameRoleSuggestion[] {
+  const suggestions: NameRoleSuggestion[] = [];
+  const personById = new Map(
+    nodes
+      .filter((n): n is Node<PersonNodeData> => n.data?.kind === "person")
+      .map((n) => [n.id, n])
+  );
+  const unionNodes = nodes.filter(
+    (n): n is Node<UnionNodeData> =>
+      n.type === "union" && (n.data as UnionNodeData).kind === "union"
+  );
+
+  for (const u of unionNodes) {
+    const d = u.data as UnionNodeData;
+    const partnerIds = (d.partnerIds ?? []).filter((id): id is string => id != null);
+    const childIds = edges
+      .filter((e) => e.source === u.id && isChildEdge(e))
+      .map((e) => e.target)
+      .filter((id) => personById.has(id));
+
+    const conflicts: string[] = [];
+    for (const partnerId of partnerIds) {
+      const partnerGen = (personById.get(partnerId)?.data as PersonNodeData)?.genAnchorId;
+      if (!partnerGen) continue;
+      for (const childId of childIds) {
+        const childGen = (personById.get(childId)?.data as PersonNodeData)?.genAnchorId;
+        if (childGen && childGen === partnerGen) {
+          const partnerName =
+            getPersonDisplayName(
+              personById.get(partnerId)!.data as PersonNodeData,
+              partnerId,
+              nodes
+            ) || partnerId;
+          const childName =
+            getPersonDisplayName(
+              personById.get(childId)!.data as PersonNodeData,
+              childId,
+              nodes
+            ) || childId;
+          conflicts.push(`${partnerName} (parent) and ${childName} (child)`);
+        }
+      }
+    }
+
+    if (conflicts.length > 0) {
+      suggestions.push({
+        nodeId: partnerIds[0] ?? u.id,
+        field: "genConflict",
+        currentValue: "Same gen as parent/child",
+        proposedValue: "—",
+        reason: `${conflicts.join("; ")} share the same generation anchor.`,
         unionId: u.id,
       });
     }
@@ -1787,7 +1907,7 @@ interface FamilyTreeStore {
     nodeId: string;
     nodeName: string;
     fromAnchorId: string;
-    toAnchorId: string;
+    toAnchorId: string | null;
     fromLabel: string;
     toLabel: string;
     previousPosition: { x: number; y: number };
@@ -1840,6 +1960,9 @@ interface FamilyTreeStore {
   duplicateConnectionStyle: (id: string) => string | null;
   setUnionConnectionStyleId: (unionId: string, styleId: string | undefined) => void;
   setUnionConnectionStyleOverride: (unionId: string, style: ConnectionVisualStyle | undefined) => void;
+  setEdgeConnectionStyleId: (edgeId: string, styleId: string | undefined) => void;
+  setEdgeConnectionStyleOverride: (edgeId: string, style: ConnectionVisualStyle | undefined) => void;
+  clearEdgeConnectionStyle: (edgeId: string) => void;
   setUnionFamilyLocked: (unionId: string, locked: boolean) => void;
   setGenLabelMode: (v: "letters" | "numbers" | "both") => void;
   setNodeGenArmed: (nodeId: string) => void;
@@ -1885,9 +2008,17 @@ interface FamilyTreeStore {
   nameRoleSuggestions: NameRoleSuggestion[];
   /** Run name/role analysis; stores result in nameRoleSuggestions for consent UI. */
   runNameRoleAnalysis: () => void;
-  /** When true, the Review names modal is open. Used by Inspector to open it. */
-  reviewNamesModalOpen: boolean;
-  setReviewNamesModalOpen: (v: boolean) => void;
+  /** When true, the Review nodes modal is open. Used by Inspector to open it. */
+  reviewNodesModalOpen: boolean;
+  setReviewNodesModalOpen: (v: boolean) => void;
+  /** Edge hover tooltip: which connection is hovered and its resolved style label. */
+  hoveredConnectionInfo: {
+    unionId: string;
+    personName: string;
+    styleName: string;
+    description?: string;
+  } | null;
+  setHoveredConnectionInfo: (info: FamilyTreeStore["hoveredConnectionInfo"]) => void;
   /** Persisted family tabs (memberPersonIds derived on reconcile). */
   families: FamilyGroup[];
   /** null = "All" tab; otherwise family id. */
@@ -2880,7 +3011,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   fitViewForExport: null as (() => void) | null,
   exportCaptureFlags: null as { includeNotes: boolean } | null,
   nameRoleSuggestions: [] as NameRoleSuggestion[],
-  reviewNamesModalOpen: false,
+  reviewNodesModalOpen: false,
+  hoveredConnectionInfo: null,
   families: [] as FamilyGroup[],
   activeFamilyTabId: null as string | null,
   isolationModeActive: false,
@@ -2900,10 +3032,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       nameRoleSuggestions: [
         ...analyzeNameAndRoleSuggestions(s.nodes, s.edges),
         ...analyzeDegenerateUnionSuggestions(s.nodes, s.edges),
+        ...analyzeGenConflictSuggestions(s.nodes, s.edges),
       ],
     });
   },
-  setReviewNamesModalOpen: (v) => set({ reviewNamesModalOpen: v }),
+  setReviewNodesModalOpen: (v) => set({ reviewNodesModalOpen: v }),
+  setHoveredConnectionInfo: (info) => set({ hoveredConnectionInfo: info }),
   recomputeFamilies: () => reconcileFamiliesImpl(get, set),
   setActiveFamilyTabId: (id) => set({ activeFamilyTabId: id }),
   setIsolationModeActive: (v) => set({ isolationModeActive: v }),
@@ -3207,6 +3341,51 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
             connectionStyleOverride: style,
           },
         };
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setEdgeConnectionStyleId: (edgeId, styleId) =>
+    set((s) => ({
+      edges: s.edges.map((e) => {
+        if (e.id !== edgeId) return e;
+        const d = { ...(e.data as FamilyTreeEdgeData) };
+        return {
+          ...e,
+          data: {
+            ...d,
+            connectionStyleId: styleId,
+            connectionStyleOverride: undefined,
+          },
+        };
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setEdgeConnectionStyleOverride: (edgeId, style) =>
+    set((s) => ({
+      edges: s.edges.map((e) => {
+        if (e.id !== edgeId) return e;
+        const d = { ...(e.data as FamilyTreeEdgeData) };
+        return {
+          ...e,
+          data: {
+            ...d,
+            connectionStyleOverride: style,
+          },
+        };
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  clearEdgeConnectionStyle: (edgeId) =>
+    set((s) => ({
+      edges: s.edges.map((e) => {
+        if (e.id !== edgeId) return e;
+        const d = { ...(e.data as FamilyTreeEdgeData) };
+        delete d.connectionStyleId;
+        delete d.connectionStyleOverride;
+        return { ...e, data: d };
       }),
       hasUnsavedChanges: true,
       lastSaveError: null,
@@ -4229,7 +4408,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       lastSaveError: null,
       genInheritFlashByNodeId: {},
       pendingGenChangePrompt: null,
-      reviewNamesModalOpen: false,
+      reviewNodesModalOpen: false,
+      hoveredConnectionInfo: null,
       editingAnchorIds: [],
       activeFamilyTabId: null,
       isolationModeActive: false,
@@ -4375,7 +4555,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       genInheritFlashByNodeId: {},
       pendingGenChangePrompt: null,
       nameRoleSuggestions: [],
-      reviewNamesModalOpen: false,
+      reviewNodesModalOpen: false,
+      hoveredConnectionInfo: null,
       activeFamilyTabId: null,
       isolationModeActive: false,
       pendingFocusFamilyId: null,

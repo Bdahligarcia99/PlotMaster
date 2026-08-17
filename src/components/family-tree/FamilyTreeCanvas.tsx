@@ -18,7 +18,9 @@ import {
 import "reactflow/dist/style.css";
 import {
   useFamilyTreeStore,
-  resolveUnionConnectionStyle,
+  resolveEdgeConnectionStyle,
+  getEdgeConnectionStyleName,
+  getPersonDisplayName,
   type PersonNodeData,
   type UnionNodeData,
 } from "../../store/familyTreeStore";
@@ -434,6 +436,7 @@ export default function FamilyTreeCanvas({
     setGenInheritFlash,
     setPendingGenChangePrompt,
     setNodeGenArmed,
+    setHoveredConnectionInfo,
   } = useFamilyTreeStore();
   const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
@@ -571,6 +574,20 @@ export default function FamilyTreeCanvas({
             previousPosition: prevPos,
           });
         }
+      } else if (currentGen) {
+        const fromAnchor = generationAnchors.find((a) => a.id === currentGen);
+        const fromLabel = fromAnchor
+          ? formatGenerationAnchorLabel(fromAnchor, genLabelMode)
+          : "?";
+        setPendingGenChangePrompt({
+          nodeId: node.id,
+          nodeName,
+          fromAnchorId: currentGen,
+          toAnchorId: null,
+          fromLabel,
+          toLabel: "None",
+          previousPosition: prevPos,
+        });
       }
     },
     [
@@ -621,7 +638,11 @@ export default function FamilyTreeCanvas({
       if (!unionId) return edge;
       const unionNode = nodeById.get(unionId);
       if (!unionNode || (unionNode.data as UnionNodeData).kind !== "union") return edge;
-      const resolved = resolveUnionConnectionStyle(unionNode.data as UnionNodeData, connectionStyles);
+      const resolved = resolveEdgeConnectionStyle(
+        edge,
+        unionNode.data as UnionNodeData,
+        connectionStyles
+      );
       return {
         ...edge,
         style: {
@@ -632,6 +653,43 @@ export default function FamilyTreeCanvas({
       };
     });
   }, [canvasEdges, canvasNodes, connectionStyles]);
+
+  const onEdgeMouseEnter = useCallback(
+    (_: React.MouseEvent, edge: Edge) => {
+      const edgeType = (edge.data as { type?: string })?.type;
+      let unionId: string | undefined;
+      let personId: string | undefined;
+      if (edgeType === "partner") {
+        unionId = edge.target;
+        personId = edge.source;
+      } else if (edgeType === "child") {
+        unionId = edge.source;
+        personId = edge.target;
+      }
+      if (!unionId || !personId) return;
+      const store = useFamilyTreeStore.getState();
+      const unionNode = store.nodes.find((n) => n.id === unionId);
+      if (!unionNode || (unionNode.data as UnionNodeData).kind !== "union") return;
+      const personNode = store.nodes.find((n) => n.id === personId);
+      const personName = personNode
+        ? getPersonDisplayName(personNode.data as PersonNodeData, personId, store.nodes)
+        : personId;
+      const unionData = unionNode.data as UnionNodeData;
+      const style = resolveEdgeConnectionStyle(edge, unionData, store.connectionStyles);
+      const styleName = getEdgeConnectionStyleName(edge, unionData, store.connectionStyles);
+      setHoveredConnectionInfo({
+        unionId,
+        personName,
+        styleName,
+        description: style.description,
+      });
+    },
+    [setHoveredConnectionInfo]
+  );
+
+  const onEdgeMouseLeave = useCallback(() => {
+    setHoveredConnectionInfo(null);
+  }, [setHoveredConnectionInfo]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -730,6 +788,8 @@ export default function FamilyTreeCanvas({
         onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
+        onEdgeMouseEnter={onEdgeMouseEnter}
+        onEdgeMouseLeave={onEdgeMouseLeave}
         nodeTypes={nodeTypes}
         snapToGrid={snapToGrid}
         snapGrid={[FAMILY_TREE_GRID_SIZE, FAMILY_TREE_GRID_SIZE]}
@@ -786,8 +846,16 @@ export default function FamilyTreeCanvas({
         {pendingGenChangePrompt && (
           <>
             <p className="text-dark-text mb-4">
-              Move {pendingGenChangePrompt.nodeName} from Gen {pendingGenChangePrompt.fromLabel} → Gen{" "}
-              {pendingGenChangePrompt.toLabel}?
+              {pendingGenChangePrompt.toLabel === "None" ? (
+                <>
+                  Move {pendingGenChangePrompt.nodeName} from Gen {pendingGenChangePrompt.fromLabel} → No generation?
+                </>
+              ) : (
+                <>
+                  Move {pendingGenChangePrompt.nodeName} from Gen {pendingGenChangePrompt.fromLabel} → Gen{" "}
+                  {pendingGenChangePrompt.toLabel}?
+                </>
+              )}
             </p>
             <div className="flex gap-2 justify-end">
               <button

@@ -17,10 +17,18 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
+  const hoveredConnectionInfo = useFamilyTreeStore((s) => s.hoveredConnectionInfo);
   const setUnionFamilyLocked = useFamilyTreeStore((s) => s.setUnionFamilyLocked);
   const familyLocked = data.familyLocked ?? false;
   const effectiveStyle = resolveUnionConnectionStyle(data, connectionStyles);
   const styleName = getConnectionStyleName(data, connectionStyles);
+  const isEdgeHovered = hoveredConnectionInfo?.unionId === id;
+  const tooltipText = isEdgeHovered
+    ? `${hoveredConnectionInfo.personName}: ${hoveredConnectionInfo.styleName}`
+    : styleName;
+  const tooltipDescription = isEdgeHovered
+    ? hoveredConnectionInfo.description
+    : effectiveStyle.description;
   const x = Math.round(xPos);
   const y = Math.round(yPos);
 
@@ -80,7 +88,7 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
 
       <div
         ref={sizeRef}
-        title={effectiveStyle.description || undefined}
+        title={tooltipDescription || undefined}
         className={`relative px-3 py-2 rounded-lg border min-w-[60px] flex flex-col items-center justify-center transition-colors ${
           selected
             ? "bg-dark-accent/80 border-blue-500 shadow-md"
@@ -88,10 +96,12 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
         }`}
       >
         <span
-          className="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-surface border border-dark-accent text-dark-muted whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none"
-          title={effectiveStyle.description || undefined}
+          className={`absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-surface border border-dark-accent text-dark-muted whitespace-nowrap transition-opacity z-10 pointer-events-none ${
+            isEdgeHovered ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
+          title={tooltipDescription || undefined}
         >
-          {styleName}
+          {tooltipText}
         </span>
         <button
           type="button"

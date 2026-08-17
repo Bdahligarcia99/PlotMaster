@@ -6,6 +6,48 @@ import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore"
 import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge } from "../../store/familyTreeStore";
 import Button from "../ui/Button";
 
+function HazardTriangleIcon({ title, className = "" }: { title?: string; className?: string }) {
+  return (
+    <span
+      title={title}
+      className={`flex-shrink-0 flex items-center justify-center text-amber-400 ${className}`}
+    >
+      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" />
+      </svg>
+    </span>
+  );
+}
+
+function PersonGenBadge({
+  personId,
+  nodes,
+  getPersonGenLabel,
+  pill = false,
+}: {
+  personId: string;
+  nodes: Node<PersonNodeData | UnionNodeData>[];
+  getPersonGenLabel: (id: string) => string | null;
+  pill?: boolean;
+}) {
+  const label = getPersonGenLabel(personId);
+  if (label) {
+    return pill ? (
+      <span className="text-dark-muted text-[10px] px-2 py-0.5 rounded-full bg-dark-accent/50 border border-dark-accent/50 flex-shrink-0">
+        {label}
+      </span>
+    ) : (
+      <span className="text-dark-muted text-[10px] flex-shrink-0">{label}</span>
+    );
+  }
+  const node = nodes.find((n) => n.id === personId && (n.data as { kind?: string }).kind === "person");
+  const genAnchorId = (node?.data as PersonNodeData)?.genAnchorId;
+  if (!genAnchorId) {
+    return <HazardTriangleIcon title="No generation assigned" />;
+  }
+  return null;
+}
+
 export interface FamilyUnit {
   unionId: string;
   parents: [string, string];
@@ -187,6 +229,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
+  const nameRoleSuggestions = useFamilyTreeStore((s) => s.nameRoleSuggestions);
 
   const getPersonGenLabel = (personId: string) => {
     const node = nodes.find((n) => n.id === personId && (n.data as { kind?: string }).kind === "person");
@@ -468,6 +511,17 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                               </svg>
                             </span>
                           )}
+                          {nameRoleSuggestions.some(
+                            (s) => s.field === "genConflict" && s.unionId === unit.unionId
+                          ) && (
+                            <HazardTriangleIcon
+                              title={
+                                nameRoleSuggestions.find(
+                                  (s) => s.field === "genConflict" && s.unionId === unit.unionId
+                                )?.reason ?? "Parent and child share the same generation"
+                              }
+                            />
+                          )}
                           {styleLabel && (
                             <span className="text-[10px] text-dark-muted px-1.5 py-0.5 rounded bg-dark-accent/40 flex-shrink-0">
                               {styleLabel}
@@ -499,9 +553,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                                   autoFocus
                                   className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
-                                {getPersonGenLabel(leftId) && (
-                                  <span className="text-dark-muted text-[10px] flex-shrink-0">{getPersonGenLabel(leftId)}</span>
-                                )}
+                                <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                               </div>
                             ) : (
                               <button
@@ -517,11 +569,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
                                 <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{leftName}</span>
-                                {getPersonGenLabel(leftId) && (
-                                  <span className="text-dark-muted text-[10px] flex-shrink-0">
-                                    {getPersonGenLabel(leftId)}
-                                  </span>
-                                )}
+                                <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                               </button>
                             )}
                             {editingPersonId === rightId ? (
@@ -544,9 +592,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                                   autoFocus
                                   className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
-                                {getPersonGenLabel(rightId) && (
-                                  <span className="text-dark-muted text-[10px] flex-shrink-0">{getPersonGenLabel(rightId)}</span>
-                                )}
+                                <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                               </div>
                             ) : (
                               <button
@@ -562,11 +608,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
                                 <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{rightName}</span>
-                                {getPersonGenLabel(rightId) && (
-                                  <span className="text-dark-muted text-[10px] flex-shrink-0">
-                                    {getPersonGenLabel(rightId)}
-                                  </span>
-                                )}
+                                <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                               </button>
                             )}
                             {unit.children.length > 0 && (
@@ -598,9 +640,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                                             autoFocus
                                             className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                                           />
-                                          {getPersonGenLabel(childId) && (
-                                            <span className="text-dark-muted text-[10px] flex-shrink-0">{getPersonGenLabel(childId)}</span>
-                                          )}
+                                          <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                         </div>
                                       ) : (
                                         <button
@@ -616,11 +656,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                                         >
                                           <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
                                           <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{name}</span>
-                                          {getPersonGenLabel(childId) && (
-                                            <span className="text-dark-muted text-[10px] flex-shrink-0">
-                                              {getPersonGenLabel(childId)}
-                                            </span>
-                                          )}
+                                          <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                         </button>
                                       )}
                                     </div>
@@ -667,11 +703,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                               autoFocus
                               className="flex-1 min-w-0 px-2 py-1 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
-                            {getPersonGenLabel(node.id) && (
-                              <span className="text-dark-muted text-[10px] px-2 py-0.5 rounded-full bg-dark-accent/50 border border-dark-accent/50 flex-shrink-0">
-                                {getPersonGenLabel(node.id)}
-                              </span>
-                            )}
+                            <PersonGenBadge personId={node.id} nodes={nodes} getPersonGenLabel={getPersonGenLabel} pill />
                           </div>
                         ) : (
                           <button
@@ -687,11 +719,7 @@ export default function FamilyTreeLeftSidebar({ onSelectNode }: FamilyTreeLeftSi
                           >
                             <div className="w-6 h-6 rounded-full bg-dark-accent flex-shrink-0" />
                             <span className="text-dark-text text-sm flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
-                            {getPersonGenLabel(node.id) && (
-                              <span className="text-dark-muted text-[10px] px-2 py-0.5 rounded-full bg-dark-accent/50 border border-dark-accent/50 flex-shrink-0">
-                                {getPersonGenLabel(node.id)}
-                              </span>
-                            )}
+                            <PersonGenBadge personId={node.id} nodes={nodes} getPersonGenLabel={getPersonGenLabel} pill />
                           </button>
                         )}
                       </div>

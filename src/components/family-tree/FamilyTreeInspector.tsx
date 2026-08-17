@@ -704,7 +704,7 @@ export default function FamilyTreeInspector() {
     genLabelMode,
     updateNodeGenAnchor,
     nameRoleSuggestions,
-    setReviewNamesModalOpen,
+    setReviewNodesModalOpen,
   } = useFamilyTreeStore();
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
   const families = useFamilyTreeStore((s) => s.families);
@@ -935,7 +935,7 @@ export default function FamilyTreeInspector() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setReviewNamesModalOpen(true)}
+                      onClick={() => setReviewNodesModalOpen(true)}
                       className="text-xs px-2 py-1 rounded border border-amber-500/50 hover:bg-amber-500/20 text-amber-600"
                     >
                       Review suggestions
