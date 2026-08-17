@@ -38,6 +38,7 @@ export default function FamilyTreeScreen() {
 
   const loadTree = useFamilyTreeStore((s) => s.loadTree);
   const marqueeToolActive = useFamilyTreeStore((s) => s.marqueeToolActive);
+  const styleEditorOpenUnionId = useFamilyTreeStore((s) => s.styleEditorOpenUnionId);
   const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
   const inspectorFamilyId = useFamilyTreeStore((s) => s.inspectorFamilyId);
   const setInspectorFamilyId = useFamilyTreeStore((s) => s.setInspectorFamilyId);
@@ -324,8 +325,16 @@ export default function FamilyTreeScreen() {
           )}
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <FamilyTreeCanvas
-              panOnDrag={!isResizingEntities && (!marqueeToolActive || isSpacePanning)}
-              nodesDraggable={!isResizingEntities && (!marqueeToolActive || isSpacePanning)}
+              panOnDrag={
+                !isResizingEntities &&
+                !styleEditorOpenUnionId &&
+                (!marqueeToolActive || isSpacePanning)
+              }
+              nodesDraggable={
+                !isResizingEntities &&
+                !styleEditorOpenUnionId &&
+                (!marqueeToolActive || isSpacePanning)
+              }
               marqueeToolActive={marqueeToolActive}
               isSpacePanning={isSpacePanning}
               onNodeSelectForEdit={() => setInspectorOpen(true)}

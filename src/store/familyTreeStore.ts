@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Node, Edge } from "reactflow";
 import { getStorageDriver, type PersistedFamilyRecord } from "../storage/StorageDriver";
+import { parseFamilyTreeScript } from "./familyTreeScript";
 
 export type { PersistedFamilyRecord };
 
@@ -299,7 +300,6 @@ export interface FamilyTreeSavedState {
     nodeInfoCenter?: boolean;
     nodeInfoSize?: boolean;
     nodeInfoSpacing?: boolean;
-    scriptPanelLayout?: "split" | "codeOnly" | "viewOnly";
     showGenerationAnchors?: boolean;
     showGenInheritIndicator?: boolean;
     genAnchorBandOpacity?: number;
@@ -1769,8 +1769,8 @@ interface FamilyTreeStore {
   singleChildAlignment: "left" | "center" | "right";
   childrenRowAlignment3Plus: "left" | "center" | "right";
   persistUnionSelectionOnChildCreate: boolean;
-  scriptPanelLayout: "split" | "codeOnly" | "viewOnly";
   scriptCompactDeclarations: boolean;
+  styleEditorOpenUnionId: string | null;
   showGenerationAnchors: boolean;
   showGenInheritIndicator: boolean;
   /** Opacity (0-100) of the generation anchor band tint on the canvas. */
@@ -1822,7 +1822,7 @@ interface FamilyTreeStore {
   setNodeInfoSize: (v: boolean) => void;
   setNodeInfoSpacing: (v: boolean) => void;
   setPersistUnionSelectionOnChildCreate: (v: boolean) => void;
-  setScriptPanelLayout: (v: "split" | "codeOnly" | "viewOnly") => void;
+  setStyleEditorOpenUnionId: (id: string | null) => void;
   setScriptCompactDeclarations: (v: boolean) => void;
   setShowGenerationAnchors: (v: boolean) => void;
   setShowGenInheritIndicator: (v: boolean) => void;
@@ -1912,6 +1912,7 @@ interface FamilyTreeStore {
   resolveBloodlineWarning: (choice: "deleteDescendants" | "keep") => void;
   loadTree: (projectId: string) => Promise<{ hadData: boolean }>;
   saveTree: () => Promise<boolean>;
+  applyFamilyTreeScriptEdits: (content: string) => { ok: boolean; errors: string[] };
   flushSaveAndSave: () => Promise<boolean>;
   clearTree: (projectId?: string) => void;
   removeNodes: (nodeIds: string[]) => void;
@@ -1948,7 +1949,6 @@ let prevNodeInfoSpacing: boolean | null = null;
 let prevSingleChildAlignment: "left" | "center" | "right" | null = null;
 let prevChildrenRowAlignment3Plus: "left" | "center" | "right" | null = null;
 let prevPersistUnionSelectionOnChildCreate: boolean | null = null;
-let prevScriptPanelLayout: "split" | "codeOnly" | "viewOnly" | null = null;
 let prevShowGenerationAnchors: boolean | null = null;
 let prevShowGenInheritIndicator: boolean | null = null;
 let prevGenAnchorBandOpacity: number | null = null;
@@ -2846,8 +2846,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   singleChildAlignment: "left",
   childrenRowAlignment3Plus: "center",
   persistUnionSelectionOnChildCreate: true,
-  scriptPanelLayout: "split",
   scriptCompactDeclarations: false,
+  styleEditorOpenUnionId: null,
   showGenerationAnchors: true,
   showGenInheritIndicator: true,
   genAnchorBandOpacity: 6,
@@ -3055,8 +3055,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     }),
   setPersistUnionSelectionOnChildCreate: (v) =>
     set({ persistUnionSelectionOnChildCreate: v, hasUnsavedChanges: true, lastSaveError: null }),
-  setScriptPanelLayout: (v) =>
-    set({ scriptPanelLayout: v, hasUnsavedChanges: true, lastSaveError: null }),
+  setStyleEditorOpenUnionId: (id) => set({ styleEditorOpenUnionId: id }),
   setScriptCompactDeclarations: (v) => set({ scriptCompactDeclarations: v }),
   setShowGenerationAnchors: (v) =>
     set({ showGenerationAnchors: v, hasUnsavedChanges: true, lastSaveError: null }),
@@ -3624,7 +3623,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     );
     if (!unionNode) return null;
     const unionData = unionNode.data as UnionNodeData;
-    if (unionData.unionType !== "backward") return null;
     const partnerIds = unionData.partnerIds ?? [null, null];
     const filled = partnerIds.filter((id): id is string => id != null).length;
     if (filled >= 2) return null;
@@ -3714,15 +3712,17 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     );
 
     if (mode === "forward") {
-      if (unionData.unionType !== "backward") return "Only backward unions can add parents.";
       const filled = partnerIds.filter((id): id is string => id != null).length;
       if (filled >= 2) return "Union already has 2 parents.";
       if (partnerEdgeExists) return "Person is already a parent of this union.";
       const idx = partnerIds[0] == null ? 0 : 1;
+      const role: ParentRole = idx === 0 ? "father" : "mother";
       const newPartnerIds: [string | null, string | null] = [...partnerIds];
       newPartnerIds[idx] = personId;
       const leftId = newPartnerIds[0];
       const rightId = newPartnerIds[1];
+      const newLeftPartnerRole = idx === 0 ? role : unionData.leftPartnerRole;
+      const newRightPartnerRole = idx === 1 ? role : unionData.rightPartnerRole;
       const partnerEdge: Edge = {
         id: `e-${personId}-${unionId}`,
         source: personId,
@@ -3741,6 +3741,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
                   partnerIds: newPartnerIds,
                   leftPartnerId: leftId ?? undefined,
                   rightPartnerId: rightId ?? undefined,
+                  leftPartnerRole: newLeftPartnerRole,
+                  rightPartnerRole: newRightPartnerRole,
                 },
               }
             : n
@@ -4211,10 +4213,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           ? payload.ui.childrenRowAlignment3Plus
           : "center"),
       persistUnionSelectionOnChildCreate: payload?.ui?.persistUnionSelectionOnChildCreate ?? true,
-      scriptPanelLayout:
-        (payload?.ui?.scriptPanelLayout === "codeOnly" || payload?.ui?.scriptPanelLayout === "viewOnly"
-          ? payload.ui.scriptPanelLayout
-          : "split"),
       showGenerationAnchors: payload?.ui?.showGenerationAnchors ?? true,
       showGenInheritIndicator: payload?.ui?.showGenInheritIndicator ?? true,
       genAnchorBandOpacity: payload?.ui?.genAnchorBandOpacity ?? 6,
@@ -4243,6 +4241,36 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     get().runNameRoleAnalysis();
     get().recomputeFamilies();
     return { hadData };
+  },
+
+  applyFamilyTreeScriptEdits: (content) => {
+    const s = get();
+    const parsed = parseFamilyTreeScript(
+      content,
+      s.nodes,
+      s.edges,
+      s.connectionStyles,
+      s.generationAnchors
+    );
+    if (parsed.errors.length > 0) {
+      return { ok: false, errors: parsed.errors };
+    }
+
+    const nodeIds = new Set(parsed.nodes.map((n) => n.id));
+    const prunedSelection = s.selectedNodeIds.filter((id) => nodeIds.has(id));
+
+    set({
+      nodes: parsed.nodes,
+      edges: parsed.edges,
+      connectionStyles: parsed.connectionStyles,
+      selectedNodeIds: prunedSelection,
+      primarySelectedNodeId: prunedSelection[0] ?? null,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    get().runNameRoleAnalysis();
+    get().recomputeFamilies();
+    return { ok: true, errors: [] };
   },
 
   saveTree: async () => {
@@ -4276,7 +4304,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           singleChildAlignment: s.singleChildAlignment,
           childrenRowAlignment3Plus: s.childrenRowAlignment3Plus,
           persistUnionSelectionOnChildCreate: s.persistUnionSelectionOnChildCreate,
-          scriptPanelLayout: s.scriptPanelLayout,
           defaultUnionType: s.defaultUnionType,
         },
       };
@@ -4383,7 +4410,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           singleChildAlignment: "left",
           childrenRowAlignment3Plus: "center",
           persistUnionSelectionOnChildCreate: true,
-          scriptPanelLayout: "split",
         },
       });
       driver.updateProjectMeta(pid, { updatedAt: Date.now() });
@@ -4403,7 +4429,6 @@ useFamilyTreeStore.subscribe((state) => {
     state.singleChildAlignment !== prevSingleChildAlignment ||
     state.childrenRowAlignment3Plus !== prevChildrenRowAlignment3Plus ||
     state.persistUnionSelectionOnChildCreate !== prevPersistUnionSelectionOnChildCreate ||
-    state.scriptPanelLayout !== prevScriptPanelLayout ||
     state.showGenerationAnchors !== prevShowGenerationAnchors ||
     state.showGenInheritIndicator !== prevShowGenInheritIndicator ||
     state.genAnchorBandOpacity !== prevGenAnchorBandOpacity ||
@@ -4422,7 +4447,6 @@ useFamilyTreeStore.subscribe((state) => {
   prevSingleChildAlignment = state.singleChildAlignment;
   prevChildrenRowAlignment3Plus = state.childrenRowAlignment3Plus;
   prevPersistUnionSelectionOnChildCreate = state.persistUnionSelectionOnChildCreate;
-  prevScriptPanelLayout = state.scriptPanelLayout;
   prevShowGenerationAnchors = state.showGenerationAnchors;
   prevShowGenInheritIndicator = state.showGenInheritIndicator;
   prevGenAnchorBandOpacity = state.genAnchorBandOpacity;

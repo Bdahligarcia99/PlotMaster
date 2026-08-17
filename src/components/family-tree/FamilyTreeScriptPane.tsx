@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
-import { useFamilyTreeStore } from "../../store/familyTreeStore";
-import { generateFamilyTreeScript, getFamilyMemberNodeIds } from "../../store/familyTreeStore";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BeatDocumentEditorView, {
+  type BeatDocumentEditorHandle,
+} from "../timeline/beatEditor/BeatDocumentEditorView";
+import { useFamilyTreeStore, generateFamilyTreeScript } from "../../store/familyTreeStore";
 
 /** Escape string for use in RegExp. */
 function escapeRegex(s: string): string {
@@ -9,72 +11,110 @@ function escapeRegex(s: string): string {
 
 /** True if line references the given node by its unique ID. */
 function lineReferencesNode(line: string, nodeId: string): boolean {
-  // Match ID as whole token (avoid "_fz94" matching inside "_fz94vsg4l")
   const idEscaped = escapeRegex(nodeId);
   const idRe = new RegExp(`(?:^|[^a-zA-Z0-9_])${idEscaped}(?:$|[^a-zA-Z0-9_])`);
   return idRe.test(line);
 }
 
+function computeHighlightLines(content: string, nodeIds: Set<string>): number[] {
+  if (nodeIds.size === 0) return [];
+  const lines = content.split("\n");
+  const result: number[] = [];
+  let insideBlock = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+    if (insideBlock) {
+      result.push(i);
+      if (trimmed === "}" || trimmed === "},") insideBlock = false;
+      continue;
+    }
+    const matches = [...nodeIds].some((id) => lineReferencesNode(line, id));
+    if (matches) {
+      result.push(i);
+      if (trimmed.endsWith("{")) insideBlock = true;
+    }
+  }
+  return result;
+}
+
 export default function FamilyTreeScriptPane() {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);
-  const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
-  const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
-  const families = useFamilyTreeStore((s) => s.families);
-  const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
+  const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
-  const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
-  const nodeInfoTopLeft = useFamilyTreeStore((s) => s.nodeInfoTopLeft);
-  const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
-  const nodeInfoSize = useFamilyTreeStore((s) => s.nodeInfoSize);
-  const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
-  const scriptPanelLayout = useFamilyTreeStore((s) => s.scriptPanelLayout);
-  const setScriptPanelLayout = useFamilyTreeStore((s) => s.setScriptPanelLayout);
+  const applyFamilyTreeScriptEdits = useFamilyTreeStore((s) => s.applyFamilyTreeScriptEdits);
+
+  const [draft, setDraft] = useState<{ content: string; dirty: boolean } | null>(null);
+  const [commitError, setCommitError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [compactDeclarations, setCompactDeclarations] = useState(false);
+  const editorRef = useRef<BeatDocumentEditorHandle | null>(null);
+  const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { scriptNodes, scriptEdges } = useMemo(() => {
-    if (!isolationModeActive || activeFamilyTabId == null) {
-      return { scriptNodes: nodes, scriptEdges: edges };
-    }
-    const family = families.find((f) => f.id === activeFamilyTabId);
-    if (!family) return { scriptNodes: nodes, scriptEdges: edges };
-    const memberIds = new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
-    return {
-      scriptNodes: nodes.filter((n) => memberIds.has(n.id)),
-      scriptEdges: edges.filter((e) => memberIds.has(e.source) && memberIds.has(e.target)),
-    };
-  }, [nodes, edges, isolationModeActive, activeFamilyTabId, families]);
-
-  const script = useMemo(
+  const generatedScript = useMemo(
     () =>
-      generateFamilyTreeScript(scriptNodes, scriptEdges, {
-        compactDeclarations,
-        showNodeInfo: showNodeInfoEnabled,
-        nodeInfoTopLeft,
-        nodeInfoCenter,
-        nodeInfoSize,
-        nodeSizesById,
+      generateFamilyTreeScript(nodes, edges, {
+        compactDeclarations: false,
+        showNodeInfo: false,
         generationAnchors,
         genLabelMode,
         connectionStyles,
       }),
-    [scriptNodes, scriptEdges, compactDeclarations, showNodeInfoEnabled, nodeInfoTopLeft, nodeInfoCenter, nodeInfoSize, nodeSizesById, generationAnchors, genLabelMode, connectionStyles]
+    [nodes, edges, generationAnchors, genLabelMode, connectionStyles]
   );
 
-  const scriptLines = useMemo(() => script.split("\n"), [script]);
+  const editorContent = draft?.dirty ? draft.content : generatedScript;
 
-  const selectedNodeId = useMemo(() => {
-    if (!primarySelectedNodeId) return null;
-    const node = nodes.find((n) => n.id === primarySelectedNodeId);
-    return node ? node.id : null;
-  }, [primarySelectedNodeId, nodes]);
+  const commitDraft = useCallback((): { ok: boolean } => {
+    if (!draft?.dirty) {
+      setCommitError(null);
+      return { ok: true };
+    }
+    const result = applyFamilyTreeScriptEdits(draft.content);
+    if (!result.ok) {
+      setCommitError(result.errors.join("; "));
+      return { ok: false };
+    }
+    setDraft(null);
+    setCommitError(null);
+    return { ok: true };
+  }, [draft, applyFamilyTreeScriptEdits]);
+
+  const commitDraftRef = useRef(commitDraft);
+  commitDraftRef.current = commitDraft;
+
+  useEffect(() => {
+    if (!draft?.dirty) return;
+    if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = setTimeout(() => {
+      commitDraftRef.current();
+    }, 800);
+    return () => {
+      if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
+    };
+  }, [draft]);
+
+  useEffect(() => {
+    return () => {
+      if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
+      commitDraftRef.current();
+    };
+  }, []);
+
+  const highlightNodeIds = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+
+  useEffect(() => {
+    const handle = editorRef.current;
+    if (!handle) return;
+    const lines = computeHighlightLines(editorContent, highlightNodeIds);
+    handle.setHighlightLines(lines);
+  }, [highlightNodeIds, editorContent]);
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(script);
+      await navigator.clipboard.writeText(editorContent);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -82,107 +122,39 @@ export default function FamilyTreeScriptPane() {
     }
   };
 
-  const showCode = scriptPanelLayout === "split" || scriptPanelLayout === "codeOnly";
-  const showView = scriptPanelLayout === "split" || scriptPanelLayout === "viewOnly";
-
-  const layoutBtn = (mode: "split" | "codeOnly" | "viewOnly", label: string) => (
-    <button
-      type="button"
-      onClick={() => setScriptPanelLayout(mode)}
-      className={`px-2 py-1 text-xs rounded border transition-colors ${
-        scriptPanelLayout === mode
-          ? "bg-dark-accent border-dark-accent text-dark-text"
-          : "border-dark-accent/50 text-dark-muted hover:text-dark-text hover:border-dark-accent"
-      }`}
-    >
-      {label}
-    </button>
-  );
-
   return (
     <div className="h-full flex flex-col border-t border-dark-accent/50 bg-dark-surface">
-      {/* Script panel header with layout controls */}
       <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 border-b border-dark-accent/50 shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Script</span>
           <span className="text-dark-accent/50">|</span>
-          <span className="text-xs text-dark-muted">Layout:</span>
-          {layoutBtn("split", "Split")}
-          {layoutBtn("codeOnly", "Code")}
-          {layoutBtn("viewOnly", "View")}
+          <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Code</span>
+          {draft?.dirty ? (
+            <span className="text-xs text-amber-400/90">· Unsaved</span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50"
+          >
+            {copied ? "Copied!" : "Copy"}
+          </button>
         </div>
       </div>
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* Code pane */}
-        <div
-          className={`flex flex-col min-w-0 ${
-            scriptPanelLayout === "split" ? "border-r border-dark-accent/50" : ""
-          } ${showCode ? "flex-1" : "hidden"}`}
-        >
-          <div className="flex items-center px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
-            <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Code</span>
-          </div>
-          <div className="flex-1 overflow-hidden p-3">
-            <textarea
-              readOnly
-              value="(Code editor coming soon)"
-              className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono resize-none focus:outline-none"
-            />
-          </div>
+      {commitError && (
+        <div className="px-3 py-2 text-xs text-red-400 border-b border-red-500/30 bg-red-500/10 shrink-0">
+          {commitError}
         </div>
-
-        {/* Vertical divider (split only) */}
-        {scriptPanelLayout === "split" && (
-          <div className="w-px shrink-0 bg-dark-accent/50" aria-hidden />
-        )}
-
-        {/* View pane */}
-        <div
-          className={`flex flex-col min-w-0 ${showView ? "flex-1" : "hidden"}`}
-        >
-          <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
-            <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">View</span>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs text-dark-muted cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={compactDeclarations}
-                  onChange={(e) => setCompactDeclarations(e.target.checked)}
-                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
-                />
-                <span>Compact declarations</span>
-              </label>
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent transition-colors"
-              >
-                {copied ? "Copied!" : "Copy"}
-              </button>
-            </div>
-          </div>
-          <div className="flex-1 min-h-0 overflow-auto p-3">
-            <div
-              className="block w-full min-h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono"
-              aria-label="Script view"
-              role="document"
-            >
-              {scriptLines.map((line, i) => {
-                const highlight =
-                  selectedNodeId &&
-                  lineReferencesNode(line, selectedNodeId);
-                return (
-                  <div
-                    key={i}
-                    className={highlight ? "bg-blue-500/15 -mx-3 px-3 py-0.5" : ""}
-                  >
-                    {line || "\u00a0"}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+      )}
+      <div className="flex-1 min-h-0 overflow-hidden px-3 pb-3 pt-2 flex flex-col">
+        <BeatDocumentEditorView
+          ref={editorRef}
+          content={editorContent}
+          onChange={(text) => setDraft({ content: text, dirty: true })}
+          separatorsCommitted={true}
+        />
       </div>
     </div>
   );

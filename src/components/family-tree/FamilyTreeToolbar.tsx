@@ -302,8 +302,7 @@ export default function FamilyTreeToolbar() {
     CHILD_DY;
   const canAddParent =
     selectedUnion &&
-    selectedUnionData?.unionType === "backward" &&
-    (selectedUnionData.partnerIds?.filter((id): id is string => id != null).length ?? 0) < 2;
+    (selectedUnionData?.partnerIds?.filter((id): id is string => id != null).length ?? 0) < 2;
 
   function getCreateUnionTooltip(): string {
     if (canLinkPerson && linkPerson) {
@@ -419,7 +418,7 @@ export default function FamilyTreeToolbar() {
           size="sm"
           onClick={() => (canAddParent ? addParent(selectedUnion!.id) : addPerson())}
           className="rounded-none border-0 rounded-l-lg"
-          title={canAddParent ? "Add parent to backward union" : undefined}
+          title={canAddParent ? "Add parent to selected union" : undefined}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

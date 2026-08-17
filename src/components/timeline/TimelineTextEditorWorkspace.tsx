@@ -214,8 +214,11 @@ export default function TimelineTextEditorWorkspace({
   };
 
   const removePaneById = (paneId: string) => {
-    onPanesChange(panes.filter((p) => p.paneId !== paneId));
-    if (activePaneId === paneId) onActivePaneIdChange(null);
+    const next = panes.filter((p) => p.paneId !== paneId);
+    onPanesChange(next);
+    if (activePaneId === paneId) {
+      onActivePaneIdChange(next[0]?.paneId ?? null);
+    }
   };
 
   const handleClosePane = (paneId: string) => {
@@ -230,6 +233,12 @@ export default function TimelineTextEditorWorkspace({
 
   const handleNewFile = () => {
     const id = createUserDocument("Untitled");
+    if (activePaneId) {
+      onPanesChange(
+        panes.map((p) => (p.paneId === activePaneId ? { ...p, docId: id } : p))
+      );
+      return;
+    }
     const paneId = crypto.randomUUID();
     onPanesChange([...panes, { paneId, docId: id }]);
     onActivePaneIdChange(paneId);

@@ -303,15 +303,20 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
             onChange={(stroke) => updateDraft({ stroke })}
             className="!mb-2"
           />
-          <NumberSlider
-            label="Line weight"
-            value={draft.strokeWidth}
-            min={0.5}
-            max={12}
-            step={0.5}
-            onChange={(strokeWidth) => updateDraft({ strokeWidth })}
-            className="!mb-2"
-          />
+          <div
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <NumberSlider
+              label="Line weight"
+              value={draft.strokeWidth}
+              min={0.5}
+              max={12}
+              step={0.5}
+              onChange={(strokeWidth) => updateDraft({ strokeWidth })}
+              className="!mb-2"
+            />
+          </div>
           <div className="mb-2">
             <div className="text-dark-muted text-sm mb-2">Dash pattern</div>
             <div className="flex flex-wrap gap-1 mb-2">

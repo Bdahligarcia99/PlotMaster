@@ -3,9 +3,6 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import type { PersonNodeData } from "../../store/familyTreeStore";
 import { useFamilyTreeStore, DEFAULT_PERSON_W, DEFAULT_PERSON_H, getPersonDisplayName } from "../../store/familyTreeStore";
 
-const tooltipClass =
-  "absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-2 py-1.5 text-xs text-dark-muted bg-dark-surface border border-dark-accent rounded-lg shadow-lg pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-50 whitespace-nowrap";
-
 function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData>) {
   const nodeData = data;
   const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
@@ -17,6 +14,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const requestRemoveConnection = useFamilyTreeStore((s) => s.requestRemoveConnection);
+  const linkPersonToUnion = useFamilyTreeStore((s) => s.linkPersonToUnion);
   const isAnchor = anchorNodeId === id;
   const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
   const nodes = useFamilyTreeStore((s) => s.nodes);
@@ -101,15 +99,76 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
     partnerUnionIds.length === 1 ||
     (partnerUnionIds.length >= 2 && selectedPartnerUnionId != null);
 
-  const unlinkButtonClass = (enabled: boolean) =>
+  const selectedUnionNodes = nodes.filter(
+    (n) =>
+      selectedNodeIds.includes(n.id) && (n.data as { kind?: string }).kind === "union"
+  );
+  const selectedPersonNodes = nodes.filter(
+    (n) =>
+      selectedNodeIds.includes(n.id) && (n.data as { kind?: string }).kind === "person"
+  );
+  const connectUnionId =
+    selectedUnionNodes.length === 1 ? selectedUnionNodes[0]!.id : null;
+
+  const hasChildEdgeToUnion = (personId: string, unionId: string) =>
+    edges.some(
+      (e) =>
+        (e.data as { type?: string })?.type === "child" &&
+        e.source === unionId &&
+        e.target === personId
+    );
+
+  const hasPartnerEdgeToUnion = (personId: string, unionId: string) =>
+    edges.some(
+      (e) =>
+        (e.data as { type?: string })?.type === "partner" &&
+        e.source === personId &&
+        e.target === unionId
+    );
+
+  const topConnectMode =
+    connectUnionId != null &&
+    selectedNodeIds.includes(id) &&
+    !hasChildEdgeToUnion(id, connectUnionId);
+
+  const bottomConnectMode =
+    connectUnionId != null &&
+    selectedNodeIds.includes(id) &&
+    selectedPersonNodes.length <= 2 &&
+    !hasPartnerEdgeToUnion(id, connectUnionId);
+
+  const connectionButtonClass = (mode: "connect" | "unlink" | "disabled") =>
     `absolute left-1/2 -translate-x-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-dark-surface border transition-opacity z-20 ${
-      enabled
-        ? "border-dark-accent text-dark-muted hover:text-dark-text hover:border-red-500 opacity-0 group-hover:opacity-100 cursor-pointer"
-        : "border-dark-accent/40 text-dark-muted/40 opacity-0 group-hover:opacity-40 cursor-not-allowed"
+      mode === "connect"
+        ? "border-dark-accent text-dark-muted hover:text-blue-400 hover:border-blue-500 opacity-0 group-hover:opacity-100 cursor-pointer"
+        : mode === "unlink"
+          ? "border-dark-accent text-dark-muted hover:text-dark-text hover:border-red-500 opacity-0 group-hover:opacity-100 cursor-pointer"
+          : "border-dark-accent/40 text-dark-muted/40 opacity-0 group-hover:opacity-40 cursor-not-allowed"
     }`;
 
-  const handleUnlinkParent = (e: React.MouseEvent) => {
+  const connectSelectedPersons = (
+    mode: "forward" | "backward",
+    unionId: string
+  ) => {
+    const errors: string[] = [];
+    for (const person of selectedPersonNodes) {
+      const alreadyConnected =
+        mode === "backward"
+          ? hasChildEdgeToUnion(person.id, unionId)
+          : hasPartnerEdgeToUnion(person.id, unionId);
+      if (alreadyConnected) continue;
+      const err = linkPersonToUnion(unionId, person.id, mode);
+      if (err) errors.push(err);
+    }
+    if (errors.length > 0) alert(errors.join("\n"));
+  };
+
+  const handleTopButton = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (topConnectMode && connectUnionId) {
+      connectSelectedPersons("backward", connectUnionId);
+      return;
+    }
     if (!parentUnionId) return;
     const err = requestRemoveConnection({
       kind: "childEdge",
@@ -119,8 +178,12 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
     if (err) alert(err);
   };
 
-  const handleUnlinkPartner = (e: React.MouseEvent) => {
+  const handleBottomButton = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (bottomConnectMode && connectUnionId) {
+      connectSelectedPersons("forward", connectUnionId);
+      return;
+    }
     if (!bottomUnlinkEnabled || !selectedPartnerUnionId) return;
     const err = requestRemoveConnection({
       kind: "partnerEdge",
@@ -135,41 +198,55 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
       <button
         type="button"
         title={
-          parentUnionId
-            ? "Unlink from parent union"
-            : "No parent union to unlink"
+          topConnectMode
+            ? "Link selected person(s) as child(ren) of selected union"
+            : parentUnionId
+              ? "Unlink from parent union"
+              : "No parent union to unlink"
         }
-        disabled={!parentUnionId}
-        onClick={handleUnlinkParent}
+        disabled={!topConnectMode && !parentUnionId}
+        onClick={handleTopButton}
         onPointerDown={(e) => e.stopPropagation()}
-        className={`${unlinkButtonClass(!!parentUnionId)} -top-6`}
+        className={`${connectionButtonClass(
+          topConnectMode ? "connect" : parentUnionId ? "unlink" : "disabled"
+        )} -top-6`}
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
+          {topConnectMode ? (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12M6 12h12" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
+          )}
         </svg>
       </button>
       <button
         type="button"
         title={
-          partnerUnionIds.length === 0
-            ? "No partner union to unlink"
-            : partnerUnionIds.length >= 2 && !selectedPartnerUnionId
-              ? "Select a union below to unlink"
-              : "Unlink from partner union"
+          bottomConnectMode
+            ? "Link selected person(s) as parent(s) of selected union"
+            : selectedPersonNodes.length > 2
+              ? "Parent link supports at most 2 selected people"
+              : partnerUnionIds.length === 0
+                ? "No partner union to unlink"
+                : partnerUnionIds.length >= 2 && !selectedPartnerUnionId
+                  ? "Select a union below to unlink"
+                  : "Unlink from partner union"
         }
-        disabled={!bottomUnlinkEnabled}
-        onClick={handleUnlinkPartner}
+        disabled={!bottomConnectMode && !bottomUnlinkEnabled}
+        onClick={handleBottomButton}
         onPointerDown={(e) => e.stopPropagation()}
-        className={`${unlinkButtonClass(bottomUnlinkEnabled)} -bottom-6`}
+        className={`${connectionButtonClass(
+          bottomConnectMode ? "connect" : bottomUnlinkEnabled ? "unlink" : "disabled"
+        )} -bottom-6`}
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
+          {bottomConnectMode ? (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12M6 12h12" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
+          )}
         </svg>
       </button>
-      {/* Hover tooltip */}
-      <div className={tooltipClass}>
-        Click to select and edit in properties panel
-      </div>
 
       {/* Node info overlay: only when enabled */}
       {showNodeInfoEnabled && (nodeInfoTopLeft || nodeInfoCenter || nodeInfoSize) && (

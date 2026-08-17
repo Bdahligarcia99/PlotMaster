@@ -209,21 +209,24 @@ export default function TimelineScreen() {
   }, [activeFolderId]);
 
   const removePaneAndDraftForDoc = useCallback((docId: string, paneId?: string) => {
-    if (paneId) {
-      setPanes((prev) => prev.filter((p) => p.paneId !== paneId));
-      setActivePaneId((cur) => (cur === paneId ? null : cur));
-    } else {
-      setPanes((prev) => prev.filter((p) => p.docId !== docId));
+    setPanes((prev) => {
+      const next = paneId
+        ? prev.filter((p) => p.paneId !== paneId)
+        : prev.filter((p) => p.docId !== docId);
       setActivePaneId((cur) => {
-        const pane = panes.find((p) => p.paneId === cur);
-        return pane?.docId === docId ? null : cur;
+        const wasActiveRemoved = paneId
+          ? cur === paneId
+          : prev.some((p) => p.paneId === cur && p.docId === docId);
+        if (!wasActiveRemoved) return cur;
+        return next[0]?.paneId ?? null;
       });
-    }
+      return next;
+    });
     setTextDrafts((d) => {
       const { [docId]: _, ...rest } = d;
       return rest;
     });
-  }, [panes]);
+  }, []);
 
   const handleFileDeleteConfirm = useCallback(() => {
     if (!fileDeleteConfirm) return;
@@ -296,7 +299,6 @@ export default function TimelineScreen() {
       const existingPane = panes.find((p) => p.docId === docId);
 
       if (existingPane && existingPane.paneId === activePaneId) {
-        setActivePaneId(null);
         return;
       }
 
@@ -321,10 +323,16 @@ export default function TimelineScreen() {
 
   const handleNewUserFile = useCallback(() => {
     const id = createUserDocument("Untitled");
+    if (activePaneId) {
+      setPanes((prev) =>
+        prev.map((p) => (p.paneId === activePaneId ? { ...p, docId: id } : p))
+      );
+      return;
+    }
     const paneId = crypto.randomUUID();
     setPanes((prev) => [...prev, { paneId, docId: id }]);
     setActivePaneId(paneId);
-  }, [createUserDocument]);
+  }, [createUserDocument, activePaneId]);
 
   const handleDeleteUserFile = useCallback(
     (docId: string) => {
