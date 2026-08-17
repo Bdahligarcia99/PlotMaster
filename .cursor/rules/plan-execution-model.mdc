@@ -1,0 +1,15 @@
+---
+description: Default to the Composer model when executing plans
+alwaysApply: true
+---
+
+# Plan Execution Model
+
+When executing a plan (implementing a plan file, running Plan Mode output, or
+launching a Task subagent to carry out multi-step work), default to the
+**Composer** model (`composer-2.5-fast`) for that execution.
+
+- Only use a different model if the user explicitly specifies one for that
+  task (e.g. "use Claude for this" or a named model in their message).
+- This applies to plan *execution*, not necessarily to lighter conversational
+  turns (e.g. answering questions, quick lookups) unless the user says otherwise.

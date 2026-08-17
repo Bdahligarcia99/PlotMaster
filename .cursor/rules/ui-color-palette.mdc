@@ -1,0 +1,46 @@
+---
+description: Use the app's dark navy-indigo color palette for all new UI elements
+globs: **/*.tsx,**/*.css
+alwaysApply: false
+---
+
+# App Color Palette
+
+All new UI elements (components, screens, modals, panels) must be built using
+the existing dark navy-indigo palette — don't invent new colors for base
+surfaces/text unless the user explicitly asks for a new look.
+
+## Core tokens (`tailwind.config.js` → `theme.extend.colors.dark`)
+
+| Token | Hex | Use for |
+|---|---|---|
+| `dark-bg` | `#1a1a2e` | App/page background |
+| `dark-surface` | `#16213e` | Panels, cards, modal bodies |
+| `dark-accent` | `#0f3460` | Borders, dividers, subtle fills, inactive controls |
+| `dark-text` | `#e4e4e7` | Primary text |
+| `dark-muted` | `#a1a1aa` | Secondary/muted text, placeholders |
+
+Prefer Tailwind utility classes over raw hex: `bg-dark-bg`, `bg-dark-surface`,
+`border-dark-accent`, `text-dark-text`, `text-dark-muted`. Use `/NN` opacity
+modifiers (e.g. `border-dark-accent/50`, `bg-dark-accent/40`) for hover/disabled
+states, matching existing components.
+
+## Interactive accent
+
+- Primary interactive blue: `#3b82f6` (Tailwind `blue-500`), hover `#60a5fa`
+  (`blue-400`), active `#2563eb` (`blue-600`). Used for focus rings, checked
+  checkboxes/radios, active sliders, "active" nav/tab states.
+- Focus rings: `focus:outline-none focus:border-blue-500` or
+  `focus:ring-blue-500/50`.
+
+## Status colors
+
+- Success: `green-400` text on `green-500/20` background, `green-500/50` border.
+- Error/danger: `red-400` text on `red-500/15` background, `red-500/30` border.
+
+## Guidance
+
+- Match existing component patterns (e.g. `ModeSwitchNavbar`, `ChartsScriptPane`,
+  `Button`) rather than introducing one-off styling.
+- If a new UI element seems to need a color outside this palette, flag it to
+  the user instead of picking one unilaterally.
