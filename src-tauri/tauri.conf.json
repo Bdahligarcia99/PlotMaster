@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Synapse IWE",
-  "version": "2.6.0",
+  "version": "3.0.0",
   "identifier": "com.synapseiwe.app",
   "build": {
     "frontendDist": "../dist",
