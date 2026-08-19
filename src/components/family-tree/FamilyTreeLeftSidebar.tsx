@@ -55,6 +55,38 @@ function PersonGenBadge({
   return null;
 }
 
+function AnchorDot({ personId, nodes }: { personId: string; nodes: Node<PersonNodeData | UnionNodeData>[] }) {
+  const node = nodes.find((n) => n.id === personId);
+  if (!(node?.data as PersonNodeData)?.anchored) return null;
+  return (
+    <span
+      title="Anchored — stays fixed when union moves"
+      className="flex-shrink-0 w-2.5 h-2.5 rounded-full bg-amber-500/80 border border-amber-400"
+    />
+  );
+}
+
+function EntityFamilyWarnings({
+  nodeId,
+  family,
+  nodes,
+  edges,
+}: {
+  nodeId: string;
+  family: { id: string; unionIds: string[]; memberPersonIds: string[]; personIds?: string[] } | null;
+  nodes: Node<PersonNodeData | UnionNodeData>[];
+  edges: Edge[];
+}) {
+  if (!family) return null;
+  return (
+    <>
+      {getFamilyNodeWarnings(nodeId, family, nodes, edges).map((w) => (
+        <HazardTriangleIcon key={w} title={w} />
+      ))}
+    </>
+  );
+}
+
 export interface FamilyUnit {
   unionId: string;
   parents: [string, string];
@@ -944,6 +976,8 @@ export default function FamilyTreeLeftSidebar({
                                   className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
                                 <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                <AnchorDot personId={leftId} nodes={nodes} />
+                                <EntityFamilyWarnings nodeId={leftId} family={activeFamily} nodes={nodes} edges={edges} />
                               </div>
                             ) : (
                               <button
@@ -960,6 +994,8 @@ export default function FamilyTreeLeftSidebar({
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
                                 <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{leftName}</span>
                                 <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                <AnchorDot personId={leftId} nodes={nodes} />
+                                <EntityFamilyWarnings nodeId={leftId} family={activeFamily} nodes={nodes} edges={edges} />
                               </button>
                             )}
                             {editingPersonId === rightId ? (
@@ -983,6 +1019,8 @@ export default function FamilyTreeLeftSidebar({
                                   className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
                                 <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                <AnchorDot personId={rightId} nodes={nodes} />
+                                <EntityFamilyWarnings nodeId={rightId} family={activeFamily} nodes={nodes} edges={edges} />
                               </div>
                             ) : (
                               <button
@@ -999,6 +1037,8 @@ export default function FamilyTreeLeftSidebar({
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
                                 <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{rightName}</span>
                                 <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                <AnchorDot personId={rightId} nodes={nodes} />
+                                <EntityFamilyWarnings nodeId={rightId} family={activeFamily} nodes={nodes} edges={edges} />
                               </button>
                             )}
                             {unit.children.length > 0 && (
@@ -1031,6 +1071,8 @@ export default function FamilyTreeLeftSidebar({
                                             className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                                           />
                                           <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                          <AnchorDot personId={childId} nodes={nodes} />
+                                          <EntityFamilyWarnings nodeId={childId} family={activeFamily} nodes={nodes} edges={edges} />
                                         </div>
                                       ) : (
                                         <button
@@ -1047,6 +1089,8 @@ export default function FamilyTreeLeftSidebar({
                                           <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
                                           <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{name}</span>
                                           <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                          <AnchorDot personId={childId} nodes={nodes} />
+                                          <EntityFamilyWarnings nodeId={childId} family={activeFamily} nodes={nodes} edges={edges} />
                                         </button>
                                       )}
                                     </div>
