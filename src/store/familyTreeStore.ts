@@ -1,13 +1,14 @@
 import { create } from "zustand";
 import type { Node, Edge } from "reactflow";
 import { getStorageDriver, type PersistedFamilyRecord } from "../storage/StorageDriver";
-import { parseFamilyTreeScript } from "./familyTreeScript";
+import { parseFamilyTreeScript, computeBranchUnionIds } from "./familyTreeScript";
 import {
   type FamilyTreeDocumentRecord,
   combineFamilyDocumentContents,
   generateDocumentDisplayContent,
   getScopeIdsForFamily,
   getUnassignedPersonIds,
+  migrateLegacyDocumentContent,
   previewFamilyDocumentDeleteCounts,
   scanDocumentDeclaredIds,
 } from "./familyTreeDocumentHelpers";
@@ -76,6 +77,8 @@ export interface PersonNodeData {
   nicknames?: string[];
   /** Union IDs in left-to-right order for multi-union connection handles. Swapped via Swap Sides. */
   partnerUnionOrder?: string[];
+  /** True when canvas coordinates are not yet assigned (x: ? / y: ? in script). */
+  positionUnset?: boolean;
 }
 
 /** True if a name part is "filled" (non-empty and not unknown placeholder like ? or ???). */
@@ -175,12 +178,94 @@ export function formatPersonDeclarationBracket(data: PersonNodeData): string {
   return `[${a}, ${b}, ${c}]`;
 }
 
-/** Format nickname metadata: ` nickname: a, b, c`. Values with commas are quoted. */
-function formatNicknameTag(nicknames: string[] | undefined): string {
-  if (!nicknames?.length) return "";
-  const parts = nicknames.map((n) => escapeDeclarationPart(n.trim())).filter(Boolean);
-  if (parts.length === 0) return "";
-  return ` nickname: ${parts.join(", ")}`;
+
+function escapeScriptQuoted(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function formatCoordField(
+  key: "x" | "y",
+  value: number | undefined,
+  unset: boolean | undefined,
+  indent: string
+): string {
+  if (unset) return `${indent}${key}: ?`;
+  if (value == null) return "";
+  return `${indent}${key}: ${Math.round(value)}`;
+}
+
+function getDefaultMemberOffset(
+  memberType: "father" | "mother" | "parent" | "child",
+  childIndex: number
+): { dx: number; dy: number } {
+  if (memberType === "father" || memberType === "parent") {
+    return { dx: -Math.round(PARTNER_DX / 2), dy: -UNION_DY };
+  }
+  if (memberType === "mother") {
+    return { dx: Math.round(PARTNER_DX / 2), dy: -UNION_DY };
+  }
+  return { dx: childIndex * DEFAULT_CHILD_ROW_SPACING, dy: CHILD_DY };
+}
+
+function formatPersonBlockLines(
+  n: Node<PersonNodeData>,
+  opts: {
+    indent: string;
+    compact: boolean;
+    genIndex: number | null;
+    showNodeInfo: boolean;
+    nodeInfoTopLeft: boolean;
+    nodeInfoCenter: boolean;
+    nodeInfoSize: boolean;
+    getSize: (id: string, isUnion: boolean) => { w: number; h: number };
+  }
+): string[] {
+  const { first, middle, last } = getPersonNameParts(n.data);
+  const nickStr = (n.data.nicknames ?? []).map((x) => escapeScriptQuoted(x.trim())).join(", ");
+  const unset = n.data.positionUnset;
+  const { indent, compact } = opts;
+
+  if (compact) {
+    const parts = [
+      `first: "${escapeScriptQuoted(first)}"`,
+      `middle: "${escapeScriptQuoted(middle)}"`,
+      `last: "${escapeScriptQuoted(last)}"`,
+      `nicknames: "${nickStr}"`,
+      `notes: "${escapeScriptQuoted(n.data.notes ?? "")}"`,
+    ];
+    if (opts.genIndex !== null) parts.push(`gen: ${opts.genIndex}`);
+    const xy = unset
+      ? "x: ? y: ?"
+      : `x: ${Math.round(n.position.x)} y: ${Math.round(n.position.y)}`;
+    parts.push(xy);
+    return [`Person ${n.id} { ${parts.join(" ")} }`];
+  }
+
+  const lines = [`Person ${n.id} {`];
+  lines.push(`${indent}first: "${escapeScriptQuoted(first)}"`);
+  lines.push(`${indent}middle: "${escapeScriptQuoted(middle)}"`);
+  lines.push(`${indent}last: "${escapeScriptQuoted(last)}"`);
+  lines.push(`${indent}nicknames: "${nickStr}"`);
+  lines.push(`${indent}notes: "${escapeScriptQuoted(n.data.notes ?? "")}"`);
+  if (opts.genIndex !== null) lines.push(`${indent}gen: ${opts.genIndex}`);
+  const xLine = formatCoordField("x", n.position.x, unset, indent);
+  const yLine = formatCoordField("y", n.position.y, unset, indent);
+  if (xLine) lines.push(xLine);
+  if (yLine) lines.push(yLine);
+
+  if (opts.showNodeInfo) {
+    const { w, h } = opts.getSize(n.id, false);
+    if (opts.nodeInfoCenter) {
+      lines.push(`${indent}cx: ${Math.round(n.position.x + w / 2)}`);
+      lines.push(`${indent}cy: ${Math.round(n.position.y + h / 2)}`);
+    }
+    if (opts.nodeInfoSize) {
+      lines.push(`${indent}w: ${w}`);
+      lines.push(`${indent}h: ${h}`);
+    }
+  }
+  lines.push("}");
+  return lines;
 }
 
 /** "forward" = parents above, children below (current). "backward" = children first, add parents above. */
@@ -310,6 +395,8 @@ export interface UnionNodeData {
   arrangeSpacing?: UnionArrangeSpacing;
   /** Creation timestamp for stable family auto-numbering order. */
   createdAt?: number;
+  /** True when canvas coordinates are not yet assigned (x: ? / y: ? in script). */
+  positionUnset?: boolean;
 }
 
 export type UnionArrangeSpacing = {
@@ -709,7 +796,7 @@ export function hasParents(edges: Edge[], personId: string): boolean {
 }
 
 /** Partner edges use edge.data.type === 'partner'. */
-function isPartnerEdge(edge: Edge): boolean {
+export function isPartnerEdge(edge: Edge): boolean {
   return (edge.data as { type?: string })?.type === "partner";
 }
 
@@ -1205,7 +1292,7 @@ function showFamilyConnectionNotice(
 /** Suggestion from the name/role analysis engine. Exposed for consent UI. */
 export interface NameRoleSuggestion {
   nodeId: string;
-  field: "firstName" | "role" | "unionHealth" | "genConflict";
+  field: "firstName" | "role" | "unionHealth" | "genConflict" | "unassigned";
   currentValue: string;
   proposedValue: string;
   reason: string;
@@ -1480,6 +1567,79 @@ export function analyzeGenConflictSuggestions(
   return suggestions;
 }
 
+/** Informational suggestions for nodes missing family assignment and/or canvas location. */
+export function analyzeUnassignedSuggestions(
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[],
+  families: FamilyGroup[]
+): NameRoleSuggestion[] {
+  const suggestions: NameRoleSuggestion[] = [];
+  for (const n of nodes) {
+    const reasons = getUnassignedReasons(n.id, nodes, edges, families);
+    if (reasons.length === 0) continue;
+    suggestions.push({
+      nodeId: n.id,
+      field: "unassigned",
+      currentValue: "Unassigned",
+      proposedValue: "—",
+      reason: reasons.join("; "),
+    });
+  }
+  return suggestions;
+}
+
+/** Human-readable reasons a node is considered unassigned. */
+export function getUnassignedReasons(
+  nodeId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[],
+  families: FamilyGroup[]
+): string[] {
+  const node = nodes.find((n) => n.id === nodeId);
+  if (!node) return [];
+  const reasons: string[] = [];
+
+  const inFamily = families.some((f) => {
+    const members =
+      f.memberPersonIds.length > 0
+        ? f.memberPersonIds
+        : getFamilyMemberPersonIds(f.unionIds, nodes, edges);
+    return members.includes(nodeId);
+  });
+
+  const linkedToUnion =
+    node.data.kind === "union" ||
+    edges.some(
+      (e) =>
+        (isPartnerEdge(e) && (e.source === nodeId || e.target === nodeId)) ||
+        (isChildEdge(e) && (e.source === nodeId || e.target === nodeId))
+    );
+
+  if (!inFamily && !linkedToUnion && node.data.kind === "person") {
+    reasons.push("Not assigned to a family");
+  }
+
+  const unset =
+    node.data.kind === "person"
+      ? (node.data as PersonNodeData).positionUnset
+      : (node.data as UnionNodeData).positionUnset;
+  if (unset) {
+    reasons.push("No canvas location");
+  }
+
+  return reasons;
+}
+
+/** True when node lacks family and/or canvas location (shown in Unassigned sidebar section). */
+export function isNodeUnassigned(
+  nodeId: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[],
+  families: FamilyGroup[]
+): boolean {
+  return getUnassignedReasons(nodeId, nodes, edges, families).length > 0;
+}
+
 /**
  * Generate read-only script text from current Family Tree graph.
  * One-way: canvas -> script. Deterministic, stable ordering.
@@ -1503,6 +1663,8 @@ export function generateFamilyTreeScript(
     scopeNodeIds?: Set<string>;
     /** When false, omit connection style header (default true unless scoped). */
     includeConnectionStyles?: boolean;
+    /** Branches to emit in @branches section. */
+    branches?: BranchRecord[];
   }
 ): string {
   const compactDeclarations = options?.compactDeclarations ?? false;
@@ -1512,15 +1674,14 @@ export function generateFamilyTreeScript(
   const nodeInfoSize = options?.nodeInfoSize ?? false;
   const nodeSizesById = options?.nodeSizesById ?? {};
   const generationAnchors = options?.generationAnchors ?? [];
-  const genLabelMode = options?.genLabelMode ?? "letters";
   const connectionStyles = options?.connectionStyles ?? [];
   const scopeNodeIds = options?.scopeNodeIds;
+  const branches = options?.branches ?? [];
   const includeConnectionStyles =
     options?.includeConnectionStyles ?? scopeNodeIds == null;
 
   const anchorById = new Map(generationAnchors.map((a) => [a.id, a]));
   const hasAnchors = generationAnchors.length > 0;
-  /** Anchor index (0-based) for person declarations when anchors exist. Uses genAnchorId or infers from Y. */
   const getGenIndexForPerson = (n: Node<PersonNodeData>): number | null => {
     if (!hasAnchors) return null;
     const genAnchorId = n.data.genAnchorId;
@@ -1532,26 +1693,6 @@ export function generateFamilyTreeScript(
     const centerY = n.position.y + h / 2;
     const anchor = getAnchorAtY(generationAnchors, centerY);
     return anchor ? anchor.index : null;
-  };
-  /** Gen tag for declaration metadata: ` gen: N` when anchors exist and person has/infers a generation. */
-  const getGenTagForPerson = (n: Node<PersonNodeData>): string => {
-    const idx = getGenIndexForPerson(n);
-    return idx !== null ? ` gen: ${idx}` : "";
-  };
-  const getGenSuffix = (n: Node<PersonNodeData>): string => {
-    const genAnchorId = n.data.genAnchorId;
-    if (!genAnchorId) return "";
-    const anchor = anchorById.get(genAnchorId);
-    if (!anchor) return "";
-    const label = formatGenerationAnchorLabel(anchor, genLabelMode);
-    return ` {Gen ${label}}`;
-  };
-  const getGenLabel = (personNode: Node<PersonNodeData>): string | null => {
-    const genAnchorId = personNode.data.genAnchorId;
-    if (!genAnchorId) return null;
-    const anchor = anchorById.get(genAnchorId);
-    if (!anchor) return null;
-    return formatGenerationAnchorLabel(anchor, genLabelMode);
   };
 
   const personNodes = nodes
@@ -1567,29 +1708,19 @@ export function generateFamilyTreeScript(
 
   const unionNodes = nodes
     .filter(
-      (n): n is Node<UnionNodeData> =>
+      (n): n is Node<UnionNodeData & { position: { x: number; y: number } }> =>
         n.type === "union" && (n.data as UnionNodeData).kind === "union"
     )
     .filter((n) => scopeNodeIds == null || scopeNodeIds.has(n.id))
     .sort((a, b) => {
-      const yA = a.position.y;
-      const yB = b.position.y;
-      if (yA !== yB) return yA - yB;
-      const xA = a.position.x;
-      const xB = b.position.x;
-      if (xA !== xB) return xA - xB;
+      if (a.position.y !== b.position.y) return a.position.y - b.position.y;
+      if (a.position.x !== b.position.x) return a.position.x - b.position.x;
       return a.id.localeCompare(b.id);
     });
 
   const personById = new Map(personNodes.map((n) => [n.id, n]));
-  const getName = (id: string) => {
-    const n = personById.get(id);
-    if (!n) return id;
-    const d = n.data as PersonNodeData;
-    return getPersonDisplayName(d, n.id, nodes) || id;
-  };
-
   const lines: string[] = [];
+  const indent = compactDeclarations ? "" : "  ";
 
   const getSize = (id: string, isUnion: boolean) => {
     const sz = nodeSizesById[id];
@@ -1597,27 +1728,6 @@ export function generateFamilyTreeScript(
     return isUnion
       ? { w: DEFAULT_UNION_W, h: DEFAULT_UNION_H }
       : { w: DEFAULT_PERSON_W, h: DEFAULT_PERSON_H };
-  };
-
-  const getInlineInfo = (
-    node: { position: { x: number; y: number } },
-    id: string,
-    isUnion: boolean
-  ): string => {
-    const { w, h } = getSize(id, isUnion);
-    const cx = Math.round(node.position.x + w / 2);
-    const cy = Math.round(node.position.y + h / 2);
-    const parts: string[] = [];
-    if (nodeInfoTopLeft) {
-      parts.push(`x:${Math.round(node.position.x)} y:${Math.round(node.position.y)}`);
-    }
-    if (nodeInfoCenter) {
-      parts.push(`cx:${cx} cy:${cy}`);
-    }
-    if (nodeInfoSize) {
-      parts.push(`w:${w} h:${h}`);
-    }
-    return parts.length > 0 ? ` [${parts.join(" | ")}]` : "";
   };
 
   if (includeConnectionStyles && connectionStyles.length > 0) {
@@ -1635,136 +1745,53 @@ export function generateFamilyTreeScript(
   }
 
   lines.push("@declarations");
-  if (compactDeclarations) {
-    if (showNodeInfo) {
-      const tokens = personNodes.map((n) => {
-        const bracket = formatPersonDeclarationBracket(n.data);
-        const base = `${bracket}(${n.id})${formatNicknameTag(n.data.nicknames)}${getGenTagForPerson(n)}`;
-        return base + getInlineInfo(n, n.id, false);
-      });
-      const unionTokens = unionNodes.map((u) => {
-        const base = `Union ${u.id}`;
-        return base + getInlineInfo(u, u.id, true);
-      });
-      lines.push([...tokens, ...unionTokens].join(", "));
-    } else {
-      const tokens = personNodes.map((n) => {
-        const bracket = formatPersonDeclarationBracket(n.data);
-        return `${bracket}(${n.id})${formatNicknameTag(n.data.nicknames)}${getGenTagForPerson(n)}`;
-      });
-      lines.push(tokens.join(", "));
-    }
-  } else if (showNodeInfo) {
-    const pushBlockLines = (
-      node: { position: { x: number; y: number } },
-      id: string,
-      isUnion: boolean
-    ) => {
-      const { w, h } = getSize(id, isUnion);
-      const cx = Math.round(node.position.x + w / 2);
-      const cy = Math.round(node.position.y + h / 2);
-      if (nodeInfoTopLeft) {
-        lines.push(`  x: ${Math.round(node.position.x)}`);
-        lines.push(`  y: ${Math.round(node.position.y)}`);
-      }
-      if (nodeInfoCenter) {
-        lines.push(`  cx: ${cx}`);
-        lines.push(`  cy: ${cy}`);
-      }
-      if (nodeInfoSize) {
-        lines.push(`  w: ${w}`);
-        lines.push(`  h: ${h}`);
-      }
-    };
-    for (const n of personNodes) {
-      const bracket = formatPersonDeclarationBracket(n.data);
-      lines.push(`${bracket} (${n.id})${formatNicknameTag(n.data.nicknames)}${getGenTagForPerson(n)}`);
-      pushBlockLines(n, n.id, false);
-      lines.push("");
-    }
-    for (const u of unionNodes) {
-      lines.push(`Union ${u.id}`);
-      pushBlockLines(u, u.id, true);
-      lines.push("");
-    }
-    if (personNodes.length > 0 || unionNodes.length > 0) {
-      lines.pop();
-    }
-  } else {
-    for (const n of personNodes) {
-      const bracket = formatPersonDeclarationBracket(n.data);
-      const xy = ` x: ${Math.round(n.position.x)} y: ${Math.round(n.position.y)}`;
-      lines.push(`${bracket} # id: ${n.id}${xy}${formatNicknameTag(n.data.nicknames)}${getGenTagForPerson(n)}`);
-    }
+  for (const n of personNodes) {
+    const blockLines = formatPersonBlockLines(n, {
+      indent,
+      compact: compactDeclarations,
+      genIndex: getGenIndexForPerson(n),
+      showNodeInfo,
+      nodeInfoTopLeft,
+      nodeInfoCenter,
+      nodeInfoSize,
+      getSize,
+    });
+    lines.push(...blockLines);
+    if (!compactDeclarations) lines.push("");
   }
+  if (personNodes.length > 0 && !compactDeclarations) lines.pop();
+
   lines.push("");
   lines.push("@familyTree");
   lines.push("");
 
-  const validUnions = unionNodes.filter((union) => {
+  for (const union of unionNodes) {
     const data = union.data as UnionNodeData;
     const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
     const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
-    return !!(
-      leftId &&
-      rightId &&
-      personById.has(leftId) &&
-      personById.has(rightId)
-    );
-  });
-
-  for (const union of validUnions) {
-    const data = union.data as UnionNodeData;
-    const leftId = data.leftPartnerId ?? data.partnerIds?.[0]!;
-    const rightId = data.rightPartnerId ?? data.partnerIds?.[1]!;
-    const leftName = getName(leftId);
-    const rightName = getName(rightId);
-
-    const childIds = edges
-      .filter((e) => e.source === union.id && isChildEdge(e))
-      .map((e) => e.target)
-      .filter((id) => personById.has(id));
-
-    const childNodes = childIds
-      .map((id) => personById.get(id)!)
-      .sort((a, b) => {
-        if (a.position.x !== b.position.x) return a.position.x - b.position.x;
-        const na = (a.data.name || "").toLowerCase();
-        const nb = (b.data.name || "").toLowerCase();
-        const cmp = na.localeCompare(nb);
-        if (cmp !== 0) return cmp;
-        return a.id.localeCompare(b.id);
-      });
-
-    const childTokens = childNodes.map(
-      (n) => `-> ${getName(n.id)}${getGenSuffix(n)}`
-    );
-
-    const isRootUnion =
-      !hasParents(edges, leftId) && !hasParents(edges, rightId);
-    let rootGenTag = "";
-    if (isRootUnion) {
-      const leftNode = personById.get(leftId);
-      const rightNode = personById.get(rightId);
-      const gL = leftNode ? getGenLabel(leftNode) : null;
-      const gR = rightNode ? getGenLabel(rightNode) : null;
-      if (gL && gR) {
-        rootGenTag = gL === gR ? ` {Gen ${gL}}` : ` {Gen ${gL} / Gen ${gR}}`;
-      } else if (gL) {
-        rootGenTag = ` {Gen ${gL} / ?}`;
-      } else if (gR) {
-        rootGenTag = ` {Gen ? / Gen ${gR}}`;
-      }
-    }
-
-    const leftRole = data.leftPartnerRole;
-    const rightRole = data.rightPartnerRole;
-    const leftPart = `${leftName}${leftRole ? ` (${leftRole})` : ""}`;
-    const rightPart = `${rightName}${rightRole ? ` (${rightRole})` : ""}`;
+    const unionUnset = data.positionUnset;
     const libraryStyle = data.connectionStyleId
       ? connectionStyles.find((s) => s.id === data.connectionStyleId)
       : undefined;
-    const styleTag = libraryStyle ? ` [style: "${libraryStyle.name}"]` : "";
+
+    if (compactDeclarations) {
+      const parts = [
+        unionUnset
+          ? "x: ? y: ?"
+          : `x: ${Math.round(union.position.x)} y: ${Math.round(union.position.y)}`,
+        `notes: "${escapeScriptQuoted(data.notes ?? "")}"`,
+      ];
+      if (libraryStyle) parts.push(`style: "${escapeScriptQuoted(libraryStyle.name)}"`);
+      lines.push(`Union ${union.id} { ${parts.join(" ")} }`);
+      continue;
+    }
+
+    lines.push(`Union ${union.id} {`);
+    const xLine = formatCoordField("x", union.position.x, unionUnset, indent);
+    const yLine = formatCoordField("y", union.position.y, unionUnset, indent);
+    if (xLine) lines.push(xLine);
+    if (yLine) lines.push(yLine);
+    if (libraryStyle) lines.push(`${indent}style: "${escapeScriptQuoted(libraryStyle.name)}"`);
     const arrangeParts: string[] = [];
     if (data.arrangeSpacing?.parentSpacing != null) {
       arrangeParts.push(`parents=${data.arrangeSpacing.parentSpacing}`);
@@ -1778,17 +1805,78 @@ export function generateFamilyTreeScript(
     if (data.arrangeSpacing?.parentAlignment) {
       arrangeParts.push(`align=${data.arrangeSpacing.parentAlignment}`);
     }
-    const arrangeTag =
-      arrangeParts.length > 0 ? ` [arrange: ${arrangeParts.join(", ")}]` : "";
-    const headerLine = `@${union.id}: ${leftPart} <=> ${rightPart}${rootGenTag}${styleTag}${arrangeTag}`;
-    if (childTokens.length > 0) {
-      lines.push(`${headerLine} {`);
-      lines.push(`  children: ${childTokens.join(", ")}`);
-      lines.push("}");
-    } else {
-      lines.push(headerLine);
+    if (arrangeParts.length > 0) {
+      lines.push(`${indent}arrange: ${arrangeParts.join(", ")}`);
     }
+
+    const emitMember = (
+      personId: string | null | undefined,
+      memberType: "father" | "mother" | "parent" | "child",
+      childIndex = 0
+    ) => {
+      if (!personId || !personById.has(personId)) return;
+      const person = personById.get(personId)!;
+      if (unionUnset || person.data.positionUnset) {
+        lines.push(`${indent}Person ${personId} type: ${memberType}`);
+        return;
+      }
+      const dx = Math.round(person.position.x - union.position.x);
+      const dy = Math.round(person.position.y - union.position.y);
+      const def = getDefaultMemberOffset(memberType, childIndex);
+      if (dx !== def.dx || dy !== def.dy) {
+        lines.push(`${indent}Person ${personId} type: ${memberType} { dx: ${dx}, dy: ${dy} }`);
+      } else {
+        lines.push(`${indent}Person ${personId} type: ${memberType}`);
+      }
+    };
+
+    if (leftId) {
+      const role = data.leftPartnerRole;
+      emitMember(leftId, role ?? "parent");
+    }
+    if (rightId) {
+      const role = data.rightPartnerRole;
+      emitMember(rightId, role ?? "parent");
+    }
+
+    const childIds = edges
+      .filter((e) => e.source === union.id && isChildEdge(e))
+      .map((e) => e.target)
+      .filter((id) => personById.has(id));
+    const childNodes = childIds
+      .map((id) => personById.get(id)!)
+      .sort((a, b) => a.position.x - b.position.x || a.id.localeCompare(b.id));
+
+    childNodes.forEach((child, idx) => {
+      emitMember(child.id, "child", idx);
+    });
+
+    lines.push(`${indent}notes: "${escapeScriptQuoted(data.notes ?? "")}"`);
+    lines.push("}");
     lines.push("");
+  }
+
+  const scopedBranches =
+    scopeNodeIds == null
+      ? branches
+      : branches.filter((b) => scopeNodeIds.has(b.rootPersonId));
+
+  if (scopedBranches.length > 0) {
+    lines.push("@branches");
+    lines.push("");
+    for (const branch of scopedBranches.sort((a, b) => a.id.localeCompare(b.id))) {
+      const unionIds = computeBranchUnionIds(branch.rootPersonId, nodes, edges);
+      const namePart = branch.name ? ` "${escapeScriptQuoted(branch.name)}"` : "";
+      lines.push(
+        `Branch ${branch.id}${namePart} root: ${branch.rootPersonId} mode: ${branch.mode} {`
+      );
+      lines.push(`  unions: [${unionIds.join(", ")}]`);
+      if (branch.description.trim()) {
+        lines.push(`  description: "${escapeScriptQuoted(branch.description)}"`);
+      }
+      lines.push("}");
+      lines.push("");
+    }
   }
 
   return lines.join("\n");
@@ -2240,6 +2328,11 @@ interface FamilyTreeStore {
   ) => { ok: boolean; errors: string[] };
   ensureDefaultDocuments: () => void;
   getDocumentDisplayContent: (docId: string) => string;
+  /** Node/union id armed for click-to-place on canvas. */
+  placementTargetId: string | null;
+  setPlacementTargetId: (id: string | null) => void;
+  /** Assign canvas coordinates to an unplaced node (and its family members when union). */
+  placeNodeAt: (nodeId: string, position: { x: number; y: number }) => void;
 }
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
@@ -2265,7 +2358,8 @@ let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
 let prevFamiliesJson: string | null = null;
 let prevBranchesJson: string | null = null;
-let prevDocumentsJson: string | null = null;
+let prevDocumentsRef: FamilyTreeDocumentRecord[] | null = null;
+let prevDocumentsUpdatedAtSum = 0;
 let prevDisplayMode: "nodes" | "text" | null = null;
 
 function applyNodePositionUpdates(
@@ -3149,6 +3243,7 @@ function getScriptGenOptions(s: FamilyTreeStore) {
     generationAnchors: s.generationAnchors,
     genLabelMode: s.genLabelMode,
     connectionStyles: s.connectionStyles,
+    branches: s.branches,
   };
 }
 
@@ -3310,6 +3405,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   displayMode: "nodes" as "nodes" | "text",
   documents: [] as FamilyTreeDocumentRecord[],
   dirtyDocumentIds: [] as string[],
+  placementTargetId: null as string | null,
 
   setExportViewportEl: (el) => set({ exportViewportEl: el }),
   setFitViewForExport: (fn) => set({ fitViewForExport: fn }),
@@ -3323,6 +3419,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         ...analyzeNameAndRoleSuggestions(s.nodes, s.edges),
         ...analyzeDegenerateUnionSuggestions(s.nodes, s.edges),
         ...analyzeGenConflictSuggestions(s.nodes, s.edges),
+        ...analyzeUnassignedSuggestions(s.nodes, s.edges, s.families),
       ],
     });
   },
@@ -3938,9 +4035,22 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setAnchorNodeId: (id) => set({ anchorNodeId: id }),
   setViewportBounds: (bounds) => set({ viewportBounds: bounds }),
   reportNodeSize: (nodeId, size) =>
-    set((s) => ({
-      nodeSizesById: { ...s.nodeSizesById, [nodeId]: { width: size.width, height: size.height } },
-    })),
+    set((s) => {
+      const prev = s.nodeSizesById[nodeId];
+      if (
+        prev &&
+        Math.round(prev.width) === Math.round(size.width) &&
+        Math.round(prev.height) === Math.round(size.height)
+      ) {
+        return s;
+      }
+      return {
+        nodeSizesById: {
+          ...s.nodeSizesById,
+          [nodeId]: { width: size.width, height: size.height },
+        },
+      };
+    }),
 
   setNodes: (nodesOrUpdater) =>
     set((s) => ({
@@ -4754,7 +4864,62 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   },
 
   setDisplayMode: (mode) => {
-    set({ displayMode: mode, hasUnsavedChanges: true, lastSaveError: null });
+    set({ displayMode: mode, placementTargetId: null, hasUnsavedChanges: true, lastSaveError: null });
+  },
+  setPlacementTargetId: (id) => set({ placementTargetId: id }),
+  placeNodeAt: (nodeId, position) => {
+    const s = get();
+    const snap = (x: number, y: number) => snapPosition(x, y, s.snapToGrid);
+    const pos = snap(position.x, position.y);
+    const target = s.nodes.find((n) => n.id === nodeId);
+    if (!target) return;
+
+    if (target.type === "union" && (target.data as UnionNodeData).kind === "union") {
+      const data = target.data as UnionNodeData;
+      const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
+      const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
+      const childIds = s.edges
+        .filter((e) => e.source === nodeId && isChildEdge(e))
+        .map((e) => e.target);
+      const updates = new Map<string, { x: number; y: number }>();
+      updates.set(nodeId, pos);
+      if (leftId) {
+        updates.set(leftId, snap(pos.x - PARTNER_DX / 2, pos.y - UNION_DY));
+      }
+      if (rightId) {
+        updates.set(rightId, snap(pos.x + PARTNER_DX / 2, pos.y - UNION_DY));
+      }
+      childIds.forEach((cid, idx) => {
+        updates.set(cid, snap(pos.x + idx * DEFAULT_CHILD_ROW_SPACING, pos.y + CHILD_DY));
+      });
+      set({
+        nodes: s.nodes.map((n) => {
+          const p = updates.get(n.id);
+          if (!p) return n;
+          const clearUnset = { ...n.data, positionUnset: false } as FamilyTreeNodeData;
+          return { ...n, position: p, data: clearUnset };
+        }),
+        placementTargetId: null,
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      });
+      return;
+    }
+
+    set({
+      nodes: s.nodes.map((n) =>
+        n.id === nodeId
+          ? {
+              ...n,
+              position: pos,
+              data: { ...n.data, positionUnset: false } as FamilyTreeNodeData,
+            }
+          : n
+      ),
+      placementTargetId: null,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
   },
   setDirtyDocumentIds: (ids) => set({ dirtyDocumentIds: ids }),
   createFamilyDocument: (name, ownerFamilyId) => {
@@ -4846,7 +5011,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       s.nodes,
       s.edges,
       s.connectionStyles,
-      s.generationAnchors
+      s.generationAnchors,
+      s.branches
     );
     if (parsed.errors.length > 0) {
       return { ok: false, errors: parsed.errors };
@@ -4866,6 +5032,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       nodes: parsed.nodes,
       edges: parsed.edges,
       connectionStyles: parsed.connectionStyles,
+      branches: parsed.branches,
       documents: updatedDocs,
       dirtyDocumentIds: s.dirtyDocumentIds.filter((id) => !editDocIds.includes(id)),
       selectedNodeIds: prunedSelection,
@@ -4975,7 +5142,25 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       inspectorBranchId: null,
       branchToolActive: false,
       pendingFocusBranchId: null,
+      placementTargetId: null,
     });
+    const afterLoad = get();
+    const scriptOpts = getScriptGenOptions(afterLoad);
+    let docsMigrated = false;
+    const migratedDocuments = afterLoad.documents.map((doc) => {
+      const next = migrateLegacyDocumentContent(
+        doc,
+        afterLoad.documents,
+        afterLoad.nodes,
+        afterLoad.edges,
+        scriptOpts
+      );
+      if (next.content !== doc.content) docsMigrated = true;
+      return next;
+    });
+    if (docsMigrated) {
+      set({ documents: migratedDocuments, hasUnsavedChanges: true });
+    }
     get().runNameRoleAnalysis();
     get().recomputeFamilies();
     get().ensureDefaultDocuments();
@@ -4989,7 +5174,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       s.nodes,
       s.edges,
       s.connectionStyles,
-      s.generationAnchors
+      s.generationAnchors,
+      s.branches
     );
     if (parsed.errors.length > 0) {
       return { ok: false, errors: parsed.errors };
@@ -5002,6 +5188,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       nodes: parsed.nodes,
       edges: parsed.edges,
       connectionStyles: parsed.connectionStyles,
+      branches: parsed.branches,
       selectedNodeIds: prunedSelection,
       primarySelectedNodeId: prunedSelection[0] ?? null,
       hasUnsavedChanges: true,
@@ -5187,6 +5374,14 @@ useFamilyTreeStore.subscribe((state) => {
       (partial) => useFamilyTreeStore.setState(partial)
     );
   }
+  const generationAnchorsJson = JSON.stringify(state.generationAnchors);
+  const connectionStylesJson = JSON.stringify(state.connectionStyles);
+  const familiesJson = JSON.stringify(familiesToPersisted(state.families));
+  const branchesJson = JSON.stringify(branchesToPersisted(state.branches));
+  const documentsUpdatedAtSum = state.documents.reduce((sum, d) => sum + d.updatedAt, 0);
+  const documentsChanged =
+    state.documents !== prevDocumentsRef || documentsUpdatedAtSum !== prevDocumentsUpdatedAtSum;
+
   const uiPrefsChanged =
     state.showNodeInfoEnabled !== prevShowNodeInfoEnabled ||
     state.nodeInfoTopLeft !== prevNodeInfoTopLeft ||
@@ -5201,11 +5396,11 @@ useFamilyTreeStore.subscribe((state) => {
     state.genAnchorBandOpacity !== prevGenAnchorBandOpacity ||
     state.genAnchorLineOpacity !== prevGenAnchorLineOpacity ||
     state.genLabelMode !== prevGenLabelMode ||
-    JSON.stringify(state.generationAnchors) !== prevGenerationAnchorsJson ||
-    JSON.stringify(state.connectionStyles) !== prevConnectionStylesJson ||
-    JSON.stringify(familiesToPersisted(state.families)) !== prevFamiliesJson ||
-    JSON.stringify(branchesToPersisted(state.branches)) !== prevBranchesJson ||
-    JSON.stringify(state.documents) !== prevDocumentsJson ||
+    generationAnchorsJson !== prevGenerationAnchorsJson ||
+    connectionStylesJson !== prevConnectionStylesJson ||
+    familiesJson !== prevFamiliesJson ||
+    branchesJson !== prevBranchesJson ||
+    documentsChanged ||
     state.displayMode !== prevDisplayMode;
   prevNodes = state.nodes;
   prevEdges = state.edges;
@@ -5222,11 +5417,12 @@ useFamilyTreeStore.subscribe((state) => {
   prevGenAnchorBandOpacity = state.genAnchorBandOpacity;
   prevGenAnchorLineOpacity = state.genAnchorLineOpacity;
   prevGenLabelMode = state.genLabelMode;
-  prevGenerationAnchorsJson = JSON.stringify(state.generationAnchors);
-  prevConnectionStylesJson = JSON.stringify(state.connectionStyles);
-  prevFamiliesJson = JSON.stringify(familiesToPersisted(state.families));
-  prevBranchesJson = JSON.stringify(branchesToPersisted(state.branches));
-  prevDocumentsJson = JSON.stringify(state.documents);
+  prevGenerationAnchorsJson = generationAnchorsJson;
+  prevConnectionStylesJson = connectionStylesJson;
+  prevFamiliesJson = familiesJson;
+  prevBranchesJson = branchesJson;
+  prevDocumentsRef = state.documents;
+  prevDocumentsUpdatedAtSum = documentsUpdatedAtSum;
   prevDisplayMode = state.displayMode;
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&

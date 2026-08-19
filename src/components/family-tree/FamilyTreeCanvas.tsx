@@ -47,6 +47,36 @@ import FamilyTreeLegend from "./FamilyTreeLegend";
 import FamilyBloodlineWarningModal from "./FamilyBloodlineWarningModal";
 import Modal from "../ui/Modal";
 
+function PaneClickSync({
+  handlerRef,
+}: {
+  handlerRef: React.MutableRefObject<((e: React.MouseEvent) => void) | null>;
+}) {
+  const { screenToFlowPosition } = useReactFlow();
+  const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
+  const placeNodeAt = useFamilyTreeStore((s) => s.placeNodeAt);
+  const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+
+  useEffect(() => {
+    handlerRef.current = (e: React.MouseEvent) => {
+      if (placementTargetId) {
+        const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        placeNodeAt(placementTargetId, pos);
+        return;
+      }
+      setSelectedNodeIds([]);
+    };
+  }, [
+    handlerRef,
+    placementTargetId,
+    screenToFlowPosition,
+    placeNodeAt,
+    setSelectedNodeIds,
+  ]);
+
+  return null;
+}
+
 function ViewportBoundsSync() {
   const setViewportBounds = useFamilyTreeStore((s) => s.setViewportBounds);
   const { screenToFlowPosition } = useReactFlow();
@@ -448,24 +478,25 @@ export default function FamilyTreeCanvas({
   const showLegend = useFamilyTreeStore((s) => s.showLegend);
   const setExportViewportEl = useFamilyTreeStore((s) => s.setExportViewportEl);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const {
-    nodes,
-    edges,
-    setNodes,
-    setEdges,
-    setSelectedNodeIds,
-    selectedNodeIds,
-    snapToGrid,
-    nodeSizesById,
-    generationAnchors,
-    connectionStyles,
-    genLabelMode,
-    updateNodeGenAnchor,
-    setGenInheritFlash,
-    setPendingGenChangePrompt,
-    setNodeGenArmed,
-    setHoveredConnectionInfo,
-  } = useFamilyTreeStore();
+  const paneClickRef = useRef<((e: React.MouseEvent) => void) | null>(null);
+  const nodes = useFamilyTreeStore((s) => s.nodes);
+  const edges = useFamilyTreeStore((s) => s.edges);
+  const setNodes = useFamilyTreeStore((s) => s.setNodes);
+  const setEdges = useFamilyTreeStore((s) => s.setEdges);
+  const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
+  const snapToGrid = useFamilyTreeStore((s) => s.snapToGrid);
+  const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
+  const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
+  const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
+  const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
+  const updateNodeGenAnchor = useFamilyTreeStore((s) => s.updateNodeGenAnchor);
+  const setGenInheritFlash = useFamilyTreeStore((s) => s.setGenInheritFlash);
+  const setPendingGenChangePrompt = useFamilyTreeStore((s) => s.setPendingGenChangePrompt);
+  const setNodeGenArmed = useFamilyTreeStore((s) => s.setNodeGenArmed);
+  const setHoveredConnectionInfo = useFamilyTreeStore((s) => s.setHoveredConnectionInfo);
+  const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
+  const setPlacementTargetId = useFamilyTreeStore((s) => s.setPlacementTargetId);
   const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const families = useFamilyTreeStore((s) => s.families);
@@ -499,8 +530,15 @@ export default function FamilyTreeCanvas({
   }, [activeBranchTabId, branches, isolationModeActive, activeFamilyTabId, families, nodes, edges]);
 
   const canvasNodes = useMemo(() => {
-    if (!visibleNodeIds) return nodes;
-    return nodes.filter((n) => visibleNodeIds.has(n.id));
+    const placedOnly = nodes.filter((n) => {
+      const unset =
+        n.data.kind === "person"
+          ? (n.data as PersonNodeData).positionUnset
+          : (n.data as UnionNodeData).positionUnset;
+      return !unset;
+    });
+    if (!visibleNodeIds) return placedOnly;
+    return placedOnly.filter((n) => visibleNodeIds.has(n.id));
   }, [nodes, visibleNodeIds]);
 
   const canvasEdges = useMemo(() => {
@@ -667,11 +705,15 @@ export default function FamilyTreeCanvas({
     return new Set(getUnionFamilyMemberIds(lockedUnion.id, nodes, edges));
   }, [selectedNodeIds, nodes, edges]);
 
-  const nodesWithSelection = canvasNodes.map((n) => ({
-    ...n,
-    selected: selectedNodeIds.includes(n.id),
-    data: { ...n.data, isFamilyLocked: familyLockedMemberIds.has(n.id) },
-  }));
+  const nodesWithSelection = useMemo(
+    () =>
+      canvasNodes.map((n) => ({
+        ...n,
+        selected: selectedNodeIds.includes(n.id),
+        data: { ...n.data, isFamilyLocked: familyLockedMemberIds.has(n.id) },
+      })),
+    [canvasNodes, selectedNodeIds, familyLockedMemberIds]
+  );
 
   const displayEdges = useMemo(() => {
     const withHandles = assignPartnerHandles(canvasEdges, canvasNodes);
@@ -755,6 +797,10 @@ export default function FamilyTreeCanvas({
   );
   const onNodeClick: NodeMouseHandler = useCallback(
     (evt, node) => {
+      if (placementTargetId) {
+        setPlacementTargetId(null);
+        return;
+      }
       if (node.data?.kind === "person" && (node.data as { isGenArmed?: boolean }).isGenArmed === false) setNodeGenArmed(node.id);
       if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
         evt.preventDefault();
@@ -769,7 +815,7 @@ export default function FamilyTreeCanvas({
         setSelectedNodeIds([node.id]);
       }
     },
-    [setSelectedNodeIds, setNodeGenArmed]
+    [setSelectedNodeIds, setNodeGenArmed, placementTargetId, setPlacementTargetId]
   );
 
   const onNodeDoubleClick: NodeMouseHandler = useCallback(
@@ -792,9 +838,9 @@ export default function FamilyTreeCanvas({
     },
     [setSelectedNodeIds, onNodeSelectForEdit]
   );
-  const onPaneClick = useCallback(() => {
-    setSelectedNodeIds([]);
-  }, [setSelectedNodeIds]);
+  const onPaneClick = useCallback((e: React.MouseEvent) => {
+    paneClickRef.current?.(e);
+  }, []);
 
   const showSpacePanCursor = marqueeToolActive && isSpacePanning;
 
@@ -809,7 +855,7 @@ export default function FamilyTreeCanvas({
   return (
     <div
       ref={viewportRef}
-      className={`relative flex-1 min-h-0 ${showSpacePanCursor ? "cursor-grab [&.panning]:cursor-grabbing" : ""}`}
+      className={`relative flex-1 min-h-0 ${showSpacePanCursor ? "cursor-grab [&.panning]:cursor-grabbing" : ""} ${placementTargetId ? "cursor-crosshair" : ""}`}
       onPointerDown={(e) => {
         if (showSpacePanCursor && e.button === 0) {
           (e.currentTarget as HTMLElement).classList.add("panning");
@@ -864,6 +910,7 @@ export default function FamilyTreeCanvas({
           className="!bg-dark-surface !border-dark-accent !rounded-lg [&>button]:!bg-dark-accent [&>button]:!text-dark-text [&>button]:!border-dark-accent [&>button:hover]:!bg-dark-bg"
         />
         <ViewportBoundsSync />
+        <PaneClickSync handlerRef={paneClickRef} />
         <ExportViewportRegister />
         <FamilyFocusController />
         <FamilyBranchFocusController />

@@ -16,11 +16,13 @@ export interface FamilyTreeDocumentRecord {
   updatedAt: number;
 }
 
-const PERSON_ID_RE = /#\s*id:\s*(_[a-zA-Z0-9]+)/;
-const UNION_HEADER_RE = /^@(_[a-zA-Z0-9]+):/;
+const LEGACY_PERSON_ID_RE = /#\s*id:\s*(_[a-zA-Z0-9]+)/;
+const LEGACY_UNION_HEADER_RE = /^@(_[a-zA-Z0-9]+):/;
+const PERSON_DECL_RE = /^Person\s+(_[a-zA-Z0-9]+)/;
+const UNION_DECL_RE = /^Union\s+(_[a-zA-Z0-9]+)/;
 
-/** Scan declaration lines and union headers in a document. */
-export function scanDocumentDeclaredIds(content: string): {
+/** Scan legacy-format declaration lines and union headers. */
+export function scanLegacyDeclaredIds(content: string): {
   personIds: string[];
   unionIds: string[];
 } {
@@ -28,9 +30,39 @@ export function scanDocumentDeclaredIds(content: string): {
   const unionIds = new Set<string>();
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
-    const personMatch = PERSON_ID_RE.exec(trimmed);
+    const personMatch = LEGACY_PERSON_ID_RE.exec(trimmed);
     if (personMatch) personIds.add(personMatch[1]!);
-    const unionMatch = UNION_HEADER_RE.exec(trimmed);
+    const unionMatch = LEGACY_UNION_HEADER_RE.exec(trimmed);
+    if (unionMatch) unionIds.add(unionMatch[1]!);
+  }
+  return {
+    personIds: Array.from(personIds),
+    unionIds: Array.from(unionIds),
+  };
+}
+
+/** True when document content uses the pre-keyword legacy format. */
+export function isLegacyFamilyTreeDocument(content: string): boolean {
+  if (!content.trim()) return false;
+  if (/^Person\s+_/m.test(content)) return false;
+  return LEGACY_PERSON_ID_RE.test(content) || LEGACY_UNION_HEADER_RE.test(content);
+}
+
+/** Scan Person/Union keyword blocks in a document. */
+export function scanDocumentDeclaredIds(content: string): {
+  personIds: string[];
+  unionIds: string[];
+} {
+  if (isLegacyFamilyTreeDocument(content)) {
+    return scanLegacyDeclaredIds(content);
+  }
+  const personIds = new Set<string>();
+  const unionIds = new Set<string>();
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    const personMatch = PERSON_DECL_RE.exec(trimmed);
+    if (personMatch && personMatch[1] !== "?") personIds.add(personMatch[1]!);
+    const unionMatch = UNION_DECL_RE.exec(trimmed);
     if (unionMatch) unionIds.add(unionMatch[1]!);
   }
   return {
@@ -140,62 +172,39 @@ export function annotateForeignReferences(
     nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n])
   );
 
-  const resolveNameToPersonId = (displayName: string): string | null => {
-    for (const [id, node] of personById) {
-      const name = getPersonDisplayName(node.data as PersonNodeData, id, nodes);
-      if (name === displayName) return id;
-    }
-    return null;
-  };
-
   const lines = scriptText.split("\n");
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i]!;
     const trimmed = line.trim();
-    const unionMatch = UNION_HEADER_RE.exec(trimmed);
+    const unionMatch = UNION_DECL_RE.exec(trimmed);
     if (unionMatch) {
       const annotations: string[] = [];
-      const headerRest = trimmed.slice(unionMatch[0].length);
-      const arrowIdx = headerRest.indexOf("<=>");
-      if (arrowIdx >= 0) {
-        const leftRaw = headerRest.slice(0, arrowIdx).trim();
-        const rightRaw = headerRest.slice(arrowIdx + 3).trim().replace(/\s*\{Gen[^}]*\}/, "").replace(/\s*\[.*$/, "").trim();
-        for (const raw of [leftRaw, rightRaw]) {
-          const name = raw.replace(/\s*\((father|mother)\)\s*$/i, "").trim();
-          const pid = resolveNameToPersonId(name);
-          if (pid && !scopeIds.has(pid)) {
+      i++;
+      while (i < lines.length && lines[i]!.trim() !== "}") {
+        const inner = lines[i]!.trim();
+        const memberMatch = /^Person\s+(_[a-zA-Z0-9]+)/.exec(inner);
+        if (memberMatch) {
+          const pid = memberMatch[1]!;
+          if (!scopeIds.has(pid)) {
+            const personNode = personById.get(pid);
+            const name = personNode
+              ? getPersonDisplayName(personNode.data as PersonNodeData, pid, nodes)
+              : pid;
             const fileName = declFileMap.get(pid);
-            if (fileName) {
-              annotations.push(`# ${name} declared in: ${fileName}`);
-            }
+            if (fileName) annotations.push(`# ${name} declared in: ${fileName}`);
           }
         }
-      }
-      if (trimmed.endsWith("{")) {
         i++;
-        while (i < lines.length && lines[i]!.trim() !== "}") {
-          const inner = lines[i]!.trim();
-          if (inner.startsWith("children:")) {
-            const childPart = inner.slice("children:".length);
-            for (const token of childPart.split(",")) {
-              const childName = token.replace(/^\s*->\s*/, "").replace(/\s*\{Gen[^}]*\}\s*$/, "").trim();
-              const pid = resolveNameToPersonId(childName);
-              if (pid && !scopeIds.has(pid)) {
-                const fileName = declFileMap.get(pid);
-                if (fileName) {
-                  annotations.push(`# ${childName} declared in: ${fileName}`);
-                }
-              }
-            }
-          }
-          i++;
-        }
       }
-      for (const ann of [...new Set(annotations)]) {
-        out.push(ann);
+      for (const ann of [...new Set(annotations)]) out.push(ann);
+      out.push(line);
+      if (i < lines.length) {
+        out.push(lines[i]!);
+        i++;
       }
+      continue;
     }
     out.push(line);
     i++;
@@ -215,17 +224,20 @@ function extractScriptSections(content: string): {
   styleLines: string[];
   declarationLines: string[];
   unionLines: string[];
+  branchLines: string[];
 } {
   const styleLines: string[] = [];
   const declarationLines: string[] = [];
   const unionLines: string[] = [];
-  let section: "none" | "declarations" | "familyTree" = "none";
+  const branchLines: string[] = [];
+  let section: "none" | "declarations" | "familyTree" | "branches" = "none";
 
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) {
       if (section === "declarations") declarationLines.push(line);
       else if (section === "familyTree") unionLines.push(line);
+      else if (section === "branches") branchLines.push(line);
       continue;
     }
     if (trimmed === "@declarations") {
@@ -236,14 +248,19 @@ function extractScriptSections(content: string): {
       section = "familyTree";
       continue;
     }
+    if (trimmed === "@branches") {
+      section = "branches";
+      continue;
+    }
     if (section === "none" && trimmed.startsWith("@") && trimmed.includes('"')) {
       styleLines.push(line);
       continue;
     }
     if (section === "declarations") declarationLines.push(line);
     else if (section === "familyTree") unionLines.push(line);
+    else if (section === "branches") branchLines.push(line);
   }
-  return { styleLines, declarationLines, unionLines };
+  return { styleLines, declarationLines, unionLines, branchLines };
 }
 
 /** Merge multiple document bodies into one parseable script string. */
@@ -255,8 +272,10 @@ export function combineFamilyDocumentContents(
   const styleLines: string[] = [];
   const declarationLines: string[] = [];
   const unionLines: string[] = [];
+  const branchLines: string[] = [];
   const seenPersonIds = new Set<string>();
   const seenUnionIds = new Set<string>();
+  const seenBranchIds = new Set<string>();
 
   for (const doc of sorted) {
     const content = edits.get(doc.id) ?? doc.content;
@@ -266,7 +285,7 @@ export function combineFamilyDocumentContents(
       if (!styleLines.includes(line)) styleLines.push(line);
     }
     for (const line of sections.declarationLines) {
-      const m = PERSON_ID_RE.exec(line.trim());
+      const m = PERSON_DECL_RE.exec(line.trim()) ?? LEGACY_PERSON_ID_RE.exec(line.trim());
       if (m) {
         if (seenPersonIds.has(m[1]!)) continue;
         seenPersonIds.add(m[1]!);
@@ -274,7 +293,7 @@ export function combineFamilyDocumentContents(
       declarationLines.push(line);
     }
     for (const line of sections.unionLines) {
-      const m = UNION_HEADER_RE.exec(line.trim());
+      const m = UNION_DECL_RE.exec(line.trim()) ?? LEGACY_UNION_HEADER_RE.exec(line.trim());
       if (m) {
         if (seenUnionIds.has(m[1]!)) continue;
         seenUnionIds.add(m[1]!);
@@ -282,6 +301,16 @@ export function combineFamilyDocumentContents(
         continue;
       }
       unionLines.push(line);
+    }
+    for (const line of sections.branchLines) {
+      const m = /^Branch\s+(_[a-zA-Z0-9]+)/.exec(line.trim());
+      if (m) {
+        if (seenBranchIds.has(m[1]!)) continue;
+        seenBranchIds.add(m[1]!);
+        branchLines.push(line);
+        continue;
+      }
+      branchLines.push(line);
     }
   }
 
@@ -297,6 +326,11 @@ export function combineFamilyDocumentContents(
   parts.push("@familyTree");
   parts.push("");
   if (unionLines.length > 0) parts.push(...unionLines);
+  if (branchLines.length > 0) {
+    parts.push("@branches");
+    parts.push("");
+    parts.push(...branchLines);
+  }
   return parts.join("\n");
 }
 
@@ -326,27 +360,60 @@ export function generateDocumentDisplayContent(
   return annotateForeignReferences(raw, scopeIds, allDocuments, nodes);
 }
 
+/** Migrate legacy document content to keyword format from the live graph model. */
+export function migrateLegacyDocumentContent(
+  doc: FamilyTreeDocumentRecord,
+  allDocuments: FamilyTreeDocumentRecord[],
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[],
+  options: Parameters<typeof generateFamilyTreeScript>[2]
+): FamilyTreeDocumentRecord {
+  if (!isLegacyFamilyTreeDocument(doc.content)) return doc;
+  const legacy = scanLegacyDeclaredIds(doc.content);
+  const scopeIds = new Set<string>([...legacy.personIds, ...legacy.unionIds]);
+  for (const unionId of legacy.unionIds) {
+    for (const memberId of getUnionFamilyMemberIds(unionId, nodes, edges)) {
+      scopeIds.add(memberId);
+    }
+    scopeIds.add(unionId);
+  }
+  if (scopeIds.size === 0) return doc;
+  const content = generateDocumentDisplayContent(
+    { ...doc, content: doc.content },
+    allDocuments,
+    nodes,
+    edges,
+    options
+  );
+  return { ...doc, content, updatedAt: Date.now() };
+}
+
 export function insertPersonDeclarationAtCursor(
   content: string,
-  cursorPos: number
+  _cursorPos: number
 ): { ok: true; content: string; cursorPos: number } | { ok: false; error: string } {
   const id = `_${Math.random().toString(36).slice(2, 11)}`;
-  const line = `[New, , Person] # id: ${id} x: 100 y: 100`;
-  const before = content.slice(0, cursorPos);
+  const block = `Person ${id} {
+  first: "New"
+  middle: ""
+  last: "Person"
+  nicknames: ""
+  notes: ""
+  x: ?
+  y: ?
+}`;
   const declIdx = content.indexOf("@declarations");
   if (declIdx === -1) {
-    const block = `@declarations\n${line}\n\n@familyTree\n\n`;
-    return { ok: true, content: block, cursorPos: block.indexOf(line) + line.length };
+    const full = `@declarations\n${block}\n\n@familyTree\n\n`;
+    return { ok: true, content: full, cursorPos: full.indexOf("New") };
   }
   const familyIdx = content.indexOf("@familyTree", declIdx);
   const insertAt =
-    familyIdx >= 0
-      ? familyIdx
-      : declIdx + "@declarations".length + (before.endsWith("\n") ? 0 : 1);
+    familyIdx >= 0 ? familyIdx : declIdx + "@declarations".length + 1;
   const prefix = content.slice(0, insertAt).trimEnd();
   const suffix = content.slice(insertAt);
-  const newContent = `${prefix}\n${line}\n${suffix.startsWith("\n") ? "" : "\n"}${suffix}`;
-  const newCursor = prefix.length + 1 + line.length;
+  const newContent = `${prefix}\n${block}\n${suffix.startsWith("\n") ? "" : "\n"}${suffix}`;
+  const newCursor = prefix.length + 1 + block.indexOf("New");
   return { ok: true, content: newContent, cursorPos: newCursor };
 }
 
@@ -355,7 +422,13 @@ export function insertUnionBlockAtCursor(
   _cursorPos: number
 ): { ok: true; content: string; cursorPos: number } | { ok: false; error: string } {
   const id = `_${Math.random().toString(36).slice(2, 11)}`;
-  const block = `@${id}: Partner A <=> Partner B`;
+  const block = `Union ${id} {
+  x: ?
+  y: ?
+  Person ? type: father
+  Person ? type: mother
+  notes: ""
+}`;
   let base = content;
   if (!base.includes("@familyTree")) {
     base = base.trimEnd() + (base.trim() ? "\n\n" : "") + "@familyTree\n\n";

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned } from "../../store/familyTreeStore";
 import {
   getDocumentsForFamily,
   getUnassignedDocuments,
@@ -28,11 +28,13 @@ function PersonGenBadge({
   nodes,
   getPersonGenLabel,
   pill = false,
+  showWarnings = true,
 }: {
   personId: string;
   nodes: Node<PersonNodeData | UnionNodeData>[];
   getPersonGenLabel: (id: string) => string | null;
   pill?: boolean;
+  showWarnings?: boolean;
 }) {
   const label = getPersonGenLabel(personId);
   if (label) {
@@ -44,6 +46,7 @@ function PersonGenBadge({
       <span className="text-dark-muted text-[10px] flex-shrink-0">{label}</span>
     );
   }
+  if (!showWarnings) return null;
   const node = nodes.find((n) => n.id === personId && (n.data as { kind?: string }).kind === "person");
   const genAnchorId = (node?.data as PersonNodeData)?.genAnchorId;
   if (!genAnchorId) {
@@ -169,6 +172,8 @@ export default function FamilyTreeLeftSidebar({
   const setInspectorBranchId = useFamilyTreeStore((s) => s.setInspectorBranchId);
   const deleteBranch = useFamilyTreeStore((s) => s.deleteBranch);
   const setBranchCustomName = useFamilyTreeStore((s) => s.setBranchCustomName);
+  const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
+  const setPlacementTargetId = useFamilyTreeStore((s) => s.setPlacementTargetId);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
@@ -183,8 +188,8 @@ export default function FamilyTreeLeftSidebar({
 
   const isSelected = (id: string) => selectedNodeIds.includes(id);
 
-  const { familyUnits, unlinkedPeople } = useMemo(() => {
-    const { units, linkedPersonIds } = buildFamilyUnits(nodes, edges);
+  const { familyUnits, unassignedEntities } = useMemo(() => {
+    const { units } = buildFamilyUnits(nodes, edges);
 
     const personNodes = nodes.filter(
       (n): n is Node<PersonNodeData> => n.data.kind === "person"
@@ -216,18 +221,18 @@ export default function FamilyTreeLeftSidebar({
       return { ...u, children: childNodes.map((n) => n.id) };
     });
 
-    const unlinked = personNodes
-      .filter((n) => !linkedPersonIds.has(n.id))
+    const unassigned = nodes
+      .filter((n) => isNodeUnassigned(n.id, nodes, edges, families))
       .sort((a, b) => {
-        const nameA = (a.data.name || "New Person").toLowerCase();
-        const nameB = (b.data.name || "New Person").toLowerCase();
+        const nameA = getDisplayName(nodes, a.id, a.type === "union" ? "union" : "person").toLowerCase();
+        const nameB = getDisplayName(nodes, b.id, b.type === "union" ? "union" : "person").toLowerCase();
         const cmp = nameA.localeCompare(nameB);
         if (cmp !== 0) return cmp;
         return a.id.localeCompare(b.id);
       });
 
-    return { familyUnits: unitsWithSortedChildren, unlinkedPeople: unlinked };
-  }, [nodes, edges]);
+    return { familyUnits: unitsWithSortedChildren, unassignedEntities: unassigned };
+  }, [nodes, edges, families]);
 
   const activeFamily = useMemo(
     () => (activeFamilyTabId != null ? families.find((f) => f.id === activeFamilyTabId) : null),
@@ -258,13 +263,13 @@ export default function FamilyTreeLeftSidebar({
     return familyUnits.filter((u) => unionSet.has(u.unionId));
   }, [familyUnits, activeFamily, branchMemberIds]);
 
-  const filteredUnlinkedPeople = useMemo(() => {
+  const filteredUnassignedEntities = useMemo(() => {
     if (branchMemberIds) {
-      return unlinkedPeople.filter((p) => branchMemberIds.has(p.id));
+      return unassignedEntities.filter((n) => branchMemberIds.has(n.id));
     }
     if (activeFamilyTabId != null) return [];
-    return unlinkedPeople;
-  }, [unlinkedPeople, activeFamilyTabId, branchMemberIds]);
+    return unassignedEntities;
+  }, [unassignedEntities, activeFamilyTabId, branchMemberIds]);
 
   const visibleEntityOrder = useMemo(() => {
     const order: string[] = [];
@@ -274,11 +279,11 @@ export default function FamilyTreeLeftSidebar({
         order.push(unit.parents[0], unit.parents[1], ...unit.children);
       }
     }
-    for (const p of filteredUnlinkedPeople) {
-      order.push(p.id);
+    for (const n of filteredUnassignedEntities) {
+      order.push(n.id);
     }
     return order;
-  }, [filteredFamilyUnits, filteredUnlinkedPeople, collapsedUnits]);
+  }, [filteredFamilyUnits, filteredUnassignedEntities, collapsedUnits]);
 
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
@@ -384,6 +389,7 @@ export default function FamilyTreeLeftSidebar({
   const getBranchRootName = (rootPersonId: string) => getPersonName(nodes, rootPersonId);
 
   const handleEntityClick = (e: React.MouseEvent, id: string) => {
+    if (placementTargetId) setPlacementTargetId(null);
     if (e.shiftKey) {
       if (lastEntityClickedId != null) {
         const fromIdx = visibleEntityOrder.indexOf(lastEntityClickedId);
@@ -411,6 +417,20 @@ export default function FamilyTreeLeftSidebar({
       setSelectedNodeIds([id]);
       setLastEntityClickedId(id);
     }
+  };
+
+  const handleUnassignedClick = (e: React.MouseEvent, id: string) => {
+    if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (placementTargetId === id) {
+        setPlacementTargetId(null);
+        return;
+      }
+      setPlacementTargetId(id);
+      setSelectedNodeIds([id]);
+      onSelectNode?.();
+      return;
+    }
+    handleEntityClick(e, id);
   };
 
   const startEditingPerson = (e: React.MouseEvent, personId: string, currentName: string) => {
@@ -595,7 +615,7 @@ export default function FamilyTreeLeftSidebar({
         <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
           Sub Entities
         </h2>
-        <p className="text-dark-muted text-xs mt-1">Family units and unlinked people</p>
+        <p className="text-dark-muted text-xs mt-1">Family units and unassigned people</p>
       </div>
       <div className="p-3 border-b border-dark-accent/50">
         <input
@@ -742,7 +762,7 @@ export default function FamilyTreeLeftSidebar({
             </div>
           </section>
         )}
-        {filteredFamilyUnits.length === 0 && filteredUnlinkedPeople.length === 0 ? (
+        {filteredFamilyUnits.length === 0 && filteredUnassignedEntities.length === 0 ? (
           <p className="text-dark-muted text-sm py-4 text-center">No entities yet.</p>
         ) : (
           <div className="space-y-3">
@@ -973,17 +993,23 @@ export default function FamilyTreeLeftSidebar({
               </section>
             )}
 
-            {filteredUnlinkedPeople.length > 0 && (
+            {filteredUnassignedEntities.length > 0 && (
               <section>
                 <h3 className="text-xs font-medium text-dark-muted uppercase tracking-wide mb-2 px-1">
-                  Unlinked
+                  Unassigned
                 </h3>
                 <div className="space-y-1">
-                  {filteredUnlinkedPeople.map((node) => {
-                    const name = node.data.name || "New Person";
+                  {filteredUnassignedEntities.map((node) => {
+                    const isPerson = node.data.kind === "person";
+                    const name = isPerson
+                      ? (node.data as PersonNodeData).name || "New Person"
+                      : getDisplayName(nodes, node.id, "union");
+                    const reasons = getUnassignedReasons(node.id, nodes, edges, families);
+                    const tooltip = reasons.length > 0 ? reasons.join("; ") : name;
+                    const isArmed = placementTargetId === node.id;
                     return (
                       <div key={node.id}>
-                        {editingPersonId === node.id ? (
+                        {isPerson && editingPersonId === node.id ? (
                           <div
                             className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border min-w-0 ${
                               isSelected(node.id) ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50" : "border-dark-accent/30 bg-dark-accent/30"
@@ -1003,23 +1029,30 @@ export default function FamilyTreeLeftSidebar({
                               autoFocus
                               className="flex-1 min-w-0 px-2 py-1 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
-                            <PersonGenBadge personId={node.id} nodes={nodes} getPersonGenLabel={getPersonGenLabel} pill />
                           </div>
                         ) : (
                           <button
                             type="button"
-                            onClick={(e) => handleEntityClick(e, node.id)}
-                            onDoubleClick={(e) => startEditingPerson(e, node.id, name)}
-                            title={name}
+                            onClick={(e) => handleUnassignedClick(e, node.id)}
+                            onDoubleClick={
+                              isPerson
+                                ? (e) => startEditingPerson(e, node.id, name)
+                                : undefined
+                            }
+                            title={tooltip}
                             className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border transition-colors text-left cursor-pointer min-w-0 ${
-                              isSelected(node.id)
-                                ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50"
-                                : "border-dark-accent/30 hover:bg-dark-accent/30"
+                              isArmed
+                                ? "border-amber-500 bg-amber-500/15 ring-1 ring-amber-500/40"
+                                : isSelected(node.id)
+                                  ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50"
+                                  : "border-dark-accent/30 hover:bg-dark-accent/30"
                             }`}
                           >
-                            <div className="w-6 h-6 rounded-full bg-dark-accent flex-shrink-0" />
+                            <div className={`w-6 h-6 rounded-full flex-shrink-0 ${isPerson ? "bg-dark-accent" : "bg-dark-accent/60"}`} />
                             <span className="text-dark-text text-sm flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
-                            <PersonGenBadge personId={node.id} nodes={nodes} getPersonGenLabel={getPersonGenLabel} pill />
+                            {isArmed ? (
+                              <span className="text-[10px] text-amber-400 flex-shrink-0">Click canvas</span>
+                            ) : null}
                           </button>
                         )}
                       </div>

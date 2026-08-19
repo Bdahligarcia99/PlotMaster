@@ -167,7 +167,7 @@ export default function FamilyTreeScreen() {
       if (draftCommitTimerRef.current) clearTimeout(draftCommitTimerRef.current);
       commitAllDirtyDraftsRef.current();
     };
-  }, [activeFamilyTabId]);
+  }, [displayMode, activeFamilyTabId]);
 
   const removePaneAndDraftForDoc = useCallback((docId: string, paneId?: string) => {
     setPanes((prev) => {

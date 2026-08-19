@@ -107,6 +107,12 @@ export default function FamilyTreeTextEditorWorkspace({
     setDirtyDocumentIds(dirtyIds);
   }, [drafts, setDirtyDocumentIds]);
 
+  useEffect(() => {
+    return () => {
+      setDirtyDocumentIds([]);
+    };
+  }, [setDirtyDocumentIds]);
+
   const setContent = useCallback(
     (docId: string, content: string) => {
       onDraftsChange({

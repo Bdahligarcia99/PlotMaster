@@ -21,69 +21,67 @@ import {
 } from "../../store/familyTreeStore";
 
 export default function FamilyTreeToolbar() {
-  const {
-    nodes,
-    selectedNodeIds,
-    snapToGrid,
-    setSnapToGrid,
-    showNodeInfoEnabled,
-    setShowNodeInfoEnabled,
-    nodeInfoTopLeft,
-    nodeInfoCenter,
-    nodeInfoSize,
-    setNodeInfoTopLeft,
-    setNodeInfoCenter,
-    setNodeInfoSize,
-    nodeInfoSpacing,
-    setNodeInfoSpacing,
-    autosaveEnabled,
-    setAutosaveEnabled,
-    activeProjectId,
-    clearTree,
-    addPerson,
-    createUnion,
-    createBackwardUnion,
-    addChild,
-    addParent,
-    linkPersonToUnion,
-    setSelectedNodeIds,
-    defaultUnionType,
-    setDefaultUnionType,
-    persistUnionSelectionOnChildCreate,
-    setPersistUnionSelectionOnChildCreate,
-    addGenerationAnchor,
-    showGenerationAnchors,
-    setShowGenerationAnchors,
-    showGenInheritIndicator,
-    setShowGenInheritIndicator,
-    genAnchorBandOpacity,
-    setGenAnchorBandOpacity,
-    genAnchorLineOpacity,
-    setGenAnchorLineOpacity,
-    generationAnchors,
-    genLabelMode,
-    setGenLabelMode,
-    marqueeToolActive,
-    setMarqueeToolActive,
-    branchToolActive,
-    setBranchToolActive,
-    showLegend,
-    setShowLegend,
-    sortUnion,
-    setUnionArrangeSpacing,
-    applyAverageParentSpacing,
-    applyAverageChildSpacing,
-    applyAverageVerticalSpacing,
-    applyParentAlignment,
-    nameRoleSuggestions,
-    runNameRoleAnalysis,
-    recomputeFamilies,
-    updatePersonNameParts,
-    updateUnionPartnerRole,
-    flushSaveAndSave,
-    reviewNodesModalOpen,
-    setReviewNodesModalOpen,
-  } = useFamilyTreeStore();
+  const nodes = useFamilyTreeStore((s) => s.nodes);
+  const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
+  const snapToGrid = useFamilyTreeStore((s) => s.snapToGrid);
+  const setSnapToGrid = useFamilyTreeStore((s) => s.setSnapToGrid);
+  const showNodeInfoEnabled = useFamilyTreeStore((s) => s.showNodeInfoEnabled);
+  const setShowNodeInfoEnabled = useFamilyTreeStore((s) => s.setShowNodeInfoEnabled);
+  const nodeInfoTopLeft = useFamilyTreeStore((s) => s.nodeInfoTopLeft);
+  const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
+  const nodeInfoSize = useFamilyTreeStore((s) => s.nodeInfoSize);
+  const setNodeInfoTopLeft = useFamilyTreeStore((s) => s.setNodeInfoTopLeft);
+  const setNodeInfoCenter = useFamilyTreeStore((s) => s.setNodeInfoCenter);
+  const setNodeInfoSize = useFamilyTreeStore((s) => s.setNodeInfoSize);
+  const nodeInfoSpacing = useFamilyTreeStore((s) => s.nodeInfoSpacing);
+  const setNodeInfoSpacing = useFamilyTreeStore((s) => s.setNodeInfoSpacing);
+  const autosaveEnabled = useFamilyTreeStore((s) => s.autosaveEnabled);
+  const setAutosaveEnabled = useFamilyTreeStore((s) => s.setAutosaveEnabled);
+  const activeProjectId = useFamilyTreeStore((s) => s.activeProjectId);
+  const clearTree = useFamilyTreeStore((s) => s.clearTree);
+  const addPerson = useFamilyTreeStore((s) => s.addPerson);
+  const createUnion = useFamilyTreeStore((s) => s.createUnion);
+  const createBackwardUnion = useFamilyTreeStore((s) => s.createBackwardUnion);
+  const addChild = useFamilyTreeStore((s) => s.addChild);
+  const addParent = useFamilyTreeStore((s) => s.addParent);
+  const linkPersonToUnion = useFamilyTreeStore((s) => s.linkPersonToUnion);
+  const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const defaultUnionType = useFamilyTreeStore((s) => s.defaultUnionType);
+  const setDefaultUnionType = useFamilyTreeStore((s) => s.setDefaultUnionType);
+  const persistUnionSelectionOnChildCreate = useFamilyTreeStore((s) => s.persistUnionSelectionOnChildCreate);
+  const setPersistUnionSelectionOnChildCreate = useFamilyTreeStore((s) => s.setPersistUnionSelectionOnChildCreate);
+  const addGenerationAnchor = useFamilyTreeStore((s) => s.addGenerationAnchor);
+  const showGenerationAnchors = useFamilyTreeStore((s) => s.showGenerationAnchors);
+  const setShowGenerationAnchors = useFamilyTreeStore((s) => s.setShowGenerationAnchors);
+  const showGenInheritIndicator = useFamilyTreeStore((s) => s.showGenInheritIndicator);
+  const setShowGenInheritIndicator = useFamilyTreeStore((s) => s.setShowGenInheritIndicator);
+  const genAnchorBandOpacity = useFamilyTreeStore((s) => s.genAnchorBandOpacity);
+  const setGenAnchorBandOpacity = useFamilyTreeStore((s) => s.setGenAnchorBandOpacity);
+  const genAnchorLineOpacity = useFamilyTreeStore((s) => s.genAnchorLineOpacity);
+  const setGenAnchorLineOpacity = useFamilyTreeStore((s) => s.setGenAnchorLineOpacity);
+  const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
+  const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
+  const setGenLabelMode = useFamilyTreeStore((s) => s.setGenLabelMode);
+  const marqueeToolActive = useFamilyTreeStore((s) => s.marqueeToolActive);
+  const setMarqueeToolActive = useFamilyTreeStore((s) => s.setMarqueeToolActive);
+  const branchToolActive = useFamilyTreeStore((s) => s.branchToolActive);
+  const setBranchToolActive = useFamilyTreeStore((s) => s.setBranchToolActive);
+  const showLegend = useFamilyTreeStore((s) => s.showLegend);
+  const setShowLegend = useFamilyTreeStore((s) => s.setShowLegend);
+  const sortUnion = useFamilyTreeStore((s) => s.sortUnion);
+  const setUnionArrangeSpacing = useFamilyTreeStore((s) => s.setUnionArrangeSpacing);
+  const applyAverageParentSpacing = useFamilyTreeStore((s) => s.applyAverageParentSpacing);
+  const applyAverageChildSpacing = useFamilyTreeStore((s) => s.applyAverageChildSpacing);
+  const applyAverageVerticalSpacing = useFamilyTreeStore((s) => s.applyAverageVerticalSpacing);
+  const applyParentAlignment = useFamilyTreeStore((s) => s.applyParentAlignment);
+  const nameRoleSuggestions = useFamilyTreeStore((s) => s.nameRoleSuggestions);
+  const runNameRoleAnalysis = useFamilyTreeStore((s) => s.runNameRoleAnalysis);
+  const recomputeFamilies = useFamilyTreeStore((s) => s.recomputeFamilies);
+  const updatePersonNameParts = useFamilyTreeStore((s) => s.updatePersonNameParts);
+  const updateUnionPartnerRole = useFamilyTreeStore((s) => s.updateUnionPartnerRole);
+  const flushSaveAndSave = useFamilyTreeStore((s) => s.flushSaveAndSave);
+  const reviewNodesModalOpen = useFamilyTreeStore((s) => s.reviewNodesModalOpen);
+  const setReviewNodesModalOpen = useFamilyTreeStore((s) => s.setReviewNodesModalOpen);
 
   const [message, setMessage] = useState<string | null>(null);
   const [childMenuOpen, setChildMenuOpen] = useState(false);

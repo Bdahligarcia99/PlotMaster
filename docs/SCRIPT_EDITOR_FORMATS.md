@@ -7,7 +7,7 @@ Source of truth for each format:
 | Module | Generator | Parser | Component |
 |---|---|---|---|
 | Characters | `generateChartsScript` in `src/store/chartsStore.ts` | `parseChartsScript` in `src/parseChartsScript.ts` | `src/components/charts/ChartsScriptPane.tsx` |
-| Family Tree | `generateFamilyTreeScript` in `src/store/familyTreeStore.ts` | *(view-only, no apply yet — see below)* | `src/components/family-tree/FamilyTreeScriptPane.tsx` |
+| Family Tree | `generateFamilyTreeScript` in `src/store/familyTreeStore.ts` | `parseFamilyTreeScript` in `src/store/familyTreeScript.ts` | `src/components/family-tree/FamilyTreeScriptPane.tsx` |
 | Timeline Outliner | `generateTimelineScript` / `compactTimelineScriptDisplay` in `src/store/timelineScript.ts` | `parseTimelineScript` in `src/store/timelineScript.ts` | `src/components/timeline/TimelineScriptPane.tsx` |
 | Ideas Playground | *(static placeholder string)* | none | `src/components/ideas/IdeasScriptPane.tsx` |
 
@@ -110,9 +110,9 @@ h1 "Section Title" | Note text goes here | Age: 34, Element: Fire | [image: Capt
 
 ---
 
-## 2. Family Tree DSL (`@declarations` / `@familyTree`)
+## 2. Family Tree DSL (`@declarations` / `@familyTree` / `@branches`)
 
-**Status:** generator-only today — the Code pane shows a read-only placeholder ("Code editor coming soon"). This describes the exact text the **View** pane and **Copy** button produce; there is no Run/Apply step yet.
+Fully round-trippable: edit in the Code pane (Script layout) or per-family Text Editor documents; changes auto-commit after a short debounce via `applyFamilyDocumentEdits`, backed by `parseFamilyTreeScript`. Legacy bracket/`@unionId:` documents are migrated once on load.
 
 ### Top-level structure
 
@@ -121,16 +121,46 @@ h1 "Section Title" | Note text goes here | Age: 34, Element: Fire | [image: Capt
 @style1 "Dashed Blue" { stroke: #3b82f6, width: 2, dash: [4, 4], description: "Adoption" }
 
 @declarations
-["First", "Middle", "Last"] # id: _abc123 nickname: Bud, Buddy gen: 0
-["Jane", "", "Doe"] # id: _xyz789
+
+Person _abc123 {
+  first: "John"
+  middle: ""
+  last: "Doe"
+  nicknames: "Bud, Buddy"
+  notes: ""
+  gen: 0
+  x: 1424
+  y: 512
+}
+
+Person _newperson {
+  first: "New"
+  middle: ""
+  last: "Person"
+  nicknames: ""
+  notes: ""
+  x: ?
+  y: ?
+}
 
 @familyTree
 
-@_union1: John Doe (father) <=> Jane Doe (mother) {Gen A} [style: "Dashed Blue"] [arrange: parents=40, children=60, vertical=120, align=center] {
-  children: -> Kid One {Gen B}, -> Kid Two {Gen B}
+Union _union1 {
+  x: 800
+  y: 384
+  style: "Dashed Blue"
+  arrange: parents=40, children=60, vertical=120, align=center
+  Person _p3 type: father
+  Person _p4 type: mother
+  Person _p5 type: child { dx: -112, dy: 70 }
+  notes: ""
 }
 
-@_union2: Solo Person <=> Partner Person
+@branches
+
+Branch _b1 "John Doe's Branch" root: _abc123 mode: tab {
+  unions: [_union1, _union2]
+}
 ```
 
 ### Connection Styles (optional, only if any are defined)
@@ -141,58 +171,74 @@ h1 "Section Title" | Note text goes here | Age: 34, Element: Fire | [image: Capt
 ```
 - One line per style; blank line terminates the block.
 
-### `@declarations` block — person declarations
-
-Three declaration renderings depending on settings, selected by `compactDeclarations` and `showNodeInfo`:
-
-**1. Default (verbose, one person per line):**
-```
-[First, Middle, Last] # id: <nodeId><nickname: a, b><gen: N>
-```
-- Bracket is `[first, middle, last]` — empty parts stay empty (`[Jane, , Doe]`); parts containing a comma or `"` are wrapped in quotes with `""`-doubled internal quotes (e.g. `["Smith, Jr.", , Doe]`).
-- Legacy single-name bracket `[Full Name]` is also accepted on parse and split into first/middle/last heuristically.
-- `# id: <nodeId>` is required metadata (not a real comment here, despite the `#`).
-- Optional ` nickname: a, b, c` (comma-separated, quoted if a value contains a comma).
-- Optional ` gen: N` where `N` is the 0-based index into the current generation-anchor list (only emitted when generation anchors exist).
-
-**2. Compact (`compactDeclarations` on):** all people (and unions, if `showNodeInfo` is also on) joined on **one single line**, comma-separated:
-```
-[First, Middle, Last](<nodeId>) nickname: a, b gen: 0, [Other, , Person](<nodeId2>), Union <unionId>
-```
-- Per-person token: `<bracket>(<id>)<nickname tag><gen tag>`, optionally suffixed with inline node-info `[x:123 y:456 | cx:.. cy:.. | w:.. h:..]` when node-info display is enabled.
-- Per-union token (only included when `showNodeInfo` is on): `Union <unionId>` with the same optional inline node-info suffix.
-
-**3. Verbose + node-info block (`showNodeInfo` on, not compact):** each person/union gets its own multi-line block:
-```
-[First, Middle, Last] (<nodeId>) nickname: a, b gen: 0
-  x: 120
-  y: 340
-  cx: 220
-  cy: 400
-  w: 200
-  h: 120
-
-Union <unionId>
-  x: ...
-  y: ...
-```
-- Only the enabled sub-fields (`x`/`y` when "top-left" is on, `cx`/`cy` when "center" is on, `w`/`h` when "size" is on) are emitted; blank line separates each person/union entry.
-
-### `@familyTree` block — unions and children
+### `@declarations` — person blocks
 
 ```
-@<unionId>: <LeftName>[ (<leftRole>)] <=> <RightName>[ (<rightRole>)][ {Gen <label>}][ [style: "<name>"]][ [arrange: parents=N, children=N, vertical=N, align=<left|center|right>]] {
-  children: -> <ChildName>[{Gen <label>}], -> <ChildName2>[{Gen <label>}]
+Person <nodeId> {
+  first: "<escaped>"
+  middle: "<escaped>"
+  last: "<escaped>"
+  nicknames: "<comma-separated, escaped>"
+  notes: "<escaped>"
+  gen: <N>              # optional; 0-based index into generation-anchor list
+  x: <number | ?>       # `?` = unset / click-to-place pending
+  y: <number | ?>
+  cx: <number>           # optional node-info overlay when enabled
+  cy: <number>
+  w: <number>
+  h: <number>
 }
 ```
-- One block per union that has two resolvable partners; unions missing a partner are skipped entirely.
-- `<unionId>` — the union node's id, no leading underscore stripped.
-- Partner names are resolved via `getPersonDisplayName`; an optional parenthetical role (`father`/`mother`) follows a partner name when set.
-- `{Gen <label>}` — only for **root unions** (neither partner has parents): `{Gen A}` if both partners share a generation label, `{Gen A / Gen B}` if they differ, `{Gen A / ?}` / `{Gen ? / Gen B}` if only one side has a resolvable label.
-- `[style: "<name>"]` — only when the union references a saved connection style.
-- `[arrange: ...]` — only the sub-keys that have explicit overrides are included, in this order: `parents=`, `children=`, `vertical=`, `align=`.
-- If the union has children, the header ends in ` {` and a `  children: -> Name1, -> Name2` line follows (each child prefixed with `-> ` and suffixed with its own `{Gen <label>}` tag when it has a generation anchor), closed by a `}` line. Childless unions are a single header line with no trailing brace.
-- Blank line separates each union block.
+
+- One `Person <id> { ... }` block per person declaration. At top-level section depth, this is a declaration; inside a `Union { }` block the same keyword denotes a member reference (see below).
+- `x: ?` / `y: ?` mark an unplaced person (hidden from canvas until placed via sidebar + canvas click).
+- **Compact mode** (`compactDeclarations` on): each person collapses to a single line: `Person <id> { first: "..." middle: "..." ... x: 1424 y: 512 }`.
+
+### `@familyTree` — union blocks
+
+```
+Union <unionId> {
+  x: <number | ?>
+  y: <number | ?>
+  style: "<connection style name>"     # optional
+  arrange: parents=N, children=N, vertical=N, align=<left|center|right>  # optional overrides only
+  Person <id> type: father
+  Person <id> type: mother
+  Person <id> type: parent             # partner slot with role not yet known
+  Person <id> type: child { dx: <n>, dy: <n> }
+  notes: "<escaped>"
+}
+```
+
+- Partner slots come from the first `father` / `mother` / `parent` members in order; remaining `parent` members beyond two and all `child` members become child edges.
+- `type:` is one of `father | mother | parent | child`.
+- Union `x`/`y` are absolute canvas coordinates. Member `dx`/`dy` are relative to the union origin (union position = `0,0`). Parser also accepts `x'`/`y'` as aliases for `dx`/`dy`.
+- Member `dx`/`dy` are only emitted when a person's absolute position differs from the default layout slot for that role.
+- A union with `x: ?` forces every member person to unset coordinates too.
+- `Person ? type: father` (and similar) are placeholder members tolerated by the parser — skipped on apply so a freshly inserted union can commit without partners yet.
+- **Compact mode:** `Union <id> { x: 800 y: 384 notes: "" style: "..." }` on one line.
+
+### `@branches` — branch blocks (optional)
+
+```
+Branch <branchId> "<display name>" root: <rootPersonId> mode: <tab|...> {
+  unions: [<unionId>, ...]
+  description: "<escaped>"    # optional
+}
+```
+
+- `unions:` is derived from `rootPersonId` traversal on generation and is **ignored on parse**; the first entry is always the union where the root is a parent. `name`, `root`, and `mode` round-trip.
+
+### Legacy format (migrated on load)
+
+Older documents used bracket declarations and arrow unions:
+
+```
+["First", "Middle", "Last"] # id: _abc123
+@_union1: John (father) <=> Jane (mother) { children: -> Kid }
+```
+
+These are detected on load and regenerated into the block format above from the graph model (one-time, idempotent).
 
 ---
 

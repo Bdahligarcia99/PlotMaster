@@ -125,13 +125,6 @@ export default function FamilyTreeScriptPane({ drafts, onDraftsChange }: FamilyT
     };
   }, [drafts, hasDraftChanges]);
 
-  useEffect(() => {
-    return () => {
-      if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
-      commitRef.current();
-    };
-  }, []);
-
   const highlightNodeIds = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
 
   useEffect(() => {
