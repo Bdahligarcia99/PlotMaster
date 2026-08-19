@@ -7,6 +7,7 @@ const SCRIPT_MIN_H = 160;
 const SCRIPT_MAX_H = 520;
 const UNIFORM_PANE_WIDTH_DEFAULT_PX = 420;
 import Button from "../components/ui/Button";
+import ErrorBoundary from "../components/ui/ErrorBoundary";
 import Modal from "../components/ui/Modal";
 import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
@@ -163,11 +164,16 @@ export default function FamilyTreeScreen() {
   }, [textDrafts, hasDraftChanges, commitAllDirtyDrafts]);
 
   useEffect(() => {
+    if (draftCommitTimerRef.current) clearTimeout(draftCommitTimerRef.current);
+    commitAllDirtyDraftsRef.current();
+  }, [displayMode]);
+
+  useEffect(() => {
     return () => {
       if (draftCommitTimerRef.current) clearTimeout(draftCommitTimerRef.current);
       commitAllDirtyDraftsRef.current();
     };
-  }, [displayMode, activeFamilyTabId]);
+  }, [activeFamilyTabId]);
 
   const removePaneAndDraftForDoc = useCallback((docId: string, paneId?: string) => {
     setPanes((prev) => {
@@ -521,7 +527,8 @@ export default function FamilyTreeScreen() {
 
       <div className="flex-1 flex min-h-0 flex-col">
         {!isTextEditor && <FamilyTreeToolbar />}
-        <div className="flex-1 flex min-h-0">
+        <ErrorBoundary fallbackTitle="Family Tree error">
+      <div className="flex-1 flex min-h-0">
           {leftSidebarOpen && (
             <>
               <div
@@ -630,6 +637,7 @@ export default function FamilyTreeScreen() {
           </div>
           {inspectorOpen && !isTextEditor && <FamilyTreeInspector />}
         </div>
+      </ErrorBoundary>
       </div>
 
       <Modal

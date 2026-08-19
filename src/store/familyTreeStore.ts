@@ -7,7 +7,9 @@ import {
   combineFamilyDocumentContents,
   generateDocumentDisplayContent,
   getScopeIdsForFamily,
-  getUnassignedPersonIds,
+  formatMainDocumentName,
+  migrateDocumentOwnership,
+  nextDocumentSuffix,
   migrateLegacyDocumentContent,
   previewFamilyDocumentDeleteCounts,
   scanDocumentDeclaredIds,
@@ -79,6 +81,8 @@ export interface PersonNodeData {
   partnerUnionOrder?: string[];
   /** True when canvas coordinates are not yet assigned (x: ? / y: ? in script). */
   positionUnset?: boolean;
+  /** When true, this person stays fixed during union group drag and keeps custody on family transfer. */
+  anchored?: boolean;
 }
 
 /** True if a name part is "filled" (non-empty and not unknown placeholder like ? or ???). */
@@ -234,6 +238,7 @@ function formatPersonBlockLines(
       `notes: "${escapeScriptQuoted(n.data.notes ?? "")}"`,
     ];
     if (opts.genIndex !== null) parts.push(`gen: ${opts.genIndex}`);
+    if (n.data.anchored) parts.push("anchored: true");
     const xy = unset
       ? "x: ? y: ?"
       : `x: ${Math.round(n.position.x)} y: ${Math.round(n.position.y)}`;
@@ -248,6 +253,7 @@ function formatPersonBlockLines(
   lines.push(`${indent}nicknames: "${nickStr}"`);
   lines.push(`${indent}notes: "${escapeScriptQuoted(n.data.notes ?? "")}"`);
   if (opts.genIndex !== null) lines.push(`${indent}gen: ${opts.genIndex}`);
+  if (n.data.anchored) lines.push(`${indent}anchored: true`);
   const xLine = formatCoordField("x", n.position.x, unset, indent);
   const yLine = formatCoordField("y", n.position.y, unset, indent);
   if (xLine) lines.push(xLine);
@@ -449,7 +455,6 @@ export type PendingBloodlineWarning = {
 export interface FamilyTreeSavedState {
   nodes: Node<FamilyTreeNodeData>[];
   edges: Edge[];
-  anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
   connectionStyles?: ConnectionStyleDef[];
   /** @deprecated Legacy migration source. */
@@ -1017,10 +1022,13 @@ function toFamilyGroup(
   nodes: Node<FamilyTreeNodeData>[],
   edges: Edge[]
 ): FamilyGroup {
+  const explicit = [...(record.personIds ?? [])].sort();
+  const fromUnions = getFamilyMemberPersonIds(record.unionIds, nodes, edges);
   return {
     ...record,
+    personIds: explicit,
     unionIds: [...record.unionIds].sort(),
-    memberPersonIds: getFamilyMemberPersonIds(record.unionIds, nodes, edges),
+    memberPersonIds: Array.from(new Set([...explicit, ...fromUnions])),
   };
 }
 
@@ -1081,6 +1089,84 @@ function computeComponentsForUnionSubset(
   return Array.from(groups.values()).map((ids) => [...ids].sort());
 }
 
+export interface FamilyClusterAnalysis {
+  assignedUnionIds: string[];
+  unassignedUnionIds: string[];
+  unionlessPersonIds: string[];
+}
+
+/** Within a family tab, which unions form the main connected cluster vs unassigned fragments. */
+export function computeFamilyClusterAnalysis(
+  family: FamilyGroup,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): FamilyClusterAnalysis {
+  const familyUnionIds = family.unionIds.filter((uid) => nodes.some((n) => n.id === uid));
+  const unionlessPersonIds = getUnionlessPersonIdsInFamily(family, nodes, edges);
+
+  if (familyUnionIds.length === 0) {
+    return { assignedUnionIds: [], unassignedUnionIds: [], unionlessPersonIds };
+  }
+
+  const components = computeComponentsForUnionSubset(familyUnionIds, nodes, edges);
+  if (components.length <= 1) {
+    return {
+      assignedUnionIds: [...familyUnionIds],
+      unassignedUnionIds: [],
+      unionlessPersonIds,
+    };
+  }
+
+  components.sort((a, b) => b.length - a.length);
+  const maxSize = components[0]!.length;
+  const winners = components.filter((c) => c.length === maxSize);
+  if (winners.length > 1) {
+    return {
+      assignedUnionIds: [],
+      unassignedUnionIds: [...familyUnionIds],
+      unionlessPersonIds,
+    };
+  }
+
+  const assignedSet = new Set(winners[0]!);
+  return {
+    assignedUnionIds: [...assignedSet],
+    unassignedUnionIds: familyUnionIds.filter((uid) => !assignedSet.has(uid)),
+    unionlessPersonIds,
+  };
+}
+
+function getUnionlessPersonIdsInFamily(
+  family: FamilyGroup,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  const result: string[] = [];
+  for (const pid of family.memberPersonIds) {
+    const node = nodes.find((n) => n.id === pid);
+    if (!node || (node.data as PersonNodeData).kind !== "person") continue;
+    const linked = edges.some(
+      (e) =>
+        (isPartnerEdge(e) && (e.source === pid || e.target === pid)) ||
+        (isChildEdge(e) && (e.source === pid || e.target === pid))
+    );
+    if (!linked) result.push(pid);
+  }
+  return result;
+}
+
+/** True when a union is in an unassigned cluster within its family tab. */
+export function isUnionClusterUnassigned(
+  unionId: string,
+  family: FamilyGroup,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): boolean {
+  if (!family.unionIds.includes(unionId)) return false;
+  const analysis = computeFamilyClusterAnalysis(family, nodes, edges);
+  return analysis.unassignedUnionIds.includes(unionId);
+}
+
 function assignAutoFamilyNames(families: FamilyGroup[], nodes: Node<FamilyTreeNodeData>[]): void {
   const autoNamed = families.filter((f) => !f.isCustomName);
   autoNamed.sort(
@@ -1095,10 +1181,14 @@ function assignAutoFamilyNames(families: FamilyGroup[], nodes: Node<FamilyTreeNo
   }
 }
 
-function createNewFamilyRecord(unionIds: string[]): PersistedFamilyRecord {
+function createNewFamilyRecord(
+  unionIds: string[] = [],
+  personIds: string[] = []
+): PersistedFamilyRecord {
   return {
     id: generateFamilyId(),
     unionIds: [...unionIds].sort(),
+    personIds: [...personIds].sort(),
     name: "",
     isCustomName: false,
     description: "",
@@ -1576,16 +1666,43 @@ export function analyzeUnassignedSuggestions(
   const suggestions: NameRoleSuggestion[] = [];
   for (const n of nodes) {
     const reasons = getUnassignedReasons(n.id, nodes, edges, families);
-    if (reasons.length === 0) continue;
+    for (const family of families) {
+      reasons.push(...getFamilyNodeWarnings(n.id, family, nodes, edges));
+    }
+    const unique = [...new Set(reasons)];
+    if (unique.length === 0) continue;
     suggestions.push({
       nodeId: n.id,
       field: "unassigned",
       currentValue: "Unassigned",
       proposedValue: "—",
-      reason: reasons.join("; "),
+      reason: unique.join("; "),
     });
   }
   return suggestions;
+}
+
+/** Warning reasons for nodes within a family tab (disconnected union cluster, unionless person). */
+export function getFamilyNodeWarnings(
+  nodeId: string,
+  family: FamilyGroup,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  const warnings: string[] = [];
+  if (!family.unionIds.includes(nodeId) && !family.memberPersonIds.includes(nodeId)) {
+    return warnings;
+  }
+  const analysis = computeFamilyClusterAnalysis(family, nodes, edges);
+  const node = nodes.find((n) => n.id === nodeId);
+  if (!node) return warnings;
+  if (node.data.kind === "person" && analysis.unionlessPersonIds.includes(nodeId)) {
+    warnings.push("Not linked to any union in this family");
+  }
+  if (node.data.kind === "union" && analysis.unassignedUnionIds.includes(nodeId)) {
+    warnings.push("Union cluster is not connected to the main family graph");
+  }
+  return warnings;
 }
 
 /** Human-readable reasons a node is considered unassigned. */
@@ -2106,7 +2223,6 @@ interface FamilyTreeStore {
   nodeSizesById: Record<string, { width: number; height: number }>;
   selectedNodeIds: string[];
   primarySelectedNodeId: string | null;
-  anchorNodeId: string | null;
   viewportBounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
   snapToGrid: boolean;
   showNodeInfoEnabled: boolean;
@@ -2161,7 +2277,6 @@ interface FamilyTreeStore {
   setNodes: (nodes: Node<FamilyTreeNodeData>[] | ((prev: Node<FamilyTreeNodeData>[]) => Node<FamilyTreeNodeData>[])) => void;
   setEdges: (edges: Edge[] | ((prev: Edge[]) => Edge[])) => void;
   setSelectedNodeIds: (ids: string[] | ((prev: string[]) => string[])) => void;
-  setAnchorNodeId: (id: string | null) => void;
   setViewportBounds: (bounds: { minX: number; minY: number; maxX: number; maxY: number } | null) => void;
   setSnapToGrid: (v: boolean) => void;
   setShowNodeInfoEnabled: (v: boolean) => void;
@@ -2251,6 +2366,8 @@ interface FamilyTreeStore {
   families: FamilyGroup[];
   /** null = "All" tab; otherwise family id. */
   activeFamilyTabId: string | null;
+  /** Last non-null family tab — used when assigning orphan nodes. */
+  lastActiveFamilyTabId: string | null;
   isolationModeActive: boolean;
   /** Set when a family tab is clicked to trigger canvas focus. */
   pendingFocusFamilyId: string | null;
@@ -2280,6 +2397,13 @@ interface FamilyTreeStore {
   deleteBranch: (branchId: string) => void;
   recomputeFamilies: () => void;
   setActiveFamilyTabId: (id: string | null) => void;
+  /** Create an empty family tab (optionally seeded with unions/persons). */
+  createFamily: (unionIds?: string[], personIds?: string[]) => string;
+  deleteFamily: (familyId: string) => void;
+  moveNodesToFamily: (nodeIds: string[], familyId: string) => void;
+  /** Move unassigned union clusters to a new family tab; returns new family id. */
+  transferUnionsToNewFamily: (unionIds: string[], sourceFamilyId: string) => string | null;
+  setPersonAnchored: (personId: string, anchored: boolean) => void;
   setIsolationModeActive: (v: boolean) => void;
   setPendingFocusFamilyId: (id: string | null) => void;
   setInspectorFamilyId: (id: string | null) => void;
@@ -3151,74 +3275,59 @@ function reconcileFamiliesImpl(
   set: (partial: Partial<FamilyTreeStore> | ((s: FamilyTreeStore) => Partial<FamilyTreeStore>)) => void
 ) {
   const s = get();
-  const { nodes, edges, families: prevFamilies, activeFamilyTabId } = s;
-  const components = computeFamilyComponents(nodes, edges);
-  const liveUnionIds = new Set(components.flatMap((c) => c.unionIds));
+  const { nodes, edges, families: prevFamilies, activeFamilyTabId, lastActiveFamilyTabId } = s;
+
+  const liveUnionIds = new Set(
+    nodes
+      .filter((n) => n.type === "union" && (n.data as UnionNodeData).kind === "union")
+      .map((n) => n.id)
+  );
+  const livePersonIds = new Set(
+    nodes.filter((n) => (n.data as PersonNodeData).kind === "person").map((n) => n.id)
+  );
 
   let working: PersistedFamilyRecord[] = prevFamilies.map(({ memberPersonIds: _mp, ...rest }) => ({
     ...rest,
-    unionIds: [...rest.unionIds].sort(),
+    unionIds: rest.unionIds.filter((uid) => liveUnionIds.has(uid)).sort(),
+    personIds: (rest.personIds ?? []).filter((pid) => livePersonIds.has(pid)).sort(),
   }));
 
-  // Prune families whose unions no longer exist on the canvas
-  working = working.filter((f) => f.unionIds.some((uid) => liveUnionIds.has(uid)));
+  working = working.filter(
+    (f) => f.unionIds.length > 0 || (f.personIds ?? []).length > 0
+  );
 
-  const processedComponentKeys = new Set<string>();
-  const additions: PersistedFamilyRecord[] = [];
+  if (working.length === 0 && nodes.length > 0) {
+    working = [
+      createNewFamilyRecord(Array.from(liveUnionIds), Array.from(livePersonIds)),
+    ];
+  }
 
-  for (const component of components) {
-    const compKey = unionIdsKey(component.unionIds);
-    if (processedComponentKeys.has(compKey)) continue;
+  if (working.length > 0) {
+    const targetId = activeFamilyTabId ?? lastActiveFamilyTabId ?? working[0]!.id;
+    const targetIdx = Math.max(
+      0,
+      working.findIndex((f) => f.id === targetId)
+    );
+    const target = working[targetIdx]!;
 
-    const overlapping = working.filter((f) => setsOverlap(f.unionIds, component.unionIds));
-
-    if (overlapping.length === 0) {
-      additions.push(createNewFamilyRecord(component.unionIds));
-      processedComponentKeys.add(compKey);
-    } else if (overlapping.length === 1) {
-      const family = overlapping[0]!;
-      const subComponents = computeComponentsForUnionSubset(family.unionIds, nodes, edges);
-
-      if (subComponents.length <= 1) {
-        // Ordinary growth or unchanged
-        family.unionIds = component.unionIds;
-      } else {
-        // Split finalize: assign largest piece to original family, create new for others
-        subComponents.sort((a, b) => b.length - a.length);
-        const primaryPiece = subComponents[0]!;
-        family.unionIds = primaryPiece;
-        for (let i = 1; i < subComponents.length; i++) {
-          additions.push(createNewFamilyRecord(subComponents[i]!));
-        }
+    for (const uid of liveUnionIds) {
+      if (!working.some((f) => f.unionIds.includes(uid))) {
+        target.unionIds = [...new Set([...target.unionIds, uid])].sort();
       }
-      processedComponentKeys.add(compKey);
-    } else {
-      // Unification: freeze matched families, create or update unified family
-      const parentIds = overlapping.map((f) => f.id).sort();
-      const parentPair: [string, string] | undefined =
-        parentIds.length >= 2 ? [parentIds[0]!, parentIds[1]!] : undefined;
+    }
 
-      let unified = working.find(
-        (f) =>
-          f.parentFamilyIds &&
-          parentPair &&
-          f.parentFamilyIds[0] === parentPair[0] &&
-          f.parentFamilyIds[1] === parentPair[1]
-      );
-
-      if (!unified) {
-        unified = createNewFamilyRecord(component.unionIds);
-        if (parentPair) unified.parentFamilyIds = parentPair;
-        additions.push(unified);
-      } else {
-        unified.unionIds = component.unionIds;
+    for (const pid of livePersonIds) {
+      const owned = working.some((f) => {
+        if ((f.personIds ?? []).includes(pid)) return true;
+        return getFamilyMemberPersonIds(f.unionIds, nodes, edges).includes(pid);
+      });
+      if (!owned) {
+        target.personIds = [...new Set([...(target.personIds ?? []), pid])].sort();
       }
-      processedComponentKeys.add(compKey);
     }
   }
 
-  const allRecords = [...working, ...additions];
-  let familyGroups = allRecords.map((r) => toFamilyGroup(r, nodes, edges));
+  const familyGroups = working.map((r) => toFamilyGroup(r, nodes, edges));
   assignAutoFamilyNames(familyGroups, nodes);
 
   let newActiveTabId = activeFamilyTabId;
@@ -3285,49 +3394,76 @@ function ensureDefaultDocumentsImpl(
   const now = Date.now();
 
   for (const family of s.families) {
-    const existing = s.documents.filter(
-      (d) =>
-        scanDocumentDeclaredIds(d.content).unionIds.some((uid) => family.unionIds.includes(uid)) ||
-        scanDocumentDeclaredIds(d.content).personIds.some((pid) =>
-          family.memberPersonIds.includes(pid)
-        )
-    );
-    if (existing.length > 0) continue;
-    const scopeIds = getScopeIdsForFamily(family, s.nodes, s.edges);
-    if (scopeIds.size === 0) continue;
-    additions.push({
-      id: generateId(),
-      name: family.name,
-      content: generateFamilyTreeScript(s.nodes, s.edges, {
-        ...opts,
-        scopeNodeIds: scopeIds,
-      }),
-      updatedAt: now,
-    });
-  }
+    const familyDocs = s.documents.filter((d) => d.familyId === family.id);
+    const mainDocs = familyDocs.filter((d) => d.role !== "unassigned");
 
-  const unassignedIds = getUnassignedPersonIds(s.families, s.nodes);
-  if (unassignedIds.length > 0) {
-    const hasUnassignedDoc = s.documents.some((d) => {
-      const scanned = scanDocumentDeclaredIds(d.content);
-      return scanned.personIds.some((pid) => unassignedIds.includes(pid));
-    });
-    if (!hasUnassignedDoc) {
+    if (mainDocs.length === 0) {
+      const analysis = computeFamilyClusterAnalysis(family, s.nodes, s.edges);
+      const assignedScope = new Set<string>();
+      for (const uid of analysis.assignedUnionIds) {
+        assignedScope.add(uid);
+        for (const mid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
+          assignedScope.add(mid);
+        }
+      }
+      for (const pid of family.personIds ?? []) {
+        if (!analysis.unionlessPersonIds.includes(pid)) assignedScope.add(pid);
+      }
+      if (assignedScope.size > 0) {
+        const suffix = nextDocumentSuffix(
+          familyDocs.map((d) => d.name),
+          family.name
+        );
+        additions.push({
+          id: generateId(),
+          name: formatMainDocumentName(family.name, suffix),
+          familyId: family.id,
+          role: "main",
+          content: generateFamilyTreeScript(s.nodes, s.edges, {
+            ...opts,
+            scopeNodeIds: assignedScope,
+          }),
+          updatedAt: now,
+        });
+      }
+    }
+
+    const analysis = computeFamilyClusterAnalysis(family, s.nodes, s.edges);
+    const unassignedScope = new Set<string>([
+      ...analysis.unassignedUnionIds,
+      ...analysis.unionlessPersonIds,
+    ]);
+    for (const uid of analysis.unassignedUnionIds) {
+      for (const mid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
+        unassignedScope.add(mid);
+      }
+    }
+
+    const existingUnassigned = familyDocs.find((d) => d.role === "unassigned");
+    if (unassignedScope.size > 0 && !existingUnassigned) {
       additions.push({
         id: generateId(),
         name: "Unassigned",
+        familyId: family.id,
+        role: "unassigned",
         content: generateFamilyTreeScript(s.nodes, s.edges, {
           ...opts,
-          scopeNodeIds: new Set(unassignedIds),
+          scopeNodeIds: unassignedScope,
         }),
         updatedAt: now,
+      });
+    } else if (unassignedScope.size === 0 && existingUnassigned) {
+      set({
+        documents: s.documents.filter((d) => d.id !== existingUnassigned.id),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
       });
     }
   }
 
   if (additions.length > 0) {
     set({
-      documents: [...s.documents, ...additions],
+      documents: [...get().documents, ...additions],
       hasUnsavedChanges: true,
       lastSaveError: null,
     });
@@ -3343,7 +3479,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   nodeSizesById: {},
   selectedNodeIds: [],
   primarySelectedNodeId: null,
-  anchorNodeId: null,
   viewportBounds: null as { minX: number; minY: number; maxX: number; maxY: number } | null,
   snapToGrid: true,
   showNodeInfoEnabled: false,
@@ -3392,6 +3527,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   hoveredConnectionInfo: null,
   families: [] as FamilyGroup[],
   activeFamilyTabId: null as string | null,
+  lastActiveFamilyTabId: null as string | null,
   isolationModeActive: false,
   pendingFocusFamilyId: null as string | null,
   pendingBloodlineWarning: null as PendingBloodlineWarning | null,
@@ -3429,7 +3565,164 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     reconcileFamiliesImpl(get, set);
     ensureDefaultDocumentsImpl(get, set);
   },
-  setActiveFamilyTabId: (id) => set({ activeFamilyTabId: id }),
+  setActiveFamilyTabId: (id) =>
+    set({
+      activeFamilyTabId: id,
+      ...(id != null ? { lastActiveFamilyTabId: id } : {}),
+    }),
+  createFamily: (unionIds = [], personIds = []) => {
+    const s = get();
+    const record = createNewFamilyRecord(unionIds, personIds);
+    const groups = [...s.families.map(({ memberPersonIds: _m, ...r }) => r), record].map((r) =>
+      toFamilyGroup(r, s.nodes, s.edges)
+    );
+    assignAutoFamilyNames(groups, s.nodes);
+    set({
+      families: groups,
+      activeFamilyTabId: record.id,
+      lastActiveFamilyTabId: record.id,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    ensureDefaultDocumentsImpl(get, set);
+    return record.id;
+  },
+  deleteFamily: (familyId) => {
+    const s = get();
+    const remaining = s.families.filter((f) => f.id !== familyId);
+    set({
+      families: remaining,
+      activeFamilyTabId: s.activeFamilyTabId === familyId ? null : s.activeFamilyTabId,
+      lastActiveFamilyTabId:
+        s.lastActiveFamilyTabId === familyId ? null : s.lastActiveFamilyTabId,
+      documents: s.documents.filter((d) => d.familyId !== familyId),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    reconcileFamiliesImpl(get, set);
+    ensureDefaultDocumentsImpl(get, set);
+  },
+  moveNodesToFamily: (nodeIds, familyId) => {
+    const s = get();
+    const records = s.families.map(({ memberPersonIds: _m, ...r }) => ({
+      ...r,
+      personIds: [...(r.personIds ?? [])],
+    }));
+    const target = records.find((f) => f.id === familyId);
+    if (!target) return;
+    for (const id of nodeIds) {
+      const node = s.nodes.find((n) => n.id === id);
+      if (!node) continue;
+      for (const f of records) {
+        if (f.id === familyId) continue;
+        f.unionIds = f.unionIds.filter((uid) => uid !== id);
+        f.personIds = f.personIds!.filter((pid) => pid !== id);
+      }
+      if (node.data.kind === "union") {
+        if (!target.unionIds.includes(id)) {
+          target.unionIds = [...target.unionIds, id].sort();
+        }
+      } else if (!target.personIds!.includes(id)) {
+        target.personIds = [...target.personIds!, id].sort();
+      }
+    }
+    const updated = records.map((r) => toFamilyGroup(r, s.nodes, s.edges));
+    set({ families: updated, hasUnsavedChanges: true, lastSaveError: null });
+    ensureDefaultDocumentsImpl(get, set);
+  },
+  transferUnionsToNewFamily: (unionIds, sourceFamilyId) => {
+    const s = get();
+    const sourceFamily = s.families.find((f) => f.id === sourceFamilyId);
+    if (!sourceFamily) return null;
+    const movingUnions = new Set(unionIds);
+    const stayingUnions = sourceFamily.unionIds.filter((uid) => !movingUnions.has(uid));
+    const movingPersons = new Set<string>();
+    for (const uid of unionIds) {
+      for (const pid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
+        const person = s.nodes.find((n) => n.id === pid);
+        const anchored = (person?.data as PersonNodeData)?.anchored;
+        const inStaying = stayingUnions.some((suid) =>
+          getUnionFamilyMemberIds(suid, s.nodes, s.edges).includes(pid)
+        );
+        if (inStaying && anchored) continue;
+        if (!inStaying || !anchored) movingPersons.add(pid);
+      }
+    }
+    const movingNodeIds = new Set<string>([...unionIds, ...movingPersons]);
+    const stayingNodeIds = new Set<string>([...stayingUnions]);
+    for (const suid of stayingUnions) {
+      for (const pid of getUnionFamilyMemberIds(suid, s.nodes, s.edges)) {
+        if (!movingPersons.has(pid)) stayingNodeIds.add(pid);
+      }
+    }
+    for (const pid of sourceFamily.personIds ?? []) {
+      if (!movingPersons.has(pid)) stayingNodeIds.add(pid);
+    }
+    const newEdges = s.edges.filter((e) => {
+      const touchesMoving =
+        movingNodeIds.has(e.source) || movingNodeIds.has(e.target);
+      const touchesStaying =
+        stayingNodeIds.has(e.source) || stayingNodeIds.has(e.target);
+      return !(touchesMoving && touchesStaying);
+    });
+    const updatedFamilies = s.families.map((f) => {
+      if (f.id !== sourceFamilyId) return f;
+      return toFamilyGroup(
+        {
+          ...f,
+          unionIds: stayingUnions,
+          personIds: (f.personIds ?? []).filter((pid) => !movingPersons.has(pid)),
+        },
+        s.nodes,
+        s.edges
+      );
+    });
+    const newRecord = createNewFamilyRecord(unionIds, [...movingPersons]);
+    const newGroups = [
+      ...updatedFamilies.map(({ memberPersonIds: _m, ...r }) => r),
+      newRecord,
+    ].map((r) => toFamilyGroup(r, s.nodes, s.edges));
+    assignAutoFamilyNames(newGroups, s.nodes);
+    const newFamilyId = newRecord.id;
+    const opts = getScriptGenOptions(s);
+    const scopeIds = new Set<string>([...unionIds, ...movingPersons]);
+    for (const uid of unionIds) {
+      for (const mid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
+        if (movingPersons.has(mid)) scopeIds.add(mid);
+      }
+    }
+    const suffix = "a";
+    const newFamily = newGroups.find((f) => f.id === newFamilyId)!;
+    const newDoc: FamilyTreeDocumentRecord = {
+      id: generateId(),
+      name: formatMainDocumentName(newFamily.name, suffix),
+      familyId: newFamilyId,
+      role: "main",
+      content: generateFamilyTreeScript(s.nodes, s.edges, { ...opts, scopeNodeIds: scopeIds }),
+      updatedAt: Date.now(),
+    };
+    set({
+      families: newGroups,
+      edges: newEdges,
+      activeFamilyTabId: newFamilyId,
+      lastActiveFamilyTabId: newFamilyId,
+      documents: [...s.documents, newDoc],
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    ensureDefaultDocumentsImpl(get, set);
+    return newFamilyId;
+  },
+  setPersonAnchored: (personId, anchored) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === personId && (n.data as PersonNodeData).kind === "person"
+          ? { ...n, data: { ...n.data, anchored } }
+          : n
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
   setIsolationModeActive: (v) => set({ isolationModeActive: v }),
   setPendingFocusFamilyId: (id) => set({ pendingFocusFamilyId: id }),
   setInspectorFamilyId: (id) => set({ inspectorFamilyId: id, inspectorBranchId: id != null ? null : get().inspectorBranchId }),
@@ -4032,7 +4325,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     }
     set({ autosaveEnabled: v });
   },
-  setAnchorNodeId: (id) => set({ anchorNodeId: id }),
   setViewportBounds: (bounds) => set({ viewportBounds: bounds }),
   reportNodeSize: (nodeId, size) =>
     set((s) => {
@@ -4075,25 +4367,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   addPerson: (options) => {
     const id = generateId();
     const state = get();
-    const { nodes, anchorNodeId, viewportBounds, snapToGrid, generationAnchors, genLabelMode, showGenInheritIndicator } = state;
+    const { nodes, viewportBounds, snapToGrid, generationAnchors, genLabelMode, showGenInheritIndicator } = state;
     const genAnchorId = options?.genAnchorId;
     const anchor = genAnchorId ? generationAnchors.find((a) => a.id === genAnchorId) : null;
 
     const tryPosition = (x: number, y: number) =>
       snapToGrid ? snapPosition(x, y, true) : { x, y };
-
-    const findFreeSlot = (baseX: number, baseY: number, ignoreIds: string[] = []) => {
-      const spacingX = 224;
-      const maxSteps = 10;
-      for (let k = 0; k < maxSteps; k++) {
-        const step = Math.floor(k / 2) + 1;
-        const sign = k % 2 === 0 ? 1 : -1;
-        const offset = step * spacingX * sign;
-        const cand = tryPosition(baseX + offset, baseY);
-        if (isSpotFree(cand.x, cand.y, nodes, ignoreIds)) return cand;
-      }
-      return tryPosition(baseX + spacingX, baseY);
-    };
 
     const findPositionInAnchorBand = (anchor: GenerationAnchor) => {
       const baselineY = anchor.yTop + GEN_BASELINE_OFFSET;
@@ -4123,15 +4402,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     if (anchor) {
       position = findPositionInAnchorBand(anchor);
       data = { kind: "person", name: `Person ${nextNum}`, firstName: `Person ${nextNum}`, middleName: "", lastName: "", notes: "", nicknames: [], genAnchorId: anchor.id, isGenArmed: true };
-    } else if (anchorNodeId) {
-      const anchorNode = nodes.find((n) => n.id === anchorNodeId);
-      if (!anchorNode) {
-        const maxY = nodes.reduce((max, n) => Math.max(max, n.position.y), 0);
-        position = tryPosition(Math.random() * 200, maxY + 80);
-      } else {
-        position = findFreeSlot(anchorNode.position.x, anchorNode.position.y, [anchorNodeId]);
-      }
-      data = { kind: "person", name: `Person ${nextNum}`, firstName: `Person ${nextNum}`, middleName: "", lastName: "", notes: "", nicknames: [], isGenArmed: false };
     } else if (viewportBounds) {
       const marginX = 120;
       const marginY = 100;
@@ -4927,22 +5197,38 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const id = generateId();
     const opts = getScriptGenOptions(s);
     let content = "@declarations\n\n@familyTree\n\n";
-    if (ownerFamilyId === null) {
-      const scopeIds = new Set(getUnassignedPersonIds(s.families, s.nodes));
-      if (scopeIds.size > 0) {
-        content = generateFamilyTreeScript(s.nodes, s.edges, { ...opts, scopeNodeIds: scopeIds });
+    const familyId =
+      ownerFamilyId ?? s.activeFamilyTabId ?? s.lastActiveFamilyTabId ?? s.families[0]?.id ?? null;
+    let docName = (name ?? "").trim();
+    if (!docName && familyId) {
+      const family = s.families.find((f) => f.id === familyId);
+      if (family) {
+        const familyDocs = s.documents.filter((d) => d.familyId === familyId);
+        docName = formatMainDocumentName(
+          family.name,
+          nextDocumentSuffix(
+            familyDocs.map((d) => d.name),
+            family.name
+          )
+        );
       }
-    } else if (ownerFamilyId != null) {
-      const family = s.families.find((f) => f.id === ownerFamilyId);
+    }
+    if (!docName) docName = "Untitled";
+    if (familyId) {
+      const family = s.families.find((f) => f.id === familyId);
       if (family) {
         const scopeIds = getScopeIdsForFamily(family, s.nodes, s.edges);
-        content = generateFamilyTreeScript(s.nodes, s.edges, { ...opts, scopeNodeIds: scopeIds });
+        if (scopeIds.size > 0) {
+          content = generateFamilyTreeScript(s.nodes, s.edges, { ...opts, scopeNodeIds: scopeIds });
+        }
       }
     }
     const doc: FamilyTreeDocumentRecord = {
       id,
-      name: (name ?? "Untitled").trim() || "Untitled",
+      name: docName,
       content,
+      familyId,
+      role: "main",
       updatedAt: Date.now(),
     };
     set({ documents: [...s.documents, doc], hasUnsavedChanges: true, lastSaveError: null });
@@ -5082,7 +5368,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       activeProjectId: projectId,
       nodes,
       edges,
-      anchorNodeId: payload?.anchorNodeId ?? null,
       generationAnchors: (payload as { generationAnchors?: GenerationAnchor[] })?.generationAnchors ?? [],
       connectionStyles: payload?.connectionStyles ?? [],
       families: initialFamilies,
@@ -5163,6 +5448,16 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     }
     get().runNameRoleAnalysis();
     get().recomputeFamilies();
+    const afterReconcile = get();
+    const ownedDocs = migrateDocumentOwnership(
+      afterReconcile.documents,
+      afterReconcile.families,
+      afterReconcile.nodes,
+      afterReconcile.edges
+    );
+    if (ownedDocs.some((d, i) => d.familyId !== afterReconcile.documents[i]?.familyId)) {
+      set({ documents: ownedDocs, hasUnsavedChanges: true });
+    }
     get().ensureDefaultDocuments();
     return { hadData };
   },
@@ -5211,7 +5506,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         displayMode: s.displayMode,
         nodes: s.nodes,
         edges: s.edges,
-        anchorNodeId: s.anchorNodeId,
+        anchorNodeId: null,
         generationAnchors: s.generationAnchors,
         connectionStyles: s.connectionStyles,
         families: familiesToPersisted(s.families),
@@ -5264,7 +5559,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       const newEdges = s.edges.filter((e) => !ids.has(e.source) && !ids.has(e.target));
       const newSelectedIds = s.selectedNodeIds.filter((id) => !ids.has(id));
       const newPrimary = newSelectedIds[0] ?? null;
-      const newAnchorId = s.anchorNodeId && ids.has(s.anchorNodeId) ? null : s.anchorNodeId;
       const newPendingGen =
         s.pendingGenChangePrompt && ids.has(s.pendingGenChangePrompt.nodeId) ? null : s.pendingGenChangePrompt;
       const newNodeSizesById = { ...s.nodeSizesById };
@@ -5280,7 +5574,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         edges: newEdges,
         selectedNodeIds: newSelectedIds,
         primarySelectedNodeId: newPrimary,
-        anchorNodeId: newAnchorId,
         nodeSizesById: newNodeSizesById,
         genInheritFlashByNodeId: newGenInheritFlash,
         pendingGenChangePrompt: newPendingGen,
@@ -5307,7 +5600,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       editingAnchorIds: [],
       selectedNodeIds: [],
       primarySelectedNodeId: null,
-      anchorNodeId: null,
       nodeSizesById: {},
       viewportBounds: null,
       genInheritFlashByNodeId: {},

@@ -138,6 +138,7 @@ function personDataFromFields(
   const nicknames = nickRaw
     ? nickRaw.split(",").map((n) => parseQuotedValue(n.trim())).filter(Boolean)
     : [];
+  const anchored = fields.anchored === "true";
   return {
     kind: "person",
     name,
@@ -148,6 +149,7 @@ function personDataFromFields(
     nicknames,
     genAnchorId: genAnchorId ?? null,
     isGenArmed: false,
+    ...(anchored ? { anchored: true } : {}),
   };
 }
 

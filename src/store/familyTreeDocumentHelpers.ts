@@ -14,6 +14,9 @@ export interface FamilyTreeDocumentRecord {
   name: string;
   content: string;
   updatedAt: number;
+  /** Owning family tab; inferred from content when absent (legacy). */
+  familyId?: string | null;
+  role?: "main" | "unassigned";
 }
 
 const LEGACY_PERSON_ID_RE = /#\s*id:\s*(_[a-zA-Z0-9]+)/;
@@ -71,13 +74,15 @@ export function scanDocumentDeclaredIds(content: string): {
   };
 }
 
-/** Which family tab owns this document (majority of declared unions). null = Unassigned. */
+/** Which family tab owns this document. Uses stored familyId when present. */
 export function getFamilyIdForDocument(
   doc: FamilyTreeDocumentRecord,
   families: FamilyGroup[],
   _nodes: Node<FamilyTreeNodeData>[],
   _edges: Edge[]
 ): string | null {
+  if (doc.familyId !== undefined) return doc.familyId;
+
   const { unionIds } = scanDocumentDeclaredIds(doc.content);
   if (unionIds.length === 0) {
     const { personIds } = scanDocumentDeclaredIds(doc.content);
@@ -122,6 +127,77 @@ export function getFamilyIdForDocument(
     }
   }
   return bestFamilyId;
+}
+
+/** One-time migration: attach familyId/role from content inference. */
+export function migrateDocumentOwnership(
+  documents: FamilyTreeDocumentRecord[],
+  families: FamilyGroup[],
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): FamilyTreeDocumentRecord[] {
+  return documents.map((doc) => {
+    if (doc.familyId !== undefined) return doc;
+    const familyId = getFamilyIdForDocument(doc, families, nodes, edges);
+    const isUnassignedName = doc.name === "Unassigned";
+    return {
+      ...doc,
+      familyId,
+      role: isUnassignedName ? "unassigned" : "main",
+    };
+  });
+}
+
+/** Next letter suffix for family files: a, b, … z, aa, ab, … */
+export function nextDocumentSuffix(existingNames: string[], familyBaseName: string): string {
+  const prefix = familyBaseName;
+  const used = new Set<string>();
+  for (const name of existingNames) {
+    if (name.startsWith(prefix) && name.length > prefix.length) {
+      used.add(name.slice(prefix.length));
+    }
+  }
+  let n = 0;
+  while (true) {
+    const suffix = indexToSuffix(n);
+    if (!used.has(suffix)) return suffix;
+    n++;
+  }
+}
+
+function indexToSuffix(n: number): string {
+  let s = "";
+  let x = n;
+  do {
+    s = String.fromCharCode(97 + (x % 26)) + s;
+    x = Math.floor(x / 26) - 1;
+  } while (x >= 0);
+  return s;
+}
+
+/** Build main-file name like "Family 1a". */
+export function formatMainDocumentName(familyName: string, suffix: string): string {
+  return `${familyName}${suffix}`;
+}
+
+/** Declaring doc and docs that reference a node id. */
+export function getDocumentRefsForNode(
+  nodeId: string,
+  documents: FamilyTreeDocumentRecord[]
+): { declaredIn: string | null; referencedIn: string[] } {
+  let declaredIn: string | null = null;
+  const referencedIn: string[] = [];
+  const idRe = new RegExp(`(?:^|[^a-zA-Z0-9_])${nodeId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^a-zA-Z0-9_])`);
+
+  for (const doc of documents) {
+    const { personIds, unionIds } = scanDocumentDeclaredIds(doc.content);
+    if (personIds.includes(nodeId) || unionIds.includes(nodeId)) {
+      declaredIn = doc.name;
+    } else if (idRe.test(doc.content)) {
+      referencedIn.push(doc.name);
+    }
+  }
+  return { declaredIn, referencedIn };
 }
 
 export function getDocumentsForFamily(
@@ -444,7 +520,9 @@ export function getScopeIdsForFamily(
   nodes: Node<FamilyTreeNodeData>[],
   edges: Edge[]
 ): Set<string> {
-  return new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
+  const ids = new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
+  for (const pid of family.personIds ?? []) ids.add(pid);
+  return ids;
 }
 
 export function getUnassignedPersonIds(

@@ -181,6 +181,7 @@ Person <nodeId> {
   nicknames: "<comma-separated, escaped>"
   notes: "<escaped>"
   gen: <N>              # optional; 0-based index into generation-anchor list
+  anchored: true       # optional; person stays fixed during union group drag
   x: <number | ?>       # `?` = unset / click-to-place pending
   y: <number | ?>
   cx: <number>           # optional node-info overlay when enabled
@@ -239,6 +240,13 @@ Older documents used bracket declarations and arrow unions:
 ```
 
 These are detected on load and regenerated into the block format above from the graph model (one-time, idempotent).
+
+### Script file naming (Text display mode)
+
+- Each **family tab** owns a folder of script files. Files are named with a letter suffix on the family name: `Family 1a`, `Family 1b`, …
+- The first person created in script mode seeds `Family 1a` (not a global "Unassigned" bucket).
+- When a family has union clusters or persons not linked to its main graph, an auto-managed **`Unassigned`** file is created **inside that family's folder** (not global).
+- Documents store `familyId` and `role` (`main` | `unassigned`) for folder ownership; legacy documents infer ownership once on load.
 
 ---
 

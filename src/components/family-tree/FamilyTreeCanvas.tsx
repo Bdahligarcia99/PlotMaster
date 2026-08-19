@@ -23,6 +23,7 @@ import {
   getPersonDisplayName,
   type PersonNodeData,
   type UnionNodeData,
+  type FamilyTreeNodeData,
 } from "../../store/familyTreeStore";
 import {
   FAMILY_TREE_GRID_SIZE,
@@ -552,15 +553,22 @@ export default function FamilyTreeCanvas({
     startPositions: Record<string, { x: number; y: number }>;
   } | null>(null);
 
+  const filterAnchoredMembers = useCallback(
+    (ids: string[], nodes: Node<FamilyTreeNodeData>[], familyLocked: boolean) => {
+      if (familyLocked) return ids;
+      return ids.filter((id) => {
+        const n = nodes.find((nn) => nn.id === id);
+        if (!n || (n.data as PersonNodeData).kind !== "person") return true;
+        return !(n.data as PersonNodeData).anchored;
+      });
+    },
+    []
+  );
+
   const onNodeDragStart = useCallback(
     (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
       const state = useFamilyTreeStore.getState();
-      // By default every node (including a union) drags independently. Two things widen
-      // the drag to the whole family: (1) the dragged node is part of a multi-node
-      // selection (e.g. double-clicking a union selects it + its family), in which case
-      // the whole selection moves together; (2) the dragged node belongs to a union whose
-      // family lock is enabled, in which case that union's family always moves together.
       let groupIds: string[] | null = null;
       if (state.selectedNodeIds.length > 1 && state.selectedNodeIds.includes(node.id)) {
         groupIds = state.selectedNodeIds;
@@ -577,10 +585,24 @@ export default function FamilyTreeCanvas({
             getUnionFamilyMemberIds(n.id, state.nodes, state.edges).includes(node.id)
         );
         if (lockedUnion) {
-          groupIds = [lockedUnion.id, ...getUnionFamilyMemberIds(lockedUnion.id, state.nodes, state.edges)];
+          groupIds = [
+            lockedUnion.id,
+            ...getUnionFamilyMemberIds(lockedUnion.id, state.nodes, state.edges),
+          ];
         }
       }
       if (groupIds) {
+        const familyLocked =
+          node.data?.kind === "union"
+            ? (state.nodes.find((n) => n.id === node.id)?.data as UnionNodeData)?.familyLocked ===
+              true
+            : state.nodes.some(
+                (n) =>
+                  n.type === "union" &&
+                  (n.data as UnionNodeData).familyLocked &&
+                  getUnionFamilyMemberIds(n.id, state.nodes, state.edges).includes(node.id)
+              );
+        groupIds = filterAnchoredMembers(groupIds, state.nodes, familyLocked);
         const startPositions: Record<string, { x: number; y: number }> = {};
         for (const id of groupIds) {
           const n = state.nodes.find((nn) => nn.id === id);
@@ -592,7 +614,7 @@ export default function FamilyTreeCanvas({
       }
       if (node.data?.kind === "person" && node.data?.isGenArmed === false) setNodeGenArmed(node.id);
     },
-    [setNodeGenArmed]
+    [setNodeGenArmed, filterAnchoredMembers]
   );
 
   const onNodeDrag = useCallback(
@@ -825,7 +847,12 @@ export default function FamilyTreeCanvas({
       doubleClickIgnoreClearRef.current = true;
       if (node.data?.kind === "union") {
         const state = useFamilyTreeStore.getState();
-        const memberIds = getUnionFamilyMemberIds(node.id, state.nodes, state.edges);
+        const memberIds = getUnionFamilyMemberIds(node.id, state.nodes, state.edges).filter(
+          (pid) => {
+            const p = state.nodes.find((n) => n.id === pid);
+            return !(p?.data as PersonNodeData)?.anchored;
+          }
+        );
         setSelectedNodeIds([node.id, ...memberIds]);
       } else {
         setSelectedNodeIds([node.id]);

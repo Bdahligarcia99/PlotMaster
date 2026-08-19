@@ -10,12 +10,11 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
   const nodeInfoSize = useFamilyTreeStore((s) => s.nodeInfoSize);
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
-  const anchorNodeId = useFamilyTreeStore((s) => s.anchorNodeId);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const requestRemoveConnection = useFamilyTreeStore((s) => s.requestRemoveConnection);
   const linkPersonToUnion = useFamilyTreeStore((s) => s.linkPersonToUnion);
-  const isAnchor = anchorNodeId === id;
+  const isAnchor = nodeData.anchored === true;
   const reportNodeSize = useFamilyTreeStore((s) => s.reportNodeSize);
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const edges = useFamilyTreeStore((s) => s.edges);

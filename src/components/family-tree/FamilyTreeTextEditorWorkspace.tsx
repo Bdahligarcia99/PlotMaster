@@ -375,7 +375,7 @@ export default function FamilyTreeTextEditorWorkspace({
             )}
             {renderPaneCloseButton(pane.paneId)}
           </div>
-          <div className="flex-1 min-h-0 p-2">
+          <div className="flex-1 min-h-0 flex flex-col p-2">
             {pane.docId && doc ? renderEditor(pane.docId, content) : renderEmptyPaneBody()}
           </div>
         </div>
@@ -512,7 +512,7 @@ export default function FamilyTreeTextEditorWorkspace({
       ) : (
         <div
           ref={paneRowRef}
-          className={`flex-1 min-h-0 flex ${uniformPaneWidth ? "overflow-x-auto overflow-y-hidden" : ""}`}
+          className={`flex-1 min-h-0 flex overflow-y-hidden ${uniformPaneWidth ? "overflow-x-auto" : ""}`}
         >
           {uniformPaneWidth && (
             <div

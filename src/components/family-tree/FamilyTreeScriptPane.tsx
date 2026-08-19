@@ -56,6 +56,7 @@ export default function FamilyTreeScriptPane({ drafts, onDraftsChange }: FamilyT
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const getDocumentDisplayContent = useFamilyTreeStore((s) => s.getDocumentDisplayContent);
   const applyFamilyDocumentEdits = useFamilyTreeStore((s) => s.applyFamilyDocumentEdits);
+  const setDirtyDocumentIds = useFamilyTreeStore((s) => s.setDirtyDocumentIds);
 
   const [commitError, setCommitError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -124,6 +125,13 @@ export default function FamilyTreeScriptPane({ drafts, onDraftsChange }: FamilyT
       if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
     };
   }, [drafts, hasDraftChanges]);
+
+  useEffect(() => {
+    const dirtyIds = Object.entries(drafts)
+      .filter(([, d]) => d.dirty)
+      .map(([id]) => id);
+    setDirtyDocumentIds(dirtyIds);
+  }, [drafts, setDirtyDocumentIds]);
 
   const highlightNodeIds = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
 

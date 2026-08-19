@@ -58,10 +58,12 @@ export interface GenerationAnchor {
   customLabel?: string;
 }
 
-/** Persisted family tab — union membership frozen until explicitly changed. */
+/** Persisted family tab — explicit union and person membership. */
 export interface PersistedFamilyRecord {
   id: string;
   unionIds: string[];
+  /** Persons explicitly assigned to this family without requiring a union. */
+  personIds?: string[];
   name: string;
   isCustomName: boolean;
   description: string;
@@ -85,6 +87,10 @@ export interface PersistedFamilyTreeDocumentRecord {
   name: string;
   content: string;
   updatedAt: number;
+  /** Owning family tab id; null = legacy/unassigned bucket. */
+  familyId?: string | null;
+  /** main = regular family file; unassigned = auto-managed orphan/cluster file. */
+  role?: "main" | "unassigned";
 }
 
 /** Project payload (family tree). */

@@ -9,6 +9,7 @@ import {
   useDraggable,
   useDroppable,
 } from "@dnd-kit/core";
+import { getDocumentRefsForNode } from "../../store/familyTreeDocumentHelpers";
 import {
   useFamilyTreeStore,
   resolveUnionConnectionStyle,
@@ -689,8 +690,7 @@ export default function FamilyTreeInspector() {
     nodes,
     edges,
     primarySelectedNodeId,
-    anchorNodeId,
-    setAnchorNodeId,
+    setPersonAnchored,
     setSelectedNodeIds,
     updatePersonNameParts,
     updatePersonNicknames,
@@ -709,6 +709,7 @@ export default function FamilyTreeInspector() {
   } = useFamilyTreeStore();
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
   const families = useFamilyTreeStore((s) => s.families);
+  const documents = useFamilyTreeStore((s) => s.documents);
   const inspectorFamilyId = useFamilyTreeStore((s) => s.inspectorFamilyId);
   const setFamilyCustomName = useFamilyTreeStore((s) => s.setFamilyCustomName);
   const setFamilyDescription = useFamilyTreeStore((s) => s.setFamilyDescription);
@@ -1019,6 +1020,26 @@ export default function FamilyTreeInspector() {
         )}
       </div>
       <p className="text-dark-muted text-xs mb-3 font-mono">{selectedNode.id}</p>
+      {(() => {
+        const refs = getDocumentRefsForNode(selectedNode.id, documents);
+        if (!refs.declaredIn && refs.referencedIn.length === 0) return null;
+        return (
+          <div className="mb-4 text-xs text-dark-muted space-y-1">
+            {refs.declaredIn ? (
+              <p>
+                <span className="text-dark-muted">Declared in:</span>{" "}
+                <span className="text-dark-text">{refs.declaredIn}</span>
+              </p>
+            ) : null}
+            {refs.referencedIn.length > 0 ? (
+              <p>
+                <span className="text-dark-muted">Referenced in:</span>{" "}
+                <span className="text-dark-text">{refs.referencedIn.join(", ")}</span>
+              </p>
+            ) : null}
+          </div>
+        );
+      })()}
 
       {nodeData.kind === "person" ? (
         <>
@@ -1053,10 +1074,10 @@ export default function FamilyTreeInspector() {
             );
           })()}
           <div className="mb-4 flex flex-col gap-2">
-            {anchorNodeId === selectedNode.id ? (
+            {(nodeData as PersonNodeData).anchored ? (
               <button
                 type="button"
-                onClick={() => setAnchorNodeId(null)}
+                onClick={() => setPersonAnchored(selectedNode.id, false)}
                 className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent"
               >
                 Clear Anchor
@@ -1064,7 +1085,7 @@ export default function FamilyTreeInspector() {
             ) : (
               <button
                 type="button"
-                onClick={() => setAnchorNodeId(selectedNode.id)}
+                onClick={() => setPersonAnchored(selectedNode.id, true)}
                 className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent"
               >
                 Set as Anchor

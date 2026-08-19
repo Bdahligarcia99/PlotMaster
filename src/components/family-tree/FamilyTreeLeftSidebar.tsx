@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings } from "../../store/familyTreeStore";
 import {
   getDocumentsForFamily,
   getUnassignedDocuments,
@@ -174,7 +174,13 @@ export default function FamilyTreeLeftSidebar({
   const setBranchCustomName = useFamilyTreeStore((s) => s.setBranchCustomName);
   const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
   const setPlacementTargetId = useFamilyTreeStore((s) => s.setPlacementTargetId);
+  const createFamily = useFamilyTreeStore((s) => s.createFamily);
+  const transferUnionsToNewFamily = useFamilyTreeStore((s) => s.transferUnionsToNewFamily);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
+  const [transferConfirm, setTransferConfirm] = useState<{
+    unionIds: string[];
+    sourceFamilyId: string;
+  } | null>(null);
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
   const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
@@ -419,6 +425,47 @@ export default function FamilyTreeLeftSidebar({
     }
   };
 
+  const handleUnionDoubleClick = (e: React.MouseEvent, unionId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const contextFamily =
+      activeFamily ?? families.find((f) => f.unionIds.includes(unionId)) ?? null;
+    if (!contextFamily || !isUnionClusterUnassigned(unionId, contextFamily, nodes, edges)) {
+      return;
+    }
+    const analysis = computeFamilyClusterAnalysis(contextFamily, nodes, edges);
+    setSelectedNodeIds(analysis.unassignedUnionIds);
+    setLastEntityClickedId(unionId);
+  };
+
+  const handleAddFamily = () => {
+    const contextFamily =
+      activeFamily ??
+      (activeFamilyTabId != null ? families.find((f) => f.id === activeFamilyTabId) : null) ??
+      families[0] ??
+      null;
+    const selectedUnions = selectedNodeIds.filter((id) => {
+      const n = nodes.find((nn) => nn.id === id);
+      if (!n || (n.data as { kind?: string }).kind !== "union") return false;
+      if (!contextFamily) return false;
+      return isUnionClusterUnassigned(id, contextFamily, nodes, edges);
+    });
+    if (selectedUnions.length > 0 && contextFamily) {
+      const analysis = computeFamilyClusterAnalysis(contextFamily, nodes, edges);
+      const allUnassigned = analysis.unassignedUnionIds;
+      const isPartial =
+        selectedUnions.length < allUnassigned.length &&
+        selectedUnions.every((id) => allUnassigned.includes(id));
+      if (isPartial) {
+        setTransferConfirm({ unionIds: selectedUnions, sourceFamilyId: contextFamily.id });
+        return;
+      }
+      transferUnionsToNewFamily(selectedUnions, contextFamily.id);
+      return;
+    }
+    createFamily();
+  };
+
   const handleUnassignedClick = (e: React.MouseEvent, id: string) => {
     if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (placementTargetId === id) {
@@ -578,11 +625,21 @@ export default function FamilyTreeLeftSidebar({
 
     return (
       <div className="w-full min-w-0 flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden h-full">
-        <div className="p-4 border-b border-dark-accent/50">
-          <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
-            Sub Entities
-          </h2>
-          <p className="text-dark-muted text-xs mt-1">Families → Files</p>
+        <div className="p-4 border-b border-dark-accent/50 flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">
+              Sub Entities
+            </h2>
+            <p className="text-dark-muted text-xs mt-1">Families → Files</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => createFamily()}
+            className="flex-shrink-0 text-[11px] text-blue-300 hover:text-blue-200 px-2 py-1 rounded border border-dark-accent/50"
+            title="New family folder"
+          >
+            + Folder
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-2">
           {families.length === 0 && unassignedDocs.length === 0 && documents.length === 0 ? (
@@ -676,6 +733,14 @@ export default function FamilyTreeLeftSidebar({
               </button>
             ))}
         </div>
+        <button
+          type="button"
+          title="New family tab (or move selected unassigned unions)"
+          onClick={handleAddFamily}
+          className="flex-shrink-0 w-7 h-7 rounded-md border border-dark-accent/50 text-dark-muted hover:text-dark-text hover:bg-dark-accent/30 text-sm font-medium"
+        >
+          +
+        </button>
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 overflow-y-auto p-2">
@@ -811,6 +876,7 @@ export default function FamilyTreeLeftSidebar({
                           <button
                             type="button"
                             onClick={(e) => handleEntityClick(e, unit.unionId)}
+                            onDoubleClick={(e) => handleUnionDoubleClick(e, unit.unionId)}
                             title={`${leftName} ↔ ${rightName}`}
                             className={`flex-1 min-w-0 text-left text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap hover:text-blue-400 ${
                               isSelected(unit.unionId)
@@ -842,6 +908,10 @@ export default function FamilyTreeLeftSidebar({
                               }
                             />
                           )}
+                          {activeFamily &&
+                            getFamilyNodeWarnings(unit.unionId, activeFamily, nodes, edges).map(
+                              (w) => <HazardTriangleIcon key={w} title={w} />
+                            )}
                           {styleLabel && (
                             <span className="text-[10px] text-dark-muted px-1.5 py-0.5 rounded bg-dark-accent/40 flex-shrink-0">
                               {styleLabel}
@@ -1092,6 +1162,38 @@ export default function FamilyTreeLeftSidebar({
                 </Button>
                 <Button variant="danger" size="sm" onClick={handleConfirmDelete}>
                   Delete
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {transferConfirm &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
+            <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
+              <p className="text-sm text-dark-text mb-3">
+                Moving {transferConfirm.unionIds.length} union
+                {transferConfirm.unionIds.length === 1 ? "" : "s"} to a new family will break
+                connections between selected and unselected unions in this tab. Continue?
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setTransferConfirm(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    transferUnionsToNewFamily(
+                      transferConfirm.unionIds,
+                      transferConfirm.sourceFamilyId
+                    );
+                    setTransferConfirm(null);
+                  }}
+                >
+                  Move to new family
                 </Button>
               </div>
             </div>
