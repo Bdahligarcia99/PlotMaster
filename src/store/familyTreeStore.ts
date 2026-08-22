@@ -6,6 +6,7 @@ import {
   type FamilyTreeDocumentRecord,
   combineFamilyDocumentContents,
   generateDocumentDisplayContent,
+  generateUnassignedReferenceContent,
   getScopeIdsForFamily,
   formatMainDocumentName,
   migrateDocumentOwnership,
@@ -280,11 +281,32 @@ export type UnionType = "forward" | "backward";
 /** Parent role in a union; at most one father and one mother per union. */
 export type ParentRole = "father" | "mother";
 
+export interface ConnectionIconRef {
+  kind: "emoji" | "icon";
+  value: string;
+}
+
 export interface ConnectionVisualStyle {
   stroke: string;
   strokeWidth: number;
   dashPattern: number[];
   description?: string;
+  icon?: ConnectionIconRef;
+}
+
+export const FAMILY_COLOR_PALETTE = [
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#ec4899",
+  "#84cc16",
+] as const;
+
+export function getFamilyColor(familyIndex: number): string {
+  return FAMILY_COLOR_PALETTE[familyIndex % FAMILY_COLOR_PALETTE.length]!;
 }
 
 export interface ConnectionStyleDef extends ConnectionVisualStyle {
@@ -997,6 +1019,32 @@ export function getFamilyMemberNodeIds(
   return [...unionIds, ...getFamilyMemberPersonIds(unionIds, nodes, edges)];
 }
 
+/** All node ids visible for a family tab (unions, union members, and explicit personIds). */
+export function getFamilyVisibleNodeIds(
+  family: FamilyGroup,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  const ids = new Set(getFamilyMemberNodeIds(family.unionIds, nodes, edges));
+  for (const pid of family.personIds ?? []) {
+    ids.add(pid);
+  }
+  return Array.from(ids);
+}
+
+/** Find the family tab that owns a node (union or person). */
+export function findFamilyForNode(
+  nodeId: string,
+  families: FamilyGroup[]
+): FamilyGroup | null {
+  for (const f of families) {
+    if (f.unionIds.includes(nodeId)) return f;
+    if ((f.personIds ?? []).includes(nodeId)) return f;
+    if (f.memberPersonIds.includes(nodeId)) return f;
+  }
+  return null;
+}
+
 export function getUnionCreatedAt(unionId: string, nodes: Node<FamilyTreeNodeData>[]): number {
   const idx = nodes.findIndex((n) => n.id === unionId);
   if (idx < 0) return 0;
@@ -1183,12 +1231,14 @@ function assignAutoFamilyNames(families: FamilyGroup[], nodes: Node<FamilyTreeNo
 
 function createNewFamilyRecord(
   unionIds: string[] = [],
-  personIds: string[] = []
+  personIds: string[] = [],
+  explicit = false
 ): PersistedFamilyRecord {
   return {
     id: generateFamilyId(),
     unionIds: [...unionIds].sort(),
     personIds: [...personIds].sort(),
+    explicit: explicit || undefined,
     name: "",
     isCustomName: false,
     description: "",
@@ -1382,7 +1432,7 @@ function showFamilyConnectionNotice(
 /** Suggestion from the name/role analysis engine. Exposed for consent UI. */
 export interface NameRoleSuggestion {
   nodeId: string;
-  field: "firstName" | "role" | "unionHealth" | "genConflict" | "unassigned";
+  field: "firstName" | "role" | "unionHealth" | "genConflict" | "unassigned" | "noGen";
   currentValue: string;
   proposedValue: string;
   reason: string;
@@ -1657,6 +1707,26 @@ export function analyzeGenConflictSuggestions(
   return suggestions;
 }
 
+/** Flag persons with no generation anchor assigned. */
+export function analyzeNoGenSuggestions(
+  nodes: Node<FamilyTreeNodeData>[]
+): NameRoleSuggestion[] {
+  const suggestions: NameRoleSuggestion[] = [];
+  for (const n of nodes) {
+    if (n.data.kind !== "person") continue;
+    const d = n.data as PersonNodeData;
+    if (d.genAnchorId) continue;
+    suggestions.push({
+      nodeId: n.id,
+      field: "noGen",
+      currentValue: "No generation",
+      proposedValue: "—",
+      reason: "No generation assigned",
+    });
+  }
+  return suggestions;
+}
+
 /** Informational suggestions for nodes missing family assignment and/or canvas location. */
 export function analyzeUnassignedSuggestions(
   nodes: Node<FamilyTreeNodeData>[],
@@ -1700,7 +1770,14 @@ export function getFamilyNodeWarnings(
     warnings.push("Not linked to any union in this family");
   }
   if (node.data.kind === "union" && analysis.unassignedUnionIds.includes(nodeId)) {
-    warnings.push("Union cluster is not connected to the main family graph");
+    const components = computeComponentsForUnionSubset(analysis.unassignedUnionIds, nodes, edges);
+    const myComponent = components.find((c) => c.includes(nodeId));
+    const clusterSize = myComponent?.length ?? 1;
+    warnings.push(
+      clusterSize <= 1
+        ? "Union is not connected to the main family graph"
+        : "Union cluster is not connected to the main family graph"
+    );
   }
   return warnings;
 }
@@ -2260,6 +2337,7 @@ interface FamilyTreeStore {
   isSpacePanning: boolean;
   exportGuidesVisible: boolean;
   showLegend: boolean;
+  legendMode: "tooltips" | "tooltipsAndIcons";
   exportGuideScale: number;
   showExportDialog: boolean;
   exportOptions: {
@@ -2318,6 +2396,7 @@ interface FamilyTreeStore {
   setIsSpacePanning: (v: boolean) => void;
   setExportGuidesVisible: (v: boolean) => void;
   setShowLegend: (v: boolean) => void;
+  setLegendMode: (v: "tooltips" | "tooltipsAndIcons") => void;
   setExportGuideScale: (v: number) => void;
   setShowExportDialog: (v: boolean) => void;
   setExportOptions: (opts: Partial<FamilyTreeStore["exportOptions"]>) => void;
@@ -2439,8 +2518,11 @@ interface FamilyTreeStore {
   /** Persisted script text files (family grouping derived at runtime). */
   documents: FamilyTreeDocumentRecord[];
   dirtyDocumentIds: string[];
+  /** Last opened script file per family tab (session-persisted). */
+  lastDocumentIdByFamilyId: Record<string, string>;
   setDisplayMode: (mode: "nodes" | "text") => void;
   setDirtyDocumentIds: (ids: string[]) => void;
+  setLastDocumentForFamily: (familyId: string, docId: string) => void;
   createFamilyDocument: (name?: string, ownerFamilyId?: string | null) => string;
   renameFamilyDocument: (id: string, name: string) => void;
   deleteFamilyDocumentCascade: (
@@ -2485,6 +2567,8 @@ let prevBranchesJson: string | null = null;
 let prevDocumentsRef: FamilyTreeDocumentRecord[] | null = null;
 let prevDocumentsUpdatedAtSum = 0;
 let prevDisplayMode: "nodes" | "text" | null = null;
+let prevLegendMode: "tooltips" | "tooltipsAndIcons" | null = null;
+let prevLastDocumentIdJson: string | null = null;
 
 function applyNodePositionUpdates(
   get: () => FamilyTreeStore,
@@ -3293,7 +3377,7 @@ function reconcileFamiliesImpl(
   }));
 
   working = working.filter(
-    (f) => f.unionIds.length > 0 || (f.personIds ?? []).length > 0
+    (f) => f.explicit || f.unionIds.length > 0 || (f.personIds ?? []).length > 0
   );
 
   if (working.length === 0 && nodes.length > 0) {
@@ -3304,25 +3388,24 @@ function reconcileFamiliesImpl(
 
   if (working.length > 0) {
     const targetId = activeFamilyTabId ?? lastActiveFamilyTabId ?? working[0]!.id;
-    const targetIdx = Math.max(
-      0,
-      working.findIndex((f) => f.id === targetId)
-    );
-    const target = working[targetIdx]!;
+    const targetIdx = working.findIndex((f) => f.id === targetId);
+    const target = targetIdx >= 0 ? working[targetIdx]! : null;
 
-    for (const uid of liveUnionIds) {
-      if (!working.some((f) => f.unionIds.includes(uid))) {
-        target.unionIds = [...new Set([...target.unionIds, uid])].sort();
+    if (target) {
+      for (const uid of liveUnionIds) {
+        if (!working.some((f) => f.unionIds.includes(uid))) {
+          target.unionIds = [...new Set([...target.unionIds, uid])].sort();
+        }
       }
-    }
 
-    for (const pid of livePersonIds) {
-      const owned = working.some((f) => {
-        if ((f.personIds ?? []).includes(pid)) return true;
-        return getFamilyMemberPersonIds(f.unionIds, nodes, edges).includes(pid);
-      });
-      if (!owned) {
-        target.personIds = [...new Set([...(target.personIds ?? []), pid])].sort();
+      for (const pid of livePersonIds) {
+        const owned = working.some((f) => {
+          if ((f.personIds ?? []).includes(pid)) return true;
+          return getFamilyMemberPersonIds(f.unionIds, nodes, edges).includes(pid);
+        });
+        if (!owned) {
+          target.personIds = [...new Set([...(target.personIds ?? []), pid])].sort();
+        }
       }
     }
   }
@@ -3334,6 +3417,10 @@ function reconcileFamiliesImpl(
   if (activeFamilyTabId != null && !familyGroups.some((f) => f.id === activeFamilyTabId)) {
     newActiveTabId = null;
   }
+
+  const prevJson = JSON.stringify(familiesToPersisted(prevFamilies));
+  const nextJson = JSON.stringify(familiesToPersisted(familyGroups));
+  if (prevJson === nextJson && newActiveTabId === activeFamilyTabId) return;
 
   set({
     families: familyGroups,
@@ -3383,90 +3470,174 @@ function syncFamilyDocumentsFromModel(
   }
 }
 
+function ensureActiveFamilyTarget(
+  get: () => FamilyTreeStore,
+  set: (partial: Partial<FamilyTreeStore>) => void
+): string {
+  const s = get();
+  const existingId = s.activeFamilyTabId ?? s.lastActiveFamilyTabId;
+  if (existingId && s.families.some((f) => f.id === existingId)) {
+    return existingId;
+  }
+  if (s.families.length > 0) {
+    const id = s.families[0]!.id;
+    set({ activeFamilyTabId: id, lastActiveFamilyTabId: id });
+    return id;
+  }
+  const record = createNewFamilyRecord([], [], true);
+  const groups = [toFamilyGroup(record, s.nodes, s.edges)];
+  assignAutoFamilyNames(groups, s.nodes);
+  set({
+    families: groups,
+    activeFamilyTabId: record.id,
+    lastActiveFamilyTabId: record.id,
+    hasUnsavedChanges: true,
+    lastSaveError: null,
+  });
+  ensureDefaultDocumentsImpl(get, set);
+  return record.id;
+}
+
+function appendNodeToFamilyRecord(
+  families: FamilyGroup[],
+  familyId: string,
+  nodeId: string,
+  kind: "person" | "union",
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): FamilyGroup[] {
+  return families.map((f) => {
+    if (f.id !== familyId) return f;
+    const record: PersistedFamilyRecord = {
+      id: f.id,
+      unionIds: [...f.unionIds],
+      personIds: [...(f.personIds ?? [])],
+      explicit: f.explicit,
+      name: f.name,
+      isCustomName: f.isCustomName,
+      description: f.description,
+      parentFamilyIds: f.parentFamilyIds,
+    };
+    if (kind === "union") {
+      if (!record.unionIds.includes(nodeId)) {
+        record.unionIds = [...record.unionIds, nodeId].sort();
+      }
+    } else if (!record.personIds!.includes(nodeId)) {
+      record.personIds = [...record.personIds!, nodeId].sort();
+    }
+    return toFamilyGroup(record, nodes, edges);
+  });
+}
+
+function appendNodeDeclarationToDocumentImpl(
+  get: () => FamilyTreeStore,
+  set: (partial: Partial<FamilyTreeStore>) => void,
+  familyId: string,
+  nodeId: string
+) {
+  const s = get();
+  const dirtySet = new Set(s.dirtyDocumentIds);
+  const targetDocId =
+    s.lastDocumentIdByFamilyId[familyId] ??
+    s.documents.find((d) => d.familyId === familyId && d.role !== "unassigned")?.id;
+  if (!targetDocId || dirtySet.has(targetDocId)) return;
+
+  const doc = s.documents.find((d) => d.id === targetDocId);
+  if (!doc) return;
+
+  const opts = getScriptGenOptions(s);
+  const block = generateFamilyTreeScript(s.nodes, s.edges, {
+    ...opts,
+    scopeNodeIds: new Set([nodeId]),
+  }).trim();
+  if (!block) return;
+
+  const separator = doc.content.trim() ? "\n\n" : "";
+  const nextContent = doc.content.endsWith("\n")
+    ? `${doc.content}${separator}${block}\n`
+    : `${doc.content}${separator}${block}\n`;
+
+  set({
+    documents: s.documents.map((d) =>
+      d.id === targetDocId ? { ...d, content: nextContent, updatedAt: Date.now() } : d
+    ),
+    hasUnsavedChanges: true,
+    lastSaveError: null,
+  });
+}
+
 function ensureDefaultDocumentsImpl(
   get: () => FamilyTreeStore,
   set: (partial: Partial<FamilyTreeStore>) => void
 ) {
   const s = get();
-  if (s.nodes.length === 0) return;
-  const opts = getScriptGenOptions(s);
-  const additions: FamilyTreeDocumentRecord[] = [];
+  if (s.families.length === 0) return;
   const now = Date.now();
+  let nextDocuments = [...s.documents];
+  let changed = false;
 
   for (const family of s.families) {
-    const familyDocs = s.documents.filter((d) => d.familyId === family.id);
+    const familyDocs = nextDocuments.filter((d) => d.familyId === family.id);
     const mainDocs = familyDocs.filter((d) => d.role !== "unassigned");
 
     if (mainDocs.length === 0) {
-      const analysis = computeFamilyClusterAnalysis(family, s.nodes, s.edges);
-      const assignedScope = new Set<string>();
-      for (const uid of analysis.assignedUnionIds) {
-        assignedScope.add(uid);
-        for (const mid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
-          assignedScope.add(mid);
-        }
-      }
-      for (const pid of family.personIds ?? []) {
-        if (!analysis.unionlessPersonIds.includes(pid)) assignedScope.add(pid);
-      }
-      if (assignedScope.size > 0) {
-        const suffix = nextDocumentSuffix(
-          familyDocs.map((d) => d.name),
-          family.name
-        );
-        additions.push({
-          id: generateId(),
-          name: formatMainDocumentName(family.name, suffix),
-          familyId: family.id,
-          role: "main",
-          content: generateFamilyTreeScript(s.nodes, s.edges, {
-            ...opts,
-            scopeNodeIds: assignedScope,
-          }),
-          updatedAt: now,
-        });
-      }
+      const suffix = nextDocumentSuffix(
+        familyDocs.map((d) => d.name),
+        family.name
+      );
+      nextDocuments.push({
+        id: generateId(),
+        name: formatMainDocumentName(family.name, suffix),
+        familyId: family.id,
+        role: "main",
+        content: "@declarations\n\n@familyTree\n\n",
+        updatedAt: now,
+      });
+      changed = true;
     }
 
     const analysis = computeFamilyClusterAnalysis(family, s.nodes, s.edges);
-    const unassignedScope = new Set<string>([
+    const unassignedNodeIds = [
       ...analysis.unassignedUnionIds,
       ...analysis.unionlessPersonIds,
-    ]);
-    for (const uid of analysis.unassignedUnionIds) {
-      for (const mid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
-        unassignedScope.add(mid);
-      }
-    }
-
+    ];
     const existingUnassigned = familyDocs.find((d) => d.role === "unassigned");
-    if (unassignedScope.size > 0 && !existingUnassigned) {
-      additions.push({
-        id: generateId(),
-        name: "Unassigned",
-        familyId: family.id,
-        role: "unassigned",
-        content: generateFamilyTreeScript(s.nodes, s.edges, {
-          ...opts,
-          scopeNodeIds: unassignedScope,
-        }),
-        updatedAt: now,
-      });
-    } else if (unassignedScope.size === 0 && existingUnassigned) {
-      set({
-        documents: s.documents.filter((d) => d.id !== existingUnassigned.id),
-        hasUnsavedChanges: true,
-        lastSaveError: null,
-      });
+
+    if (unassignedNodeIds.length > 0) {
+      const refContent = generateUnassignedReferenceContent(
+        unassignedNodeIds,
+        nextDocuments,
+        s.nodes,
+        s.edges
+      );
+      if (existingUnassigned) {
+        if (existingUnassigned.content !== refContent) {
+          nextDocuments = nextDocuments.map((d) =>
+            d.id === existingUnassigned.id
+              ? { ...d, content: refContent, updatedAt: now }
+              : d
+          );
+          changed = true;
+        }
+      } else {
+        nextDocuments.push({
+          id: generateId(),
+          name: "Unassigned",
+          familyId: family.id,
+          role: "unassigned",
+          content: refContent,
+          updatedAt: now,
+        });
+        changed = true;
+      }
+    } else if (existingUnassigned) {
+      nextDocuments = nextDocuments.filter((d) => d.id !== existingUnassigned.id);
+      changed = true;
     }
   }
 
-  if (additions.length > 0) {
-    set({
-      documents: [...get().documents, ...additions],
-      hasUnsavedChanges: true,
-      lastSaveError: null,
-    });
+  if (changed) {
+    set({ documents: nextDocuments, hasUnsavedChanges: true, lastSaveError: null });
   }
 }
 
@@ -3505,6 +3676,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   isSpacePanning: false,
   exportGuidesVisible: false,
   showLegend: false,
+  legendMode: "tooltips" as "tooltips" | "tooltipsAndIcons",
   exportGuideScale: 1,
   showExportDialog: false,
   exportOptions: {
@@ -3541,6 +3713,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   displayMode: "nodes" as "nodes" | "text",
   documents: [] as FamilyTreeDocumentRecord[],
   dirtyDocumentIds: [] as string[],
+  lastDocumentIdByFamilyId: {} as Record<string, string>,
   placementTargetId: null as string | null,
 
   setExportViewportEl: (el) => set({ exportViewportEl: el }),
@@ -3556,6 +3729,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         ...analyzeDegenerateUnionSuggestions(s.nodes, s.edges),
         ...analyzeGenConflictSuggestions(s.nodes, s.edges),
         ...analyzeUnassignedSuggestions(s.nodes, s.edges, s.families),
+        ...analyzeNoGenSuggestions(s.nodes),
       ],
     });
   },
@@ -3572,7 +3746,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     }),
   createFamily: (unionIds = [], personIds = []) => {
     const s = get();
-    const record = createNewFamilyRecord(unionIds, personIds);
+    const record = createNewFamilyRecord(unionIds, personIds, true);
     const groups = [...s.families.map(({ memberPersonIds: _m, ...r }) => r), record].map((r) =>
       toFamilyGroup(r, s.nodes, s.edges)
     );
@@ -3677,7 +3851,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         s.edges
       );
     });
-    const newRecord = createNewFamilyRecord(unionIds, [...movingPersons]);
+    const newRecord = createNewFamilyRecord(unionIds, [...movingPersons], true);
     const newGroups = [
       ...updatedFamilies.map(({ memberPersonIds: _m, ...r }) => r),
       newRecord,
@@ -4311,6 +4485,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setIsSpacePanning: (v) => set({ isSpacePanning: v }),
   setExportGuidesVisible: (v) => set({ exportGuidesVisible: v }),
   setShowLegend: (v) => set({ showLegend: v }),
+  setLegendMode: (v) => set({ legendMode: v, hasUnsavedChanges: true, lastSaveError: null }),
   setExportGuideScale: (v) =>
     set({ exportGuideScale: Math.max(0.25, Math.min(6, v)) }),
   setShowExportDialog: (v) => set({ showExportDialog: v }),
@@ -4429,7 +4604,23 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     }
 
     const newNode: Node<PersonNodeData> = { id, type: "person", position, data };
-    set((s) => ({ nodes: [...s.nodes, newNode], hasUnsavedChanges: true, lastSaveError: null }));
+    const familyId = ensureActiveFamilyTarget(get, set);
+    const nextNodes = [...state.nodes, newNode];
+    const updatedFamilies = appendNodeToFamilyRecord(
+      get().families,
+      familyId,
+      id,
+      "person",
+      nextNodes,
+      state.edges
+    );
+    set({
+      nodes: nextNodes,
+      families: updatedFamilies,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    appendNodeDeclarationToDocumentImpl(get, set, familyId, id);
 
     if (anchor && showGenInheritIndicator) {
       const label = formatGenerationAnchorLabel(anchor, genLabelMode);
@@ -4494,6 +4685,18 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       hasUnsavedChanges: true,
       lastSaveError: null,
     }));
+    const familyId = ensureActiveFamilyTarget(get, set);
+    const after = get();
+    const updatedFamilies = appendNodeToFamilyRecord(
+      after.families,
+      familyId,
+      unionId,
+      "union",
+      after.nodes,
+      after.edges
+    );
+    set({ families: updatedFamilies });
+    appendNodeDeclarationToDocumentImpl(get, set, familyId, unionId);
     return unionId;
   },
 
@@ -4533,6 +4736,18 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       hasUnsavedChanges: true,
       lastSaveError: null,
     }));
+    const familyId = ensureActiveFamilyTarget(get, set);
+    const after = get();
+    const updatedFamilies = appendNodeToFamilyRecord(
+      after.families,
+      familyId,
+      childId,
+      "person",
+      after.nodes,
+      after.edges
+    );
+    set({ families: updatedFamilies });
+    appendNodeDeclarationToDocumentImpl(get, set, familyId, childId);
     return childId;
   },
 
@@ -5191,7 +5406,16 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       lastSaveError: null,
     });
   },
-  setDirtyDocumentIds: (ids) => set({ dirtyDocumentIds: ids }),
+  setDirtyDocumentIds: (ids) =>
+    set((s) => {
+      const prev = s.dirtyDocumentIds;
+      if (prev.length === ids.length && prev.every((id, i) => id === ids[i])) return s;
+      return { dirtyDocumentIds: ids };
+    }),
+  setLastDocumentForFamily: (familyId, docId) =>
+    set((s) => ({
+      lastDocumentIdByFamilyId: { ...s.lastDocumentIdByFamilyId, [familyId]: docId },
+    })),
   createFamilyDocument: (name, ownerFamilyId) => {
     const s = get();
     const id = generateId();
@@ -5231,7 +5455,14 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       role: "main",
       updatedAt: Date.now(),
     };
-    set({ documents: [...s.documents, doc], hasUnsavedChanges: true, lastSaveError: null });
+    set({
+      documents: [...s.documents, doc],
+      lastDocumentIdByFamilyId: familyId
+        ? { ...s.lastDocumentIdByFamilyId, [familyId]: id }
+        : s.lastDocumentIdByFamilyId,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
     return id;
   },
   renameFamilyDocument: (docId, name) => {
@@ -5428,6 +5659,13 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       branchToolActive: false,
       pendingFocusBranchId: null,
       placementTargetId: null,
+      legendMode:
+        (payload?.ui as { legendMode?: string })?.legendMode === "tooltipsAndIcons"
+          ? "tooltipsAndIcons"
+          : "tooltips",
+      lastDocumentIdByFamilyId:
+        ((payload?.ui as { lastDocumentIdByFamilyId?: Record<string, string> })
+          ?.lastDocumentIdByFamilyId ?? {}) as Record<string, string>,
     });
     const afterLoad = get();
     const scriptOpts = getScriptGenOptions(afterLoad);
@@ -5528,6 +5766,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           childrenRowAlignment3Plus: s.childrenRowAlignment3Plus,
           persistUnionSelectionOnChildCreate: s.persistUnionSelectionOnChildCreate,
           defaultUnionType: s.defaultUnionType,
+          legendMode: s.legendMode,
+          lastDocumentIdByFamilyId: s.lastDocumentIdByFamilyId,
         },
       };
       await driver.saveProjectData(s.activeProjectId, payload);
@@ -5674,6 +5914,8 @@ useFamilyTreeStore.subscribe((state) => {
   const documentsChanged =
     state.documents !== prevDocumentsRef || documentsUpdatedAtSum !== prevDocumentsUpdatedAtSum;
 
+  const lastDocumentIdJson = JSON.stringify(state.lastDocumentIdByFamilyId);
+
   const uiPrefsChanged =
     state.showNodeInfoEnabled !== prevShowNodeInfoEnabled ||
     state.nodeInfoTopLeft !== prevNodeInfoTopLeft ||
@@ -5693,7 +5935,9 @@ useFamilyTreeStore.subscribe((state) => {
     familiesJson !== prevFamiliesJson ||
     branchesJson !== prevBranchesJson ||
     documentsChanged ||
-    state.displayMode !== prevDisplayMode;
+    state.displayMode !== prevDisplayMode ||
+    state.legendMode !== prevLegendMode ||
+    lastDocumentIdJson !== prevLastDocumentIdJson;
   prevNodes = state.nodes;
   prevEdges = state.edges;
   prevShowNodeInfoEnabled = state.showNodeInfoEnabled;
@@ -5716,6 +5960,8 @@ useFamilyTreeStore.subscribe((state) => {
   prevDocumentsRef = state.documents;
   prevDocumentsUpdatedAtSum = documentsUpdatedAtSum;
   prevDisplayMode = state.displayMode;
+  prevLegendMode = state.legendMode;
+  prevLastDocumentIdJson = lastDocumentIdJson;
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&
     state.activeProjectId &&

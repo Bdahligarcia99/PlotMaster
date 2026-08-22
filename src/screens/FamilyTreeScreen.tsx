@@ -74,6 +74,8 @@ export default function FamilyTreeScreen() {
   const applyFamilyDocumentEdits = useFamilyTreeStore((s) => s.applyFamilyDocumentEdits);
   const deleteFamilyDocumentCascade = useFamilyTreeStore((s) => s.deleteFamilyDocumentCascade);
   const createFamilyDocument = useFamilyTreeStore((s) => s.createFamilyDocument);
+  const setLastDocumentForFamily = useFamilyTreeStore((s) => s.setLastDocumentForFamily);
+  const documents = useFamilyTreeStore((s) => s.documents);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const marqueeToolActive = useFamilyTreeStore((s) => s.marqueeToolActive);
   const styleEditorOpenUnionId = useFamilyTreeStore((s) => s.styleEditorOpenUnionId);
@@ -150,6 +152,7 @@ export default function FamilyTreeScreen() {
 
   const draftCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commitAllDirtyDraftsRef = useRef(commitAllDirtyDrafts);
+  const prevDisplayModeRef = useRef(displayMode);
   commitAllDirtyDraftsRef.current = commitAllDirtyDrafts;
 
   useEffect(() => {
@@ -164,8 +167,12 @@ export default function FamilyTreeScreen() {
   }, [textDrafts, hasDraftChanges, commitAllDirtyDrafts]);
 
   useEffect(() => {
+    if (prevDisplayModeRef.current === displayMode) return;
+    prevDisplayModeRef.current = displayMode;
     if (draftCommitTimerRef.current) clearTimeout(draftCommitTimerRef.current);
-    commitAllDirtyDraftsRef.current();
+    queueMicrotask(() => {
+      commitAllDirtyDraftsRef.current();
+    });
   }, [displayMode]);
 
   useEffect(() => {
@@ -209,6 +216,11 @@ export default function FamilyTreeScreen() {
 
   const handleOpenFile = useCallback(
     (docId: string) => {
+      const doc = documents.find((d) => d.id === docId);
+      if (doc?.familyId) {
+        setLastDocumentForFamily(doc.familyId, docId);
+      }
+
       const existingPane = panes.find((p) => p.docId === docId);
 
       if (existingPane && existingPane.paneId === activePaneId) {
@@ -231,7 +243,7 @@ export default function FamilyTreeScreen() {
       setPanes((prev) => [...prev, { paneId, docId }]);
       setActivePaneId(paneId);
     },
-    [panes, activePaneId]
+    [panes, activePaneId, documents, setLastDocumentForFamily]
   );
 
   const handleNewUserFile = useCallback(

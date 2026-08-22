@@ -33,7 +33,12 @@ export default function FamilyTreeReviewSuggestionsModal({
     () =>
       suggestions
         .map((s, i) =>
-          s.field === "unionHealth" || s.field === "genConflict" || s.field === "unassigned" ? -1 : i
+          s.field === "unionHealth" ||
+          s.field === "genConflict" ||
+          s.field === "unassigned" ||
+          s.field === "noGen"
+            ? -1
+            : i
         )
         .filter((i) => i >= 0),
     [suggestions]
@@ -66,7 +71,10 @@ export default function FamilyTreeReviewSuggestionsModal({
   const needsFatherMotherChoice = (s: NameRoleSuggestion): boolean =>
     s.field === "role" && s.proposedValue === "father/mother";
   const isInformational = (s: NameRoleSuggestion): boolean =>
-    s.field === "unionHealth" || s.field === "genConflict" || s.field === "unassigned";
+    s.field === "unionHealth" ||
+    s.field === "genConflict" ||
+    s.field === "unassigned" ||
+    s.field === "noGen";
 
   const getEffectiveProposed = (s: NameRoleSuggestion, idx: number): string => {
     const r = resolvedValues.get(idx);

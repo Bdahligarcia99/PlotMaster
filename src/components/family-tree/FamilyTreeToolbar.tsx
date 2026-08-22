@@ -68,6 +68,8 @@ export default function FamilyTreeToolbar() {
   const setBranchToolActive = useFamilyTreeStore((s) => s.setBranchToolActive);
   const showLegend = useFamilyTreeStore((s) => s.showLegend);
   const setShowLegend = useFamilyTreeStore((s) => s.setShowLegend);
+  const legendMode = useFamilyTreeStore((s) => s.legendMode);
+  const setLegendMode = useFamilyTreeStore((s) => s.setLegendMode);
   const sortUnion = useFamilyTreeStore((s) => s.sortUnion);
   const setUnionArrangeSpacing = useFamilyTreeStore((s) => s.setUnionArrangeSpacing);
   const applyAverageParentSpacing = useFamilyTreeStore((s) => s.applyAverageParentSpacing);
@@ -97,6 +99,9 @@ export default function FamilyTreeToolbar() {
   const [coordMenuOpen, setCoordMenuOpen] = useState(false);
   const coordContainerRef = useRef<HTMLDivElement>(null);
   const coordDropdownRef = useRef<HTMLDivElement>(null);
+  const [legendMenuOpen, setLegendMenuOpen] = useState(false);
+  const legendContainerRef = useRef<HTMLDivElement>(null);
+  const legendDropdownRef = useRef<HTMLDivElement>(null);
   const [unionMenuOpen, setUnionMenuOpen] = useState(false);
   const unionContainerRef = useRef<HTMLDivElement>(null);
   const unionDropdownRef = useRef<HTMLDivElement>(null);
@@ -161,6 +166,24 @@ export default function FamilyTreeToolbar() {
       document.removeEventListener("click", handleClickOutside);
     };
   }, [genAnchorMenuOpen]);
+
+  useEffect(() => {
+    if (!legendMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inContainer = legendContainerRef.current?.contains(target);
+      const inDropdown = legendDropdownRef.current?.contains(target);
+      if (!inContainer && !inDropdown) setLegendMenuOpen(false);
+    };
+    const t = setTimeout(
+      () => document.addEventListener("click", handleClickOutside, { once: true }),
+      0
+    );
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [legendMenuOpen]);
 
   useEffect(() => {
     if (!personMenuOpen) return;
@@ -654,14 +677,62 @@ export default function FamilyTreeToolbar() {
       >
         Branch
       </Button>
-      <Button
-        variant={showLegend ? "primary" : "secondary"}
-        size="sm"
-        onClick={() => setShowLegend(!showLegend)}
-        title="Show/hide connection style legend"
-      >
-        Legend
-      </Button>
+      <div ref={legendContainerRef} className="relative flex rounded-lg border border-dark-accent/50">
+        <Button
+          variant={showLegend ? "primary" : "secondary"}
+          size="sm"
+          onClick={() => setShowLegend(!showLegend)}
+          title="Show/hide connection style legend"
+          className="rounded-none border-0 rounded-l-lg"
+        >
+          Legend
+        </Button>
+        <button
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setLegendMenuOpen((o) => !o);
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center"
+          title="Legend display options"
+          aria-expanded={legendMenuOpen}
+          aria-haspopup="true"
+        >
+          ▾
+        </button>
+        {legendMenuOpen && (
+          <div
+            ref={legendDropdownRef}
+            className="absolute top-full left-0 mt-1 z-50 min-w-[200px] bg-dark-surface border border-dark-accent rounded-lg shadow-lg p-3 space-y-2"
+          >
+            <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer">
+              <input
+                type="radio"
+                name="legend-mode"
+                checked={legendMode === "tooltips"}
+                onChange={() => setLegendMode("tooltips")}
+                className="themed-radio"
+              />
+              Tool tips only
+            </label>
+            <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer">
+              <input
+                type="radio"
+                name="legend-mode"
+                checked={legendMode === "tooltipsAndIcons"}
+                onChange={() => setLegendMode("tooltipsAndIcons")}
+                className="themed-radio"
+              />
+              Tool tips and icons
+            </label>
+          </div>
+        )}
+      </div>
       <div ref={genAnchorContainerRef} className="relative flex rounded-lg border border-dark-accent/50">
         <Button
           variant="secondary"

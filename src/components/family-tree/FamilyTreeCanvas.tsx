@@ -35,6 +35,9 @@ import {
   formatGenerationAnchorLabel,
   getUnionFamilyMemberIds,
   getFamilyMemberNodeIds,
+  getFamilyVisibleNodeIds,
+  getFamilyColor,
+  findFamilyForNode,
   computeBranchMemberIds,
   getBranchExcludedNodeIds,
 } from "../../store/familyTreeStore";
@@ -45,6 +48,7 @@ import GenerationRuler from "./GenerationRuler";
 import NodeSpacingOverlay from "./NodeSpacingOverlay";
 import ExportGuidesOverlay from "./ExportGuidesOverlay";
 import FamilyTreeLegend from "./FamilyTreeLegend";
+import ConnectionIconEdge from "./ConnectionIconEdge";
 import FamilyBloodlineWarningModal from "./FamilyBloodlineWarningModal";
 import Modal from "../ui/Modal";
 
@@ -172,6 +176,7 @@ function FamilyBranchFocusController() {
 }
 
 const nodeTypes = { person: PersonNode, union: UnionNode };
+const edgeTypes = { connectionIcon: ConnectionIconEdge };
 
 function isPartnerEdge(e: Edge): boolean {
   return (e.data as { type?: string })?.type === "partner";
@@ -520,7 +525,7 @@ export default function FamilyTreeCanvas({
     if (isolationModeActive && activeFamilyTabId != null) {
       const family = families.find((f) => f.id === activeFamilyTabId);
       if (family) {
-        const familyIds = getFamilyMemberNodeIds(family.unionIds, nodes, edges);
+        const familyIds = getFamilyVisibleNodeIds(family, nodes, edges);
         if (excluded.size === 0) return new Set(familyIds);
         return new Set(familyIds.filter((id) => !excluded.has(id)));
       }
@@ -729,12 +734,26 @@ export default function FamilyTreeCanvas({
 
   const nodesWithSelection = useMemo(
     () =>
-      canvasNodes.map((n) => ({
-        ...n,
-        selected: selectedNodeIds.includes(n.id),
-        data: { ...n.data, isFamilyLocked: familyLockedMemberIds.has(n.id) },
-      })),
-    [canvasNodes, selectedNodeIds, familyLockedMemberIds]
+      canvasNodes.map((n) => {
+        const ownerFamily = findFamilyForNode(n.id, families);
+        const familyIndex = ownerFamily ? families.findIndex((f) => f.id === ownerFamily.id) : -1;
+        const familyColor = familyIndex >= 0 ? getFamilyColor(familyIndex) : undefined;
+        const outOfActiveFamily =
+          activeFamilyTabId != null &&
+          ownerFamily != null &&
+          ownerFamily.id !== activeFamilyTabId;
+        return {
+          ...n,
+          selected: selectedNodeIds.includes(n.id),
+          data: {
+            ...n.data,
+            isFamilyLocked: familyLockedMemberIds.has(n.id),
+            familyColor,
+            outOfActiveFamily,
+          },
+        };
+      }),
+    [canvasNodes, selectedNodeIds, familyLockedMemberIds, families, activeFamilyTabId]
   );
 
   const displayEdges = useMemo(() => {
@@ -755,6 +774,11 @@ export default function FamilyTreeCanvas({
       );
       return {
         ...edge,
+        type: "connectionIcon",
+        data: {
+          ...(edge.data as object),
+          icon: resolved.icon,
+        },
         style: {
           stroke: resolved.stroke,
           strokeWidth: resolved.strokeWidth,
@@ -910,6 +934,7 @@ export default function FamilyTreeCanvas({
         onEdgeMouseEnter={onEdgeMouseEnter}
         onEdgeMouseLeave={onEdgeMouseLeave}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         snapToGrid={snapToGrid}
         snapGrid={[FAMILY_TREE_GRID_SIZE, FAMILY_TREE_GRID_SIZE]}
         fitView
@@ -922,7 +947,7 @@ export default function FamilyTreeCanvas({
         nodesConnectable={false}
         defaultEdgeOptions={{
           style: { stroke: "#64748b" },
-          type: "smoothstep",
+          type: "connectionIcon",
         }}
         className="bg-dark-bg"
       >

@@ -64,6 +64,8 @@ export interface PersistedFamilyRecord {
   unionIds: string[];
   /** Persons explicitly assigned to this family without requiring a union. */
   personIds?: string[];
+  /** User-created tab kept even when empty. */
+  explicit?: boolean;
   name: string;
   isCustomName: boolean;
   description: string;

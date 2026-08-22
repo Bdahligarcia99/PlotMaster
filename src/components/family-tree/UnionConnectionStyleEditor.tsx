@@ -16,6 +16,9 @@ import Input from "../ui/Input";
 import ColorInput from "../ui/ColorInput";
 import NumberSlider from "../ui/NumberSlider";
 import Button from "../ui/Button";
+import ConnectionIconPicker from "./ConnectionIconPicker";
+import { renderConnectionIcon } from "./connectionIconRegistry";
+import type { ConnectionIconRef } from "../../store/familyTreeStore";
 
 interface UnionConnectionStyleEditorProps {
   unionId: string;
@@ -29,6 +32,7 @@ type StyleDraft = {
   stroke: string;
   strokeWidth: number;
   dashPattern: number[];
+  icon?: ConnectionIconRef;
 };
 
 export function StylePreviewLine({
@@ -96,6 +100,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
 
   const [draft, setDraft] = useState<StyleDraft | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [activePersonIds, setActivePersonIds] = useState<Set<string>>(new Set());
   const [activeStyleId, setActiveStyleId] = useState<string | null>(null);
 
@@ -168,6 +173,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       stroke: style.stroke,
       strokeWidth: style.strokeWidth,
       dashPattern: [...style.dashPattern],
+      icon: style.icon,
     });
   }, []);
 
@@ -183,6 +189,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       stroke: draft.stroke,
       strokeWidth: draft.strokeWidth,
       dashPattern: [...draft.dashPattern],
+      icon: draft.icon,
     };
     if (draft.id) {
       updateConnectionStyle(draft.id, payload);
@@ -215,6 +222,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       strokeWidth: draft.strokeWidth,
       dashPattern: [...draft.dashPattern],
       description: draft.description?.trim() || undefined,
+      icon: draft.icon,
     };
     if (advancedOpen && activePersonIds.size > 0) {
       for (const personId of activePersonIds) {
@@ -386,6 +394,24 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
             onChange={(stroke) => updateDraft({ stroke })}
             className="!mb-2"
           />
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-dark-muted text-sm">Icon</span>
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              {draft.icon ? renderConnectionIcon(draft.icon, 18) : (
+                <span className="text-xs text-dark-muted">None</span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setAdvancedOpen(true);
+                  setIconPickerOpen(true);
+                }}
+                className="ml-auto px-2 py-1 text-xs rounded border border-dark-accent text-dark-muted hover:text-dark-text hover:border-dark-muted"
+              >
+                Assign icon
+              </button>
+            </div>
+          </div>
           <div
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
@@ -502,9 +528,21 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     </>
   );
 
-  const rightColumn = (
+  const rightColumn = iconPickerOpen ? (
     <div className="border-l border-dark-accent pl-3 min-w-0">
-      <div className="text-xs text-dark-muted mb-1.5">Connections</div>
+      <ConnectionIconPicker
+        value={draft?.icon}
+        onSelect={(icon) => {
+          if (draft) updateDraft({ icon });
+          else setDraft({ name: "", description: "", ...DEFAULT_CONNECTION_STYLE, icon });
+        }}
+        onClear={() => updateDraft({ icon: undefined })}
+        onBack={() => setIconPickerOpen(false)}
+      />
+    </div>
+  ) : (
+    <div className="border-l border-dark-accent pl-3 min-w-0">
+      <div className="text-xs text-dark-muted mb-1.5">Union Connections</div>
       {connectedMembers.length === 0 ? (
         <div className="text-xs text-dark-muted px-1 py-2">No connected people</div>
       ) : (
@@ -594,8 +632,9 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
             setAdvancedOpen(e.target.checked);
             setActivePersonIds(new Set());
             setActiveStyleId(null);
+            if (!e.target.checked) setIconPickerOpen(false);
           }}
-          className="rounded"
+          className="themed-checkbox"
         />
         Advanced options
       </label>

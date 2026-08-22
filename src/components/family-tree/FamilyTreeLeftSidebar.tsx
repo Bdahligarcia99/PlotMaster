@@ -2,11 +2,11 @@ import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
-import type { PersonNodeData, UnionNodeData } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings } from "../../store/familyTreeStore";
+import type { PersonNodeData, UnionNodeData, FamilyGroup } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings, findFamilyForNode } from "../../store/familyTreeStore";
 import {
   getDocumentsForFamily,
-  getUnassignedDocuments,
+  getDocumentRefsForNode,
 } from "../../store/familyTreeDocumentHelpers";
 import Button from "../ui/Button";
 
@@ -73,7 +73,7 @@ function EntityFamilyWarnings({
   edges,
 }: {
   nodeId: string;
-  family: { id: string; unionIds: string[]; memberPersonIds: string[]; personIds?: string[] } | null;
+  family: FamilyGroup | null | undefined;
   nodes: Node<PersonNodeData | UnionNodeData>[];
   edges: Edge[];
 }) {
@@ -221,7 +221,7 @@ export default function FamilyTreeLeftSidebar({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [collapseAllActive, setCollapseAllActive] = useState(false);
   const [expandedFamilyGroups, setExpandedFamilyGroups] = useState<Set<string>>(
-    () => new Set(["__all__", "__unassigned__"])
+    () => new Set(["__all__"])
   );
 
   const isSelected = (id: string) => selectedNodeIds.includes(id);
@@ -302,12 +302,27 @@ export default function FamilyTreeLeftSidebar({
   }, [familyUnits, activeFamily, branchMemberIds]);
 
   const filteredUnassignedEntities = useMemo(() => {
+    let pool = activeFamily
+      ? (() => {
+          const analysis = computeFamilyClusterAnalysis(activeFamily, nodes, edges);
+          const clusterIds = new Set([
+            ...analysis.unassignedUnionIds,
+            ...analysis.unionlessPersonIds,
+          ]);
+          return nodes.filter((n) => clusterIds.has(n.id));
+        })()
+      : unassignedEntities;
     if (branchMemberIds) {
-      return unassignedEntities.filter((n) => branchMemberIds.has(n.id));
+      pool = pool.filter((n) => branchMemberIds.has(n.id));
     }
-    if (activeFamilyTabId != null) return [];
-    return unassignedEntities;
-  }, [unassignedEntities, activeFamilyTabId, branchMemberIds]);
+    return pool.sort((a, b) => {
+      const nameA = getDisplayName(nodes, a.id, a.type === "union" ? "union" : "person").toLowerCase();
+      const nameB = getDisplayName(nodes, b.id, b.type === "union" ? "union" : "person").toLowerCase();
+      const cmp = nameA.localeCompare(nameB);
+      if (cmp !== 0) return cmp;
+      return a.id.localeCompare(b.id);
+    });
+  }, [unassignedEntities, activeFamily, nodes, edges, branchMemberIds]);
 
   const visibleEntityOrder = useMemo(() => {
     const order: string[] = [];
@@ -572,11 +587,6 @@ export default function FamilyTreeLeftSidebar({
     });
   };
 
-  const unassignedDocs = useMemo(
-    () => getUnassignedDocuments(documents, families, nodes, edges),
-    [documents, families, nodes, edges]
-  );
-
   if (textEditorMode) {
     const renderFileRow = (doc: { id: string; name: string }) => {
       const isActive = activeFileId === doc.id;
@@ -674,7 +684,7 @@ export default function FamilyTreeLeftSidebar({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-2">
-          {families.length === 0 && unassignedDocs.length === 0 && documents.length === 0 ? (
+          {families.length === 0 && documents.length === 0 ? (
             <p className="text-dark-muted text-xs py-2 px-2">
               No script files yet. Add people and unions on the canvas, or switch to Script mode to
               auto-create files per family.
@@ -689,8 +699,6 @@ export default function FamilyTreeLeftSidebar({
                   family.id
                 )
               )}
-              {(unassignedDocs.length > 0 || families.length > 0) &&
-                renderFamilyGroup("__unassigned__", "Unassigned", unassignedDocs, null)}
             </>
           )}
         </div>
@@ -940,10 +948,25 @@ export default function FamilyTreeLeftSidebar({
                               }
                             />
                           )}
-                          {activeFamily &&
-                            getFamilyNodeWarnings(unit.unionId, activeFamily, nodes, edges).map(
-                              (w) => <HazardTriangleIcon key={w} title={w} />
-                            )}
+                          {nameRoleSuggestions.some(
+                            (s) => s.field === "unionHealth" && s.unionId === unit.unionId
+                          ) && (
+                            <HazardTriangleIcon
+                              title={
+                                nameRoleSuggestions.find(
+                                  (s) => s.field === "unionHealth" && s.unionId === unit.unionId
+                                )?.reason ?? "Union health issue"
+                              }
+                            />
+                          )}
+                          {(() => {
+                            const ownerFamily = findFamilyForNode(unit.unionId, families);
+                            return ownerFamily
+                              ? getFamilyNodeWarnings(unit.unionId, ownerFamily, nodes, edges).map(
+                                  (w) => <HazardTriangleIcon key={w} title={w} />
+                                )
+                              : null;
+                          })()}
                           {styleLabel && (
                             <span className="text-[10px] text-dark-muted px-1.5 py-0.5 rounded bg-dark-accent/40 flex-shrink-0">
                               {styleLabel}
@@ -1119,7 +1142,13 @@ export default function FamilyTreeLeftSidebar({
                       ? (node.data as PersonNodeData).name || "New Person"
                       : getDisplayName(nodes, node.id, "union");
                     const reasons = getUnassignedReasons(node.id, nodes, edges, families);
-                    const tooltip = reasons.length > 0 ? reasons.join("; ") : name;
+                    const docRefs = getDocumentRefsForNode(node.id, documents);
+                    const tooltip = [
+                      ...(reasons.length > 0 ? reasons : [name]),
+                      docRefs.declaredIn ? `Declared in: ${docRefs.declaredIn}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join("; ");
                     const isArmed = placementTargetId === node.id;
                     return (
                       <div key={node.id}>
@@ -1163,7 +1192,13 @@ export default function FamilyTreeLeftSidebar({
                             }`}
                           >
                             <div className={`w-6 h-6 rounded-full flex-shrink-0 ${isPerson ? "bg-dark-accent" : "bg-dark-accent/60"}`} />
-                            <span className="text-dark-text text-sm flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
+                            <div className="flex-1 min-w-0">
+                              <span className="text-dark-text text-sm block overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
+                              <span className="text-[10px] text-dark-muted block truncate">
+                                {node.id}
+                                {docRefs.declaredIn ? ` · ${docRefs.declaredIn}` : ""}
+                              </span>
+                            </div>
                             {isArmed ? (
                               <span className="text-[10px] text-amber-400 flex-shrink-0">Click canvas</span>
                             ) : null}

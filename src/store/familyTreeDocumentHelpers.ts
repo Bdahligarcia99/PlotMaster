@@ -7,6 +7,7 @@ import {
   getPersonDisplayName,
   getUnionFamilyMemberIds,
   type PersonNodeData,
+  type UnionNodeData,
 } from "./familyTreeStore";
 
 export interface FamilyTreeDocumentRecord {
@@ -129,16 +130,21 @@ export function getFamilyIdForDocument(
   return bestFamilyId;
 }
 
-/** One-time migration: attach familyId/role from content inference. */
+/** One-time migration: attach familyId/role from content inference; adopt orphan docs into first family. */
 export function migrateDocumentOwnership(
   documents: FamilyTreeDocumentRecord[],
   families: FamilyGroup[],
   nodes: Node<FamilyTreeNodeData>[],
   edges: Edge[]
 ): FamilyTreeDocumentRecord[] {
+  const firstFamilyId = families[0]?.id ?? null;
   return documents.map((doc) => {
-    if (doc.familyId !== undefined) return doc;
-    const familyId = getFamilyIdForDocument(doc, families, nodes, edges);
+    if (doc.familyId !== undefined && doc.familyId !== null) return doc;
+    const inferred =
+      doc.familyId === undefined
+        ? getFamilyIdForDocument(doc, families, nodes, edges)
+        : null;
+    const familyId = inferred ?? firstFamilyId;
     const isUnassignedName = doc.name === "Unassigned";
     return {
       ...doc,
@@ -198,6 +204,58 @@ export function getDocumentRefsForNode(
     }
   }
   return { declaredIn, referencedIn };
+}
+
+function unionDisplayLabel(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[]
+): string {
+  const unionNode = nodes.find((n) => n.id === unionId);
+  if (!unionNode || (unionNode.data as UnionNodeData).kind !== "union") return unionId;
+  const d = unionNode.data as UnionNodeData;
+  const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
+  const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
+  const leftName = leftId
+    ? getPersonDisplayName(
+        nodes.find((n) => n.id === leftId)?.data as PersonNodeData,
+        leftId,
+        nodes
+      )
+    : "?";
+  const rightName = rightId
+    ? getPersonDisplayName(
+        nodes.find((n) => n.id === rightId)?.data as PersonNodeData,
+        rightId,
+        nodes
+      )
+    : "?";
+  return `${leftName} ↔ ${rightName}`;
+}
+
+/** Comment-only reference lines for the per-family Unassigned file. */
+export function generateUnassignedReferenceContent(
+  nodeIds: string[],
+  documents: FamilyTreeDocumentRecord[],
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string {
+  void edges;
+  const lines = [
+    "# Unassigned — references only (edit the source file to change these)",
+    "",
+  ];
+  for (const nodeId of nodeIds) {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node) continue;
+    const refs = getDocumentRefsForNode(nodeId, documents);
+    const name =
+      node.data.kind === "person"
+        ? getPersonDisplayName(node.data as PersonNodeData, nodeId, nodes) || nodeId
+        : unionDisplayLabel(nodeId, nodes);
+    const fileName = refs.declaredIn ?? "unknown";
+    lines.push(`# ${nodeId}  ${name}        declared in: ${fileName}`);
+  }
+  return lines.join("\n");
 }
 
 export function getDocumentsForFamily(

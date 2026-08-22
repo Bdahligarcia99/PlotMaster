@@ -20,6 +20,8 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
   const hoveredConnectionInfo = useFamilyTreeStore((s) => s.hoveredConnectionInfo);
   const setUnionFamilyLocked = useFamilyTreeStore((s) => s.setUnionFamilyLocked);
   const familyLocked = data.familyLocked ?? false;
+  const familyColor = (data as { familyColor?: string }).familyColor;
+  const outOfActiveFamily = (data as { outOfActiveFamily?: boolean }).outOfActiveFamily;
   const effectiveStyle = resolveUnionConnectionStyle(data, connectionStyles);
   const styleName = getConnectionStyleName(data, connectionStyles);
   const isEdgeHovered = hoveredConnectionInfo?.unionId === id;
@@ -93,7 +95,8 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
           selected
             ? "bg-dark-accent/80 border-blue-500 shadow-md"
             : "bg-dark-accent/50 border-dark-accent hover:border-dark-muted"
-        }`}
+        } ${outOfActiveFamily ? "opacity-40" : ""}`}
+        style={!selected && familyColor ? { borderColor: familyColor } : undefined}
       >
         <span
           className={`absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-surface border border-dark-accent text-dark-muted whitespace-nowrap transition-opacity z-10 pointer-events-none ${

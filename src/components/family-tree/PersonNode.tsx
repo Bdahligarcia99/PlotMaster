@@ -34,6 +34,8 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const inheritLabel = inheritFlash?.label ?? "";
   const isGenImmune = nodeData.isGenArmed === false;
   const isFamilyLocked = (data as { isFamilyLocked?: boolean }).isFamilyLocked;
+  const familyColor = (data as { familyColor?: string }).familyColor;
+  const outOfActiveFamily = (data as { outOfActiveFamily?: boolean }).outOfActiveFamily;
   const x = Math.round(xPos);
   const y = Math.round(yPos);
 
@@ -362,8 +364,13 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
             : isGenImmune
               ? "bg-dark-surface border-red-500/70 hover:border-red-500/90 shadow-[0_0_12px_rgba(239,68,68,0.4)]"
               : "bg-dark-surface border-dark-accent hover:border-dark-muted"
-        } ${selected && isGenImmune ? "ring-1 ring-red-500/25 ring-offset-1 ring-offset-dark-bg" : ""} ${!selected && isFamilyLocked ? "ring-2 ring-amber-400/50 ring-offset-1" : ""} ${showGenInheritFlash ? "animate-pulse" : ""}`}
-        style={showGenInheritFlash ? { outline: "2px solid rgba(59,130,246,0.6)", outlineOffset: 2 } : undefined}
+        } ${selected && isGenImmune ? "ring-1 ring-red-500/25 ring-offset-1 ring-offset-dark-bg" : ""} ${!selected && isFamilyLocked ? "ring-2 ring-amber-400/50 ring-offset-1" : ""} ${showGenInheritFlash ? "animate-pulse" : ""} ${outOfActiveFamily ? "opacity-40" : ""}`}
+        style={{
+          ...(showGenInheritFlash
+            ? { outline: "2px solid rgba(59,130,246,0.6)", outlineOffset: 2 }
+            : {}),
+          ...(!selected && !isGenImmune && familyColor ? { borderColor: familyColor } : {}),
+        }}
       >
         {showGenInheritFlash && inheritLabel && (
           <div
