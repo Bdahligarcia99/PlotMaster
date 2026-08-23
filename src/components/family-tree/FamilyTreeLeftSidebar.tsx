@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData, FamilyGroup } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings, findFamilyForNode } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings, findFamilyForNode, getUnionFamilyMemberIds, getFamilyVisibleNodeIds } from "../../store/familyTreeStore";
 import {
   getDocumentsForFamily,
   getDocumentRefsForNode,
@@ -207,6 +207,11 @@ export default function FamilyTreeLeftSidebar({
   const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
   const setPlacementTargetId = useFamilyTreeStore((s) => s.setPlacementTargetId);
   const createFamily = useFamilyTreeStore((s) => s.createFamily);
+  const deleteFamily = useFamilyTreeStore((s) => s.deleteFamily);
+  const removeNodes = useFamilyTreeStore((s) => s.removeNodes);
+  const deleteFocus = useFamilyTreeStore((s) => s.deleteFocus);
+  const subEntitySelectionMode = useFamilyTreeStore((s) => s.subEntitySelectionMode);
+  const setSubEntitySelectionMode = useFamilyTreeStore((s) => s.setSubEntitySelectionMode);
   const transferUnionsToNewFamily = useFamilyTreeStore((s) => s.transferUnionsToNewFamily);
   const [collapsedUnits, setCollapsedUnits] = useState<Set<string>>(new Set());
   const [transferConfirm, setTransferConfirm] = useState<{
@@ -225,6 +230,28 @@ export default function FamilyTreeLeftSidebar({
   );
 
   const isSelected = (id: string) => selectedNodeIds.includes(id);
+  const focusIsFamily = deleteFocus === "family" || selectedNodeIds.length === 0;
+
+  const unionRowSelectedClass = (id: string) =>
+    isSelected(id)
+      ? focusIsFamily
+        ? "text-blue-400/60 bg-blue-500/5 ring-1 ring-blue-500/30 rounded px-1 -mx-1"
+        : "text-blue-400 bg-blue-500/20 ring-1 ring-blue-500/50 rounded px-1 -mx-1"
+      : "text-dark-text";
+
+  const personRowSelectedClass = (id: string, base = "bg-dark-accent/30") =>
+    isSelected(id)
+      ? focusIsFamily
+        ? "bg-blue-500/5 ring-1 ring-blue-500/30"
+        : "bg-blue-500/20 ring-1 ring-blue-500/50"
+      : base;
+
+  const unassignedRowSelectedClass = (id: string) =>
+    isSelected(id)
+      ? focusIsFamily
+        ? "border-blue-500/30 bg-blue-500/5 ring-1 ring-blue-500/30"
+        : "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50"
+      : "border-dark-accent/30 bg-dark-accent/30";
 
   const { familyUnits, unassignedEntities } = useMemo(() => {
     const { units } = buildFamilyUnits(nodes, edges);
@@ -337,6 +364,18 @@ export default function FamilyTreeLeftSidebar({
     }
     return order;
   }, [filteredFamilyUnits, filteredUnassignedEntities, collapsedUnits]);
+
+  const visibleUnionOrder = useMemo(
+    () => filteredFamilyUnits.map((u) => u.unionId),
+    [filteredFamilyUnits]
+  );
+
+  const unionIdForEntity = (id: string) =>
+    filteredFamilyUnits.find(
+      (u) => u.unionId === id || u.parents.includes(id) || u.children.includes(id)
+    )?.unionId ?? null;
+
+  const expandUnion = (uid: string) => [uid, ...getUnionFamilyMemberIds(uid, nodes, edges)];
 
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
@@ -472,16 +511,55 @@ export default function FamilyTreeLeftSidebar({
     }
   };
 
+  const handleUnionModeClick = (e: React.MouseEvent, id: string) => {
+    if (placementTargetId) setPlacementTargetId(null);
+    const uid = unionIdForEntity(id);
+    const targetIds = uid ? expandUnion(uid) : [id];
+    const anchorUid = lastEntityClickedId != null ? unionIdForEntity(lastEntityClickedId) : null;
+
+    if (e.shiftKey) {
+      if (anchorUid && uid) {
+        const fromIdx = visibleUnionOrder.indexOf(anchorUid);
+        const toIdx = visibleUnionOrder.indexOf(uid);
+        if (fromIdx >= 0 && toIdx >= 0) {
+          const [lo, hi] = fromIdx <= toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
+          const rangeUnionIds = visibleUnionOrder.slice(lo, hi + 1);
+          setSelectedNodeIds(rangeUnionIds.flatMap((u) => expandUnion(u)));
+        } else {
+          setSelectedNodeIds(targetIds);
+        }
+      } else {
+        setSelectedNodeIds(targetIds);
+      }
+      setLastEntityClickedId(id);
+    } else if (e.metaKey || e.ctrlKey) {
+      setSelectedNodeIds((prev) => {
+        const allSelected = targetIds.every((x) => prev.includes(x));
+        if (allSelected) return prev.filter((x) => !targetIds.includes(x));
+        const next = new Set(prev);
+        for (const x of targetIds) next.add(x);
+        return [...next];
+      });
+      setLastEntityClickedId(id);
+    } else {
+      setSelectedNodeIds(targetIds);
+      setLastEntityClickedId(id);
+    }
+  };
+
+  const handleSidebarEntityClick = (e: React.MouseEvent, id: string) => {
+    if (subEntitySelectionMode === "union") handleUnionModeClick(e, id);
+    else handleEntityClick(e, id);
+  };
+
   const handleUnionDoubleClick = (e: React.MouseEvent, unionId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const contextFamily =
-      activeFamily ?? families.find((f) => f.unionIds.includes(unionId)) ?? null;
-    if (!contextFamily || !isUnionClusterUnassigned(unionId, contextFamily, nodes, edges)) {
-      return;
-    }
-    const analysis = computeFamilyClusterAnalysis(contextFamily, nodes, edges);
-    setSelectedNodeIds(analysis.unassignedUnionIds);
+    const memberIds = getUnionFamilyMemberIds(unionId, nodes, edges).filter((pid) => {
+      const p = nodes.find((n) => n.id === pid);
+      return !(p?.data as PersonNodeData)?.anchored;
+    });
+    setSelectedNodeIds([unionId, ...memberIds]);
     setLastEntityClickedId(unionId);
   };
 
@@ -494,6 +572,7 @@ export default function FamilyTreeLeftSidebar({
     const selectedUnions = selectedNodeIds.filter((id) => {
       const n = nodes.find((nn) => nn.id === id);
       if (!n || (n.data as { kind?: string }).kind !== "union") return false;
+      if ((n.data as UnionNodeData)?.isMainGraph) return false;
       if (!contextFamily) return false;
       return isUnionClusterUnassigned(id, contextFamily, nodes, edges);
     });
@@ -524,7 +603,7 @@ export default function FamilyTreeLeftSidebar({
       onSelectNode?.();
       return;
     }
-    handleEntityClick(e, id);
+    handleSidebarEntityClick(e, id);
   };
 
   const startEditingPerson = (e: React.MouseEvent, personId: string, currentName: string) => {
@@ -545,7 +624,9 @@ export default function FamilyTreeLeftSidebar({
   };
 
   const hasSelection = selectedNodeIds.length > 0;
-  const canDelete = hasSelection && editingPersonId == null;
+  const canDeleteFamily = focusIsFamily && activeFamilyTabId != null && editingPersonId == null;
+  const canDeleteNodes = !focusIsFamily && hasSelection && editingPersonId == null;
+  const canDelete = canDeleteFamily || canDeleteNodes;
 
   const handleDeleteClick = () => {
     if (!canDelete) return;
@@ -553,6 +634,16 @@ export default function FamilyTreeLeftSidebar({
   };
 
   const handleConfirmDelete = () => {
+    if (focusIsFamily && activeFamilyTabId != null) {
+      const family = families.find((f) => f.id === activeFamilyTabId);
+      if (family) {
+        const memberIds = getFamilyVisibleNodeIds(family, nodes, edges);
+        removeNodes(memberIds);
+        deleteFamily(activeFamilyTabId);
+      }
+      setDeleteConfirmOpen(false);
+      return;
+    }
     for (const id of selectedNodeIds) {
       const node = nodes.find((n) => n.id === id);
       const kind = (node?.data as { kind?: string })?.kind;
@@ -567,16 +658,32 @@ export default function FamilyTreeLeftSidebar({
     setDeleteConfirmOpen(false);
   };
 
-  const confirmMessage =
-    selectedNodeIds.length === 1
-      ? (() => {
-          const id = selectedNodeIds[0]!;
-          const node = nodes.find((n) => n.id === id);
-          const kind = (node?.data?.kind ?? "person") as "person" | "union";
-          const name = getDisplayName(nodes, id, kind);
-          return `Delete ${name}? This will remove them and their connections. This action cannot be undone.`;
-        })()
-      : `Delete ${selectedNodeIds.length} selected entities? This will remove them and their connections. This action cannot be undone.`;
+  const confirmMessage = (() => {
+    if (focusIsFamily && activeFamilyTabId != null) {
+      const family = families.find((f) => f.id === activeFamilyTabId);
+      if (!family) return "Delete this family? This cannot be undone.";
+      const memberIds = getFamilyVisibleNodeIds(family, nodes, edges);
+      const personCount = memberIds.filter(
+        (id) => (nodes.find((n) => n.id === id)?.data as { kind?: string })?.kind === "person"
+      ).length;
+      const unionCount = memberIds.filter(
+        (id) => (nodes.find((n) => n.id === id)?.data as { kind?: string })?.kind === "union"
+      ).length;
+      const parts: string[] = [];
+      if (personCount > 0) parts.push(`${personCount} ${personCount === 1 ? "person" : "people"}`);
+      if (unionCount > 0) parts.push(`${unionCount} ${unionCount === 1 ? "union" : "unions"}`);
+      const memberSummary = parts.length > 0 ? ` and its ${parts.join(" and ")}` : "";
+      return `Delete "${family.name}"${memberSummary}? This cannot be undone.`;
+    }
+    if (selectedNodeIds.length === 1) {
+      const id = selectedNodeIds[0]!;
+      const node = nodes.find((n) => n.id === id);
+      const kind = (node?.data?.kind ?? "person") as "person" | "union";
+      const name = getDisplayName(nodes, id, kind);
+      return `Delete ${name}? This will remove them and their connections. This action cannot be undone.`;
+    }
+    return `Delete ${selectedNodeIds.length} selected entities? This will remove them and their connections. This action cannot be undone.`;
+  })();
 
   const toggleFamilyGroup = (groupId: string) => {
     setExpandedFamilyGroups((prev) => {
@@ -748,7 +855,9 @@ export default function FamilyTreeLeftSidebar({
             onClick={() => handleFamilyTabClick(null)}
             className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
               activeFamilyTabId == null
-                ? "bg-dark-accent text-dark-text"
+                ? focusIsFamily
+                  ? "bg-dark-accent text-dark-text"
+                  : "bg-dark-accent/40 text-dark-muted"
                 : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
             }`}
           >
@@ -765,7 +874,9 @@ export default function FamilyTreeLeftSidebar({
                 title="Double-click to open in Inspector"
                 className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   activeFamilyTabId === family.id
-                    ? "bg-dark-accent text-dark-text"
+                    ? focusIsFamily
+                      ? "bg-dark-accent text-dark-text"
+                      : "bg-dark-accent/40 text-dark-muted"
                     : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
                 }`}
               >
@@ -775,7 +886,7 @@ export default function FamilyTreeLeftSidebar({
         </div>
         <button
           type="button"
-          title="New family tab (or move selected unassigned unions)"
+          title="New family tab (or move shift-selected unassigned unions)"
           onClick={handleAddFamily}
           className="flex-shrink-0 w-7 h-7 rounded-md border border-dark-accent/50 text-dark-muted hover:text-dark-text hover:bg-dark-accent/30 text-sm font-medium"
         >
@@ -783,7 +894,20 @@ export default function FamilyTreeLeftSidebar({
         </button>
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
-        <div className="flex-1 overflow-y-auto p-2">
+        <div
+          className="flex-1 overflow-y-auto p-2"
+          onClick={(e) => {
+            if (
+              (e.target as HTMLElement).closest(
+                "button, [role='button'], input, select, textarea, a"
+              )
+            ) {
+              return;
+            }
+            setSelectedNodeIds([]);
+            setLastEntityClickedId(null);
+          }}
+        >
         {visibleBranches.length > 0 && (
           <section className="mb-3">
             <h3 className="text-xs font-medium text-dark-muted uppercase tracking-wide mb-2 px-1">
@@ -915,17 +1039,23 @@ export default function FamilyTreeLeftSidebar({
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => handleEntityClick(e, unit.unionId)}
+                            onClick={(e) => handleSidebarEntityClick(e, unit.unionId)}
                             onDoubleClick={(e) => handleUnionDoubleClick(e, unit.unionId)}
                             title={`${leftName} ↔ ${rightName}`}
-                            className={`flex-1 min-w-0 text-left text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap hover:text-blue-400 ${
-                              isSelected(unit.unionId)
-                                ? "text-blue-400 bg-blue-500/20 ring-1 ring-blue-500/50 rounded px-1 -mx-1"
-                                : "text-dark-text"
-                            }`}
+                            className={`flex-1 min-w-0 text-left text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap hover:text-blue-400 ${unionRowSelectedClass(unit.unionId)}`}
                           >
                             {leftName} ↔ {rightName}
                           </button>
+                          {unionData?.isMainGraph && (
+                            <span
+                              title="Main graph for this family"
+                              className="flex-shrink-0 flex items-center justify-center w-4 h-4 text-amber-300"
+                            >
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                <path d="M5 16l3-9 4 5 3-4 4 8H5zm2.5-2h9l-2.2-4.4-2.8 3.5L9.5 9 7.5 14z" />
+                              </svg>
+                            </span>
+                          )}
                           {unionData?.familyLocked && (
                             <span
                               title="Family group locked (members drag together)"
@@ -980,9 +1110,7 @@ export default function FamilyTreeLeftSidebar({
                             </p>
                             {editingPersonId === leftId ? (
                               <div
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${
-                                  isSelected(leftId) ? "bg-blue-500/20 ring-1 ring-blue-500/50" : "bg-dark-accent/30"
-                                }`}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${personRowSelectedClass(leftId)}`}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
@@ -1005,14 +1133,10 @@ export default function FamilyTreeLeftSidebar({
                             ) : (
                               <button
                                 type="button"
-                                onClick={(e) => handleEntityClick(e, leftId)}
+                                onClick={(e) => handleSidebarEntityClick(e, leftId)}
                                 onDoubleClick={(e) => startEditingPerson(e, leftId, leftName)}
                                 title={leftName}
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${
-                                  isSelected(leftId)
-                                    ? "bg-blue-500/20 ring-1 ring-blue-500/50"
-                                    : "hover:bg-dark-accent/30"
-                                }`}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(leftId, "hover:bg-dark-accent/30")}`}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
                                 <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{leftName}</span>
@@ -1023,9 +1147,7 @@ export default function FamilyTreeLeftSidebar({
                             )}
                             {editingPersonId === rightId ? (
                               <div
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${
-                                  isSelected(rightId) ? "bg-blue-500/20 ring-1 ring-blue-500/50" : "bg-dark-accent/30"
-                                }`}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${personRowSelectedClass(rightId)}`}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
@@ -1048,14 +1170,10 @@ export default function FamilyTreeLeftSidebar({
                             ) : (
                               <button
                                 type="button"
-                                onClick={(e) => handleEntityClick(e, rightId)}
+                                onClick={(e) => handleSidebarEntityClick(e, rightId)}
                                 onDoubleClick={(e) => startEditingPerson(e, rightId, rightName)}
                                 title={rightName}
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${
-                                  isSelected(rightId)
-                                    ? "bg-blue-500/20 ring-1 ring-blue-500/50"
-                                    : "hover:bg-dark-accent/30"
-                                }`}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(rightId, "hover:bg-dark-accent/30")}`}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
                                 <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{rightName}</span>
@@ -1075,9 +1193,7 @@ export default function FamilyTreeLeftSidebar({
                                     <div key={childId}>
                                       {editingPersonId === childId ? (
                                         <div
-                                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg pl-6 min-w-0 ${
-                                            isSelected(childId) ? "bg-blue-500/20 ring-1 ring-blue-500/50" : "bg-dark-accent/30"
-                                          }`}
+                                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg pl-6 min-w-0 ${personRowSelectedClass(childId)}`}
                                           onClick={(e) => e.stopPropagation()}
                                         >
                                           <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
@@ -1100,14 +1216,10 @@ export default function FamilyTreeLeftSidebar({
                                       ) : (
                                         <button
                                           type="button"
-                                          onClick={(e) => handleEntityClick(e, childId)}
+                                          onClick={(e) => handleSidebarEntityClick(e, childId)}
                                           onDoubleClick={(e) => startEditingPerson(e, childId, name)}
                                           title={name}
-                                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left pl-6 min-w-0 ${
-                                            isSelected(childId)
-                                              ? "bg-blue-500/20 ring-1 ring-blue-500/50"
-                                              : "hover:bg-dark-accent/30"
-                                          }`}
+                                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left pl-6 min-w-0 ${personRowSelectedClass(childId, "hover:bg-dark-accent/30")}`}
                                         >
                                           <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
                                           <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{name}</span>
@@ -1154,9 +1266,7 @@ export default function FamilyTreeLeftSidebar({
                       <div key={node.id}>
                         {isPerson && editingPersonId === node.id ? (
                           <div
-                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border min-w-0 ${
-                              isSelected(node.id) ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50" : "border-dark-accent/30 bg-dark-accent/30"
-                            }`}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border min-w-0 ${unassignedRowSelectedClass(node.id)}`}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <div className="w-6 h-6 rounded-full bg-dark-accent flex-shrink-0" />
@@ -1187,7 +1297,7 @@ export default function FamilyTreeLeftSidebar({
                               isArmed
                                 ? "border-amber-500 bg-amber-500/15 ring-1 ring-amber-500/40"
                                 : isSelected(node.id)
-                                  ? "border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/50"
+                                  ? unassignedRowSelectedClass(node.id)
                                   : "border-dark-accent/30 hover:bg-dark-accent/30"
                             }`}
                           >
@@ -1214,19 +1324,53 @@ export default function FamilyTreeLeftSidebar({
         )}
         </div>
 
-        <div className="p-3 border-t border-dark-accent/50 flex-shrink-0">
-        <button
-          type="button"
-          onClick={handleDeleteClick}
-          disabled={!canDelete}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent border-dark-accent/50 text-dark-muted hover:text-red-400 hover:border-red-500/50 hover:bg-red-500/10"
-          title={hasSelection ? "Delete selected entities" : "Select entities to delete"}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-          Delete
-        </button>
+        <div className="p-3 border-t border-dark-accent/50 flex-shrink-0 flex items-center gap-2">
+          <div className="flex rounded-lg border border-dark-accent/50 overflow-hidden flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setSubEntitySelectionMode("node")}
+              className={`px-2 py-1.5 text-[10px] font-medium transition-colors ${
+                subEntitySelectionMode === "node"
+                  ? "bg-dark-accent text-dark-text"
+                  : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+              }`}
+              title="Select individual nodes"
+            >
+              Node
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubEntitySelectionMode("union")}
+              className={`px-2 py-1.5 text-[10px] font-medium transition-colors border-l border-dark-accent/50 ${
+                subEntitySelectionMode === "union"
+                  ? "bg-dark-accent text-dark-text"
+                  : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+              }`}
+              title="Select whole unions at a time"
+            >
+              Union
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            disabled={!canDelete}
+            className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent border-dark-accent/50 text-dark-muted hover:text-red-400 hover:border-red-500/50 hover:bg-red-500/10"
+            title={
+              canDeleteFamily
+                ? "Delete active family tab and its members"
+                : canDeleteNodes
+                  ? "Delete selected entities"
+                  : focusIsFamily && activeFamilyTabId == null
+                    ? "Select a family tab or nodes to delete"
+                    : "Select entities to delete"
+            }
+          >
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span className="truncate">{canDeleteFamily ? "Delete family" : "Delete"}</span>
+          </button>
         </div>
       </div>
 

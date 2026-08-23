@@ -3,6 +3,7 @@ import { Handle, NodeToolbar, Position, type NodeProps } from "reactflow";
 import type { UnionNodeData } from "../../store/familyTreeStore";
 import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H, resolveUnionConnectionStyle, getConnectionStyleName } from "../../store/familyTreeStore";
 import UnionConnectionStyleEditor from "./UnionConnectionStyleEditor";
+import { renderConnectionIcon } from "./connectionIconRegistry";
 
 function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>) {
   const [editorOpen, setEditorOpen] = useState(false);
@@ -22,6 +23,7 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
   const familyLocked = data.familyLocked ?? false;
   const familyColor = (data as { familyColor?: string }).familyColor;
   const outOfActiveFamily = (data as { outOfActiveFamily?: boolean }).outOfActiveFamily;
+  const selectionDimmed = (data as { selectionDimmed?: boolean }).selectionDimmed;
   const effectiveStyle = resolveUnionConnectionStyle(data, connectionStyles);
   const styleName = getConnectionStyleName(data, connectionStyles);
   const isEdgeHovered = hoveredConnectionInfo?.unionId === id;
@@ -93,7 +95,9 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
         title={tooltipDescription || undefined}
         className={`relative px-3 py-2 rounded-lg border min-w-[60px] flex flex-col items-center justify-center transition-colors ${
           selected
-            ? "bg-dark-accent/80 border-blue-500 shadow-md"
+            ? selectionDimmed
+              ? "bg-dark-accent/80 border-blue-500/40"
+              : "bg-dark-accent/80 border-blue-500 shadow-md"
             : "bg-dark-accent/50 border-dark-accent hover:border-dark-muted"
         } ${outOfActiveFamily ? "opacity-40" : ""}`}
         style={!selected && familyColor ? { borderColor: familyColor } : undefined}
@@ -154,8 +158,14 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
         <Handle type="target" position={Position.Top} id="leftPartner" style={{ left: "25%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="target" position={Position.Top} id="rightPartner" style={{ left: "75%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="source" position={Position.Bottom} id="children" className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
-        <span className="text-dark-muted text-xs font-medium">
-          {"<=>"}
+        <span className="text-dark-muted text-xs font-medium flex items-center gap-1">
+          {effectiveStyle.icon ? (
+            <span className="flex items-center justify-center leading-none">
+              {renderConnectionIcon(effectiveStyle.icon, 16)}
+            </span>
+          ) : (
+            "<=>"
+          )}
         </span>
         {showNotesForExport && (
           <span className="text-[10px] text-dark-muted mt-0.5 line-clamp-2 max-w-full break-words text-center">

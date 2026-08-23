@@ -112,6 +112,7 @@ interface ParsedUnionBlock {
   position?: { x: number; y: number };
   positionUnset?: boolean;
   styleName?: string;
+  mainGraph?: boolean;
   arrange?: UnionArrangeSpacing;
   notes: string;
   members: ParsedUnionMember[];
@@ -278,6 +279,8 @@ function parseUnionBlock(header: string, bodyLines: string[]): ParsedUnionBlock 
       }
     } else if (key === "style") {
       block.styleName = parseQuotedValue(val);
+    } else if (key === "mainGraph") {
+      block.mainGraph = val === "true";
     } else if (key === "arrange") {
       block.arrange = parseArrangeTag(val);
     } else if (key === "notes") {
@@ -505,6 +508,7 @@ export function parseFamilyTreeScript(
         unionType: "forward",
         connectionStyleId: styleId,
         arrangeSpacing: block.arrange,
+        isMainGraph: block.mainGraph ?? (existingUnion?.data as UnionNodeData)?.isMainGraph,
         createdAt: (existingUnion?.data as UnionNodeData)?.createdAt ?? Date.now(),
         positionUnset: block.positionUnset,
       };
@@ -537,6 +541,7 @@ export function parseFamilyTreeScript(
       unionType: "forward",
       connectionStyleId: styleId,
       arrangeSpacing: block.arrange,
+      isMainGraph: block.mainGraph ?? (existingUnion?.data as UnionNodeData)?.isMainGraph,
       createdAt: (existingUnion?.data as UnionNodeData)?.createdAt ?? Date.now(),
       positionUnset: block.positionUnset,
     };

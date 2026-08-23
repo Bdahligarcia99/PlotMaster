@@ -419,6 +419,8 @@ export interface UnionNodeData {
   connectionStyleOverride?: ConnectionVisualStyle;
   /** When true, dragging any partner/child of this union moves the whole family group together. */
   familyLocked?: boolean;
+  /** When true, this union anchors the main family graph for its family tab. */
+  isMainGraph?: boolean;
   /** Per-union arrange overrides: horizontal/vertical spacing and parent alignment relative to child row. */
   arrangeSpacing?: UnionArrangeSpacing;
   /** Creation timestamp for stable family auto-numbering order. */
@@ -1156,19 +1158,10 @@ export function computeFamilyClusterAnalysis(
     return { assignedUnionIds: [], unassignedUnionIds: [], unionlessPersonIds };
   }
 
-  const components = computeComponentsForUnionSubset(familyUnionIds, nodes, edges);
-  if (components.length <= 1) {
-    return {
-      assignedUnionIds: [...familyUnionIds],
-      unassignedUnionIds: [],
-      unionlessPersonIds,
-    };
-  }
-
-  components.sort((a, b) => b.length - a.length);
-  const maxSize = components[0]!.length;
-  const winners = components.filter((c) => c.length === maxSize);
-  if (winners.length > 1) {
+  const crownedId = familyUnionIds.find(
+    (uid) => (nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+  );
+  if (!crownedId) {
     return {
       assignedUnionIds: [],
       unassignedUnionIds: [...familyUnionIds],
@@ -1176,10 +1169,11 @@ export function computeFamilyClusterAnalysis(
     };
   }
 
-  const assignedSet = new Set(winners[0]!);
+  const components = computeComponentsForUnionSubset(familyUnionIds, nodes, edges);
+  const main = components.find((c) => c.includes(crownedId)) ?? [crownedId];
   return {
-    assignedUnionIds: [...assignedSet],
-    unassignedUnionIds: familyUnionIds.filter((uid) => !assignedSet.has(uid)),
+    assignedUnionIds: [...main],
+    unassignedUnionIds: familyUnionIds.filter((uid) => !main.includes(uid)),
     unionlessPersonIds,
   };
 }
@@ -1432,7 +1426,7 @@ function showFamilyConnectionNotice(
 /** Suggestion from the name/role analysis engine. Exposed for consent UI. */
 export interface NameRoleSuggestion {
   nodeId: string;
-  field: "firstName" | "role" | "unionHealth" | "genConflict" | "unassigned" | "noGen";
+  field: "firstName" | "role" | "unionHealth" | "genConflict" | "unassigned" | "noGen" | "mainGraph";
   currentValue: string;
   proposedValue: string;
   reason: string;
@@ -1644,6 +1638,31 @@ export function analyzeDegenerateUnionSuggestions(
   return suggestions;
 }
 
+/** Flag families with no crowned main-graph union. */
+export function analyzeMainGraphSuggestions(
+  nodes: Node<FamilyTreeNodeData>[],
+  families: FamilyGroup[]
+): NameRoleSuggestion[] {
+  const suggestions: NameRoleSuggestion[] = [];
+  for (const family of families) {
+    if (family.unionIds.length === 0) continue;
+    const hasCrown = family.unionIds.some(
+      (uid) => (nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+    );
+    if (hasCrown) continue;
+    const firstUnionId = family.unionIds[0]!;
+    suggestions.push({
+      nodeId: firstUnionId,
+      field: "mainGraph",
+      currentValue: "No main graph",
+      proposedValue: "—",
+      reason: `Family "${family.name}" has no main graph — crown a union to define the main graph`,
+      unionId: firstUnionId,
+    });
+  }
+  return suggestions;
+}
+
 /** Flag unions where a parent and child share the same generation anchor. */
 export function analyzeGenConflictSuggestions(
   nodes: Node<FamilyTreeNodeData>[],
@@ -1766,18 +1785,25 @@ export function getFamilyNodeWarnings(
   const analysis = computeFamilyClusterAnalysis(family, nodes, edges);
   const node = nodes.find((n) => n.id === nodeId);
   if (!node) return warnings;
+  const crownedId = family.unionIds.find(
+    (uid) => (nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+  );
   if (node.data.kind === "person" && analysis.unionlessPersonIds.includes(nodeId)) {
     warnings.push("Not linked to any union in this family");
   }
-  if (node.data.kind === "union" && analysis.unassignedUnionIds.includes(nodeId)) {
-    const components = computeComponentsForUnionSubset(analysis.unassignedUnionIds, nodes, edges);
-    const myComponent = components.find((c) => c.includes(nodeId));
-    const clusterSize = myComponent?.length ?? 1;
-    warnings.push(
-      clusterSize <= 1
-        ? "Union is not connected to the main family graph"
-        : "Union cluster is not connected to the main family graph"
-    );
+  if (node.data.kind === "union" && family.unionIds.includes(nodeId)) {
+    if (!crownedId) {
+      warnings.push("No main graph set for this family — crown a union to define the main graph");
+    } else if (analysis.unassignedUnionIds.includes(nodeId)) {
+      const components = computeComponentsForUnionSubset(analysis.unassignedUnionIds, nodes, edges);
+      const myComponent = components.find((c) => c.includes(nodeId));
+      const clusterSize = myComponent?.length ?? 1;
+      warnings.push(
+        clusterSize <= 1
+          ? "Union is not connected to the main family graph"
+          : "Union cluster is not connected to the main family graph"
+      );
+    }
   }
   return warnings;
 }
@@ -1976,6 +2002,7 @@ export function generateFamilyTreeScript(
         `notes: "${escapeScriptQuoted(data.notes ?? "")}"`,
       ];
       if (libraryStyle) parts.push(`style: "${escapeScriptQuoted(libraryStyle.name)}"`);
+      if (data.isMainGraph) parts.push("mainGraph: true");
       lines.push(`Union ${union.id} { ${parts.join(" ")} }`);
       continue;
     }
@@ -1986,6 +2013,7 @@ export function generateFamilyTreeScript(
     if (xLine) lines.push(xLine);
     if (yLine) lines.push(yLine);
     if (libraryStyle) lines.push(`${indent}style: "${escapeScriptQuoted(libraryStyle.name)}"`);
+    if (data.isMainGraph) lines.push(`${indent}mainGraph: true`);
     const arrangeParts: string[] = [];
     if (data.arrangeSpacing?.parentSpacing != null) {
       arrangeParts.push(`parents=${data.arrangeSpacing.parentSpacing}`);
@@ -2338,6 +2366,8 @@ interface FamilyTreeStore {
   exportGuidesVisible: boolean;
   showLegend: boolean;
   legendMode: "tooltips" | "tooltipsAndIcons";
+  subEntitySelectionMode: "node" | "union";
+  setSubEntitySelectionMode: (mode: "node" | "union") => void;
   exportGuideScale: number;
   showExportDialog: boolean;
   exportOptions: {
@@ -2385,6 +2415,7 @@ interface FamilyTreeStore {
   setEdgeConnectionStyleOverride: (edgeId: string, style: ConnectionVisualStyle | undefined) => void;
   clearEdgeConnectionStyle: (edgeId: string) => void;
   setUnionFamilyLocked: (unionId: string, locked: boolean) => void;
+  setUnionMainGraph: (unionId: string, value: boolean) => void;
   setGenLabelMode: (v: "letters" | "numbers" | "both") => void;
   setNodeGenArmed: (nodeId: string) => void;
   updateNodeGenAnchor: (nodeId: string, genAnchorId: string | null) => void;
@@ -2450,6 +2481,8 @@ interface FamilyTreeStore {
   isolationModeActive: boolean;
   /** Set when a family tab is clicked to trigger canvas focus. */
   pendingFocusFamilyId: string | null;
+  /** Whether delete targets the active family tab or selected nodes. */
+  deleteFocus: "family" | "nodes";
   /** Bloodline warning when deleting a bridge connection inside a family. */
   pendingBloodlineWarning: PendingBloodlineWarning | null;
   /** Brief toast when a redundant connecting union is deleted. */
@@ -2476,6 +2509,7 @@ interface FamilyTreeStore {
   deleteBranch: (branchId: string) => void;
   recomputeFamilies: () => void;
   setActiveFamilyTabId: (id: string | null) => void;
+  setDeleteFocus: (focus: "family" | "nodes") => void;
   /** Create an empty family tab (optionally seeded with unions/persons). */
   createFamily: (unionIds?: string[], personIds?: string[]) => string;
   deleteFamily: (familyId: string) => void;
@@ -2568,6 +2602,7 @@ let prevDocumentsRef: FamilyTreeDocumentRecord[] | null = null;
 let prevDocumentsUpdatedAtSum = 0;
 let prevDisplayMode: "nodes" | "text" | null = null;
 let prevLegendMode: "tooltips" | "tooltipsAndIcons" | null = null;
+let prevSubEntitySelectionMode: "node" | "union" | null = null;
 let prevLastDocumentIdJson: string | null = null;
 
 function applyNodePositionUpdates(
@@ -3677,6 +3712,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   exportGuidesVisible: false,
   showLegend: false,
   legendMode: "tooltips" as "tooltips" | "tooltipsAndIcons",
+  subEntitySelectionMode: "node" as "node" | "union",
   exportGuideScale: 1,
   showExportDialog: false,
   exportOptions: {
@@ -3702,6 +3738,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   lastActiveFamilyTabId: null as string | null,
   isolationModeActive: false,
   pendingFocusFamilyId: null as string | null,
+  deleteFocus: "nodes" as "family" | "nodes",
   pendingBloodlineWarning: null as PendingBloodlineWarning | null,
   familyConnectionNotice: null as string | null,
   inspectorFamilyId: null as string | null,
@@ -3730,6 +3767,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         ...analyzeGenConflictSuggestions(s.nodes, s.edges),
         ...analyzeUnassignedSuggestions(s.nodes, s.edges, s.families),
         ...analyzeNoGenSuggestions(s.nodes),
+        ...analyzeMainGraphSuggestions(s.nodes, s.families),
       ],
     });
   },
@@ -3742,8 +3780,10 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setActiveFamilyTabId: (id) =>
     set({
       activeFamilyTabId: id,
+      deleteFocus: "family",
       ...(id != null ? { lastActiveFamilyTabId: id } : {}),
     }),
+  setDeleteFocus: (focus) => set({ deleteFocus: focus }),
   createFamily: (unionIds = [], personIds = []) => {
     const s = get();
     const record = createNewFamilyRecord(unionIds, personIds, true);
@@ -3808,11 +3848,26 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const s = get();
     const sourceFamily = s.families.find((f) => f.id === sourceFamilyId);
     if (!sourceFamily) return null;
-    const movingUnions = new Set(unionIds);
+    const filteredUnionIds = unionIds.filter((uid) => {
+      const n = s.nodes.find((nn) => nn.id === uid);
+      return !(n?.data as UnionNodeData)?.isMainGraph;
+    });
+    if (filteredUnionIds.length === 0) return null;
+    const crownedId = sourceFamily.unionIds.find(
+      (uid) => (s.nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+    );
+    const crownedMemberIds = new Set<string>();
+    if (crownedId) {
+      for (const pid of getUnionFamilyMemberIds(crownedId, s.nodes, s.edges)) {
+        crownedMemberIds.add(pid);
+      }
+    }
+    const movingUnions = new Set(filteredUnionIds);
     const stayingUnions = sourceFamily.unionIds.filter((uid) => !movingUnions.has(uid));
     const movingPersons = new Set<string>();
-    for (const uid of unionIds) {
+    for (const uid of filteredUnionIds) {
       for (const pid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
+        if (crownedMemberIds.has(pid)) continue;
         const person = s.nodes.find((n) => n.id === pid);
         const anchored = (person?.data as PersonNodeData)?.anchored;
         const inStaying = stayingUnions.some((suid) =>
@@ -3822,7 +3877,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         if (!inStaying || !anchored) movingPersons.add(pid);
       }
     }
-    const movingNodeIds = new Set<string>([...unionIds, ...movingPersons]);
+    const movingNodeIds = new Set<string>([...filteredUnionIds, ...movingPersons]);
     const stayingNodeIds = new Set<string>([...stayingUnions]);
     for (const suid of stayingUnions) {
       for (const pid of getUnionFamilyMemberIds(suid, s.nodes, s.edges)) {
@@ -3851,7 +3906,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         s.edges
       );
     });
-    const newRecord = createNewFamilyRecord(unionIds, [...movingPersons], true);
+    const newRecord = createNewFamilyRecord(filteredUnionIds, [...movingPersons], true);
     const newGroups = [
       ...updatedFamilies.map(({ memberPersonIds: _m, ...r }) => r),
       newRecord,
@@ -3859,8 +3914,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     assignAutoFamilyNames(newGroups, s.nodes);
     const newFamilyId = newRecord.id;
     const opts = getScriptGenOptions(s);
-    const scopeIds = new Set<string>([...unionIds, ...movingPersons]);
-    for (const uid of unionIds) {
+    const scopeIds = new Set<string>([...filteredUnionIds, ...movingPersons]);
+    for (const uid of filteredUnionIds) {
       for (const mid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
         if (movingPersons.has(mid)) scopeIds.add(mid);
       }
@@ -4374,6 +4429,21 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       hasUnsavedChanges: true,
       lastSaveError: null,
     })),
+  setUnionMainGraph: (unionId, value) =>
+    set((s) => {
+      const owner = findFamilyForNode(unionId, s.families);
+      const siblings = new Set(owner?.unionIds ?? []);
+      return {
+        nodes: s.nodes.map((n) => {
+          if ((n.data as UnionNodeData).kind !== "union") return n;
+          if (n.id === unionId) return { ...n, data: { ...n.data, isMainGraph: value } };
+          if (value && siblings.has(n.id)) return { ...n, data: { ...n.data, isMainGraph: false } };
+          return n;
+        }),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    }),
   setUnionArrangeSpacing: (unionId, patch) =>
     set((s) => ({
       nodes: s.nodes.map((n) => {
@@ -4486,6 +4556,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setExportGuidesVisible: (v) => set({ exportGuidesVisible: v }),
   setShowLegend: (v) => set({ showLegend: v }),
   setLegendMode: (v) => set({ legendMode: v, hasUnsavedChanges: true, lastSaveError: null }),
+  setSubEntitySelectionMode: (mode) =>
+    set({ subEntitySelectionMode: mode, hasUnsavedChanges: true, lastSaveError: null }),
   setExportGuideScale: (v) =>
     set({ exportGuideScale: Math.max(0.25, Math.min(6, v)) }),
   setShowExportDialog: (v) => set({ showExportDialog: v }),
@@ -4536,7 +4608,11 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   setSelectedNodeIds: (idsOrUpdater) =>
     set((s) => {
       const ids = typeof idsOrUpdater === "function" ? idsOrUpdater(s.selectedNodeIds) : idsOrUpdater;
-      return { selectedNodeIds: ids, primarySelectedNodeId: ids[0] ?? null };
+      return {
+        selectedNodeIds: ids,
+        primarySelectedNodeId: ids[0] ?? null,
+        ...(ids.length > 0 ? { deleteFocus: "nodes" as const } : {}),
+      };
     }),
 
   addPerson: (options) => {
@@ -4643,6 +4719,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       nodeA.position.x <= nodeB.position.x ? [idA, idB] : [idB, idA];
     const midX = (nodeA.position.x + nodeB.position.x) / 2;
     const belowY = Math.max(nodeA.position.y, nodeB.position.y) + 70;
+    const familyId = ensureActiveFamilyTarget(get, set);
+    const family = get().families.find((f) => f.id === familyId);
+    const hasMainGraph =
+      family?.unionIds.some(
+        (uid) => (get().nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+      ) ?? false;
     const unionNode: Node<UnionNodeData> = {
       id: unionId,
       type: "union",
@@ -4657,6 +4739,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         notes: "",
         unionType: "forward",
         createdAt: Date.now(),
+        ...(!hasMainGraph ? { isMainGraph: true } : {}),
       },
     };
 
@@ -4685,18 +4768,18 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       hasUnsavedChanges: true,
       lastSaveError: null,
     }));
-    const familyId = ensureActiveFamilyTarget(get, set);
+    const familyIdAfter = ensureActiveFamilyTarget(get, set);
     const after = get();
     const updatedFamilies = appendNodeToFamilyRecord(
       after.families,
-      familyId,
+      familyIdAfter,
       unionId,
       "union",
       after.nodes,
       after.edges
     );
     set({ families: updatedFamilies });
-    appendNodeDeclarationToDocumentImpl(get, set, familyId, unionId);
+    appendNodeDeclarationToDocumentImpl(get, set, familyIdAfter, unionId);
     return unionId;
   },
 
@@ -5663,6 +5746,10 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         (payload?.ui as { legendMode?: string })?.legendMode === "tooltipsAndIcons"
           ? "tooltipsAndIcons"
           : "tooltips",
+      subEntitySelectionMode:
+        (payload?.ui as { subEntitySelectionMode?: string })?.subEntitySelectionMode === "union"
+          ? "union"
+          : "node",
       lastDocumentIdByFamilyId:
         ((payload?.ui as { lastDocumentIdByFamilyId?: Record<string, string> })
           ?.lastDocumentIdByFamilyId ?? {}) as Record<string, string>,
@@ -5767,6 +5854,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           persistUnionSelectionOnChildCreate: s.persistUnionSelectionOnChildCreate,
           defaultUnionType: s.defaultUnionType,
           legendMode: s.legendMode,
+          subEntitySelectionMode: s.subEntitySelectionMode,
           lastDocumentIdByFamilyId: s.lastDocumentIdByFamilyId,
         },
       };
@@ -5937,6 +6025,7 @@ useFamilyTreeStore.subscribe((state) => {
     documentsChanged ||
     state.displayMode !== prevDisplayMode ||
     state.legendMode !== prevLegendMode ||
+    state.subEntitySelectionMode !== prevSubEntitySelectionMode ||
     lastDocumentIdJson !== prevLastDocumentIdJson;
   prevNodes = state.nodes;
   prevEdges = state.edges;
@@ -5961,6 +6050,7 @@ useFamilyTreeStore.subscribe((state) => {
   prevDocumentsUpdatedAtSum = documentsUpdatedAtSum;
   prevDisplayMode = state.displayMode;
   prevLegendMode = state.legendMode;
+  prevSubEntitySelectionMode = state.subEntitySelectionMode;
   prevLastDocumentIdJson = lastDocumentIdJson;
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&

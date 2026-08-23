@@ -145,6 +145,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   }, [advancedOpen, activeStyleId, activePersonIds, applyStyleToPersons]);
 
   const togglePerson = useCallback((personId: string) => {
+    setIconPickerOpen(false);
     setActivePersonIds((prev) => {
       const next = new Set(prev);
       if (next.has(personId)) next.delete(personId);
@@ -158,6 +159,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   }, []);
 
   const startNewDraft = useCallback(() => {
+    setIconPickerOpen(false);
     setDraft({
       name: "",
       description: "",
@@ -166,6 +168,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   }, []);
 
   const startEditDraft = useCallback((style: ConnectionStyleDef) => {
+    setIconPickerOpen(false);
     setDraft({
       id: style.id,
       name: style.name,
@@ -177,7 +180,8 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     });
   }, []);
 
-  const updateDraft = useCallback((patch: Partial<StyleDraft>) => {
+  const updateDraft = useCallback((patch: Partial<StyleDraft>, opts?: { keepIconPicker?: boolean }) => {
+    if (!opts?.keepIconPicker) setIconPickerOpen(false);
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
@@ -203,6 +207,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
         setUnionConnectionStyleId(unionId, newId);
       }
     }
+    setIconPickerOpen(false);
     setDraft(null);
   }, [
     draft,
@@ -234,6 +239,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     } else {
       setUnionConnectionStyleOverride(unionId, override);
     }
+    setIconPickerOpen(false);
     setDraft(null);
   }, [draft, setUnionConnectionStyleOverride, setEdgeConnectionStyleOverride, unionId, advancedOpen, activePersonIds, edges]);
 
@@ -246,10 +252,12 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     "px-2 py-1 text-xs rounded border border-dark-accent bg-dark-bg text-dark-muted hover:text-dark-text hover:border-dark-muted";
 
   const handleLibraryStyleClick = (styleId: string) => {
+    setIconPickerOpen(false);
     if (advancedOpen) {
       toggleStyle(styleId);
     } else {
-      setUnionConnectionStyleId(unionId, styleId);
+      const isCurrent = !hasOverride && unionData?.connectionStyleId === styleId;
+      setUnionConnectionStyleId(unionId, isCurrent ? undefined : styleId);
     }
   };
 
@@ -275,7 +283,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
 
       <div className="mb-2">
         <div className="text-xs text-dark-muted mb-1.5">Library</div>
-        <div className="max-h-36 overflow-y-auto space-y-1">
+        <div className="max-h-36 overflow-y-auto nowheel space-y-1">
           {connectionStyles.length === 0 && (
             <div className="text-xs text-dark-muted px-1 py-2">No saved styles yet</div>
           )}
@@ -517,7 +525,10 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
             </Button>
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={() => {
+                setIconPickerOpen(false);
+                setDraft(null);
+              }}
               className="px-3 py-1.5 text-xs text-dark-muted hover:text-dark-text"
             >
               Cancel
@@ -528,25 +539,15 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     </>
   );
 
-  const rightColumn = iconPickerOpen ? (
-    <div className="border-l border-dark-accent pl-3 min-w-0">
-      <ConnectionIconPicker
-        value={draft?.icon}
-        onSelect={(icon) => {
-          if (draft) updateDraft({ icon });
-          else setDraft({ name: "", description: "", ...DEFAULT_CONNECTION_STYLE, icon });
-        }}
-        onClear={() => updateDraft({ icon: undefined })}
-        onBack={() => setIconPickerOpen(false)}
-      />
-    </div>
-  ) : (
+  const rightColumn = (
     <div className="border-l border-dark-accent pl-3 min-w-0">
       <div className="text-xs text-dark-muted mb-1.5">Union Connections</div>
       {connectedMembers.length === 0 ? (
         <div className="text-xs text-dark-muted px-1 py-2">No connected people</div>
       ) : (
-        <div className="max-h-64 overflow-y-auto space-y-1">
+        <div
+          className={`overflow-y-auto nowheel space-y-1 ${iconPickerOpen ? "max-h-40" : "max-h-64"}`}
+        >
           {connectedMembers.map(({ personId, name, edgeId, styleName }) => (
             <div
               key={personId}
@@ -604,12 +605,25 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
           Style selected — click connection names to apply
         </p>
       )}
+      {iconPickerOpen && (
+        <div className="mt-3 pt-3 border-t border-dark-accent">
+          <ConnectionIconPicker
+            value={draft?.icon}
+            onSelect={(icon) => {
+              if (draft) updateDraft({ icon }, { keepIconPicker: true });
+              else setDraft({ name: "", description: "", ...DEFAULT_CONNECTION_STYLE, icon });
+            }}
+            onClear={() => updateDraft({ icon: undefined }, { keepIconPicker: true })}
+            onBack={() => setIconPickerOpen(false)}
+          />
+        </div>
+      )}
     </div>
   );
 
   return (
     <div
-      className={`${advancedOpen ? "w-[640px]" : "w-[320px]"} bg-dark-surface border border-dark-accent rounded-lg shadow-lg p-3 text-dark-text`}
+      className={`nowheel ${advancedOpen ? "w-[640px]" : "w-[320px]"} bg-dark-surface border border-dark-accent rounded-lg shadow-lg p-3 text-dark-text`}
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between mb-3">

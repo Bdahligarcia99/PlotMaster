@@ -491,6 +491,7 @@ export default function FamilyTreeCanvas({
   const setEdges = useFamilyTreeStore((s) => s.setEdges);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
+  const deleteFocus = useFamilyTreeStore((s) => s.deleteFocus);
   const snapToGrid = useFamilyTreeStore((s) => s.snapToGrid);
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
@@ -618,8 +619,9 @@ export default function FamilyTreeCanvas({
         unionDragGroupRef.current = null;
       }
       if (node.data?.kind === "person" && node.data?.isGenArmed === false) setNodeGenArmed(node.id);
+      if (!state.selectedNodeIds.includes(node.id)) setSelectedNodeIds([node.id]);
     },
-    [setNodeGenArmed, filterAnchoredMembers]
+    [setNodeGenArmed, filterAnchoredMembers, setSelectedNodeIds]
   );
 
   const onNodeDrag = useCallback(
@@ -733,8 +735,9 @@ export default function FamilyTreeCanvas({
   }, [selectedNodeIds, nodes, edges]);
 
   const nodesWithSelection = useMemo(
-    () =>
-      canvasNodes.map((n) => {
+    () => {
+      const focusIsFamily = deleteFocus === "family" || selectedNodeIds.length === 0;
+      return canvasNodes.map((n) => {
         const ownerFamily = findFamilyForNode(n.id, families);
         const familyIndex = ownerFamily ? families.findIndex((f) => f.id === ownerFamily.id) : -1;
         const familyColor = familyIndex >= 0 ? getFamilyColor(familyIndex) : undefined;
@@ -742,18 +745,21 @@ export default function FamilyTreeCanvas({
           activeFamilyTabId != null &&
           ownerFamily != null &&
           ownerFamily.id !== activeFamilyTabId;
+        const isSelected = selectedNodeIds.includes(n.id);
         return {
           ...n,
-          selected: selectedNodeIds.includes(n.id),
+          selected: isSelected,
           data: {
             ...n.data,
             isFamilyLocked: familyLockedMemberIds.has(n.id),
             familyColor,
             outOfActiveFamily,
+            selectionDimmed: focusIsFamily && isSelected,
           },
         };
-      }),
-    [canvasNodes, selectedNodeIds, familyLockedMemberIds, families, activeFamilyTabId]
+      });
+    },
+    [canvasNodes, selectedNodeIds, deleteFocus, familyLockedMemberIds, families, activeFamilyTabId]
   );
 
   const displayEdges = useMemo(() => {

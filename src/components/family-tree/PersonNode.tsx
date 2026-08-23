@@ -36,6 +36,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const isFamilyLocked = (data as { isFamilyLocked?: boolean }).isFamilyLocked;
   const familyColor = (data as { familyColor?: string }).familyColor;
   const outOfActiveFamily = (data as { outOfActiveFamily?: boolean }).outOfActiveFamily;
+  const selectionDimmed = (data as { selectionDimmed?: boolean }).selectionDimmed;
   const x = Math.round(xPos);
   const y = Math.round(yPos);
 
@@ -360,7 +361,9 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
         ref={sizeRef}
         className={`px-4 py-3 rounded-xl border-2 min-w-[120px] transition-colors relative ${
           selected
-            ? "bg-dark-surface border-blue-500 shadow-lg shadow-blue-500/20"
+            ? selectionDimmed
+              ? "bg-dark-surface border-blue-500/40"
+              : "bg-dark-surface border-blue-500 shadow-lg shadow-blue-500/20"
             : isGenImmune
               ? "bg-dark-surface border-red-500/70 hover:border-red-500/90 shadow-[0_0_12px_rgba(239,68,68,0.4)]"
               : "bg-dark-surface border-dark-accent hover:border-dark-muted"

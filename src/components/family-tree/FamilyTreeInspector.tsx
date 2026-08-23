@@ -707,6 +707,7 @@ export default function FamilyTreeInspector() {
     nameRoleSuggestions,
     setReviewNodesModalOpen,
   } = useFamilyTreeStore();
+  const setUnionMainGraph = useFamilyTreeStore((s) => s.setUnionMainGraph);
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
   const families = useFamilyTreeStore((s) => s.families);
   const documents = useFamilyTreeStore((s) => s.documents);
@@ -1225,6 +1226,15 @@ export default function FamilyTreeInspector() {
               </div>
             );
           })()}
+          <label className="flex items-center gap-2 mb-4 text-sm text-dark-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(nodeData as UnionNodeData).isMainGraph ?? false}
+              onChange={(e) => setUnionMainGraph(selectedNode.id, e.target.checked)}
+              className="themed-checkbox"
+            />
+            Main graph
+          </label>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Notes</label>
             <textarea

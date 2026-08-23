@@ -36,7 +36,8 @@ export default function FamilyTreeReviewSuggestionsModal({
           s.field === "unionHealth" ||
           s.field === "genConflict" ||
           s.field === "unassigned" ||
-          s.field === "noGen"
+          s.field === "noGen" ||
+          s.field === "mainGraph"
             ? -1
             : i
         )
@@ -74,7 +75,8 @@ export default function FamilyTreeReviewSuggestionsModal({
     s.field === "unionHealth" ||
     s.field === "genConflict" ||
     s.field === "unassigned" ||
-    s.field === "noGen";
+    s.field === "noGen" ||
+    s.field === "mainGraph";
 
   const getEffectiveProposed = (s: NameRoleSuggestion, idx: number): string => {
     const r = resolvedValues.get(idx);
