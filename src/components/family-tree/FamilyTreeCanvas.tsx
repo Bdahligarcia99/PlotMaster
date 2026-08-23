@@ -572,7 +572,7 @@ export default function FamilyTreeCanvas({
   );
 
   const onNodeDragStart = useCallback(
-    (_: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
+    (evt: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
       const state = useFamilyTreeStore.getState();
       let groupIds: string[] | null = null;
@@ -619,7 +619,14 @@ export default function FamilyTreeCanvas({
         unionDragGroupRef.current = null;
       }
       if (node.data?.kind === "person" && node.data?.isGenArmed === false) setNodeGenArmed(node.id);
-      if (!state.selectedNodeIds.includes(node.id)) setSelectedNodeIds([node.id]);
+      const isMultiSelectGesture = evt.shiftKey || evt.metaKey || evt.ctrlKey;
+      if (
+        !isMultiSelectGesture &&
+        state.selectedNodeIds.length <= 1 &&
+        !state.selectedNodeIds.includes(node.id)
+      ) {
+        setSelectedNodeIds([node.id]);
+      }
     },
     [setNodeGenArmed, filterAnchoredMembers, setSelectedNodeIds]
   );
