@@ -5,6 +5,7 @@ import { FileBackedStorageDriver } from "./synproj/FileBackedStorageDriver";
 
 /** Module types for project index. */
 export type ProjectModuleType =
+  | "neuron"
   | "familyTree"
   | "timeline"
   | "charts"
@@ -69,6 +70,10 @@ export interface PersistedFamilyRecord {
   name: string;
   isCustomName: boolean;
   description: string;
+  /** Free-form notes, separate from description. */
+  notes?: string;
+  /** User override for the family's node color; falls back to the auto-assigned palette color when unset. */
+  color?: string;
   parentFamilyIds?: [string, string];
 }
 
@@ -204,12 +209,57 @@ export interface TimelineProjectPayload {
   beatTextScalePercent?: number;
 }
 
-export type ProjectData = ProjectPayload | TimelineProjectPayload;
+/** Icon reference for Neuron binder entries (emoji or react-icons key). */
+export interface NeuronIconRef {
+  kind: "emoji" | "icon";
+  value: string;
+}
+
+export interface NeuronFolderRecord {
+  id: string;
+  name: string;
+  parentId: string | null;
+  sortOrder: number;
+  icon?: NeuronIconRef;
+  synopsis?: string;
+  notes?: string;
+}
+
+export interface NeuronDocumentRecord {
+  id: string;
+  name: string;
+  /** Serialized TipTap JSON. */
+  content: string;
+  folderId: string | null;
+  sortOrder: number;
+  updatedAt: number;
+  icon?: NeuronIconRef;
+  synopsis?: string;
+  notes?: string;
+}
+
+export interface NeuronProjectPayload {
+  version: 1;
+  moduleType: "neuron";
+  ownerProjectId?: string;
+  folders: NeuronFolderRecord[];
+  documents: NeuronDocumentRecord[];
+  /** Icon/synopsis/notes overlay for mirrored module entities, keyed "<subId>:<entityId>". */
+  mirrorMeta?: Record<string, { icon?: NeuronIconRef; synopsis?: string; notes?: string }>;
+}
+
+export type ProjectData = ProjectPayload | TimelineProjectPayload | NeuronProjectPayload;
 
 export function isTimelineProjectPayload(
   payload: ProjectData | null | undefined
 ): payload is TimelineProjectPayload {
   return payload?.moduleType === "timeline";
+}
+
+export function isNeuronProjectPayload(
+  payload: ProjectData | null | undefined
+): payload is NeuronProjectPayload {
+  return payload?.moduleType === "neuron";
 }
 
 /** Storage driver interface - web/localStorage now, Tauri-ready later. */

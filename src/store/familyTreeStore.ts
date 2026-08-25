@@ -309,6 +309,10 @@ export function getFamilyColor(familyIndex: number): string {
   return FAMILY_COLOR_PALETTE[familyIndex % FAMILY_COLOR_PALETTE.length]!;
 }
 
+export function getEffectiveFamilyColor(family: FamilyGroup, familyIndex: number): string {
+  return family.color ?? getFamilyColor(familyIndex);
+}
+
 export interface ConnectionStyleDef extends ConnectionVisualStyle {
   id: string;
   name: string;
@@ -474,7 +478,12 @@ export type PendingBloodlineWarning = {
   target: RemoveConnectionTarget;
   familyId: string;
   familyName: string;
+  crownedComponentUnionIds: string[];
 };
+
+export type PendingDeleteConfirm =
+  | { kind: "family"; familyId: string }
+  | { kind: "nodes"; nodeIds: string[] };
 
 export interface FamilyTreeSavedState {
   nodes: Node<FamilyTreeNodeData>[];
@@ -1207,6 +1216,89 @@ export function isUnionClusterUnassigned(
   if (!family.unionIds.includes(unionId)) return false;
   const analysis = computeFamilyClusterAnalysis(family, nodes, edges);
   return analysis.unassignedUnionIds.includes(unionId);
+}
+
+/** All union ids in the same unassigned connected component as the given union. */
+export function getUnassignedClusterUnionIds(
+  unionId: string,
+  family: FamilyGroup,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): string[] {
+  const analysis = computeFamilyClusterAnalysis(family, nodes, edges);
+  const components = computeComponentsForUnionSubset(analysis.unassignedUnionIds, nodes, edges);
+  return components.find((c) => c.includes(unionId)) ?? [unionId];
+}
+
+interface UnionTransferSets {
+  filteredUnionIds: string[];
+  stayingUnions: string[];
+  movingPersons: Set<string>;
+  movingNodeIds: Set<string>;
+  stayingNodeIds: Set<string>;
+  newEdges: Edge[];
+}
+
+function computeUnionTransferSets(
+  unionIds: string[],
+  sourceFamily: FamilyGroup,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[]
+): UnionTransferSets | null {
+  const filteredUnionIds = unionIds.filter((uid) => {
+    const n = nodes.find((nn) => nn.id === uid);
+    return !(n?.data as UnionNodeData)?.isMainGraph;
+  });
+  if (filteredUnionIds.length === 0) return null;
+
+  const crownedId = sourceFamily.unionIds.find(
+    (uid) => (nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+  );
+  const crownedMemberIds = new Set<string>();
+  if (crownedId) {
+    for (const pid of getUnionFamilyMemberIds(crownedId, nodes, edges)) {
+      crownedMemberIds.add(pid);
+    }
+  }
+  const movingUnions = new Set(filteredUnionIds);
+  const stayingUnions = sourceFamily.unionIds.filter((uid) => !movingUnions.has(uid));
+  const movingPersons = new Set<string>();
+  for (const uid of filteredUnionIds) {
+    for (const pid of getUnionFamilyMemberIds(uid, nodes, edges)) {
+      if (crownedMemberIds.has(pid)) continue;
+      const person = nodes.find((n) => n.id === pid);
+      const anchored = (person?.data as PersonNodeData)?.anchored;
+      const inStaying = stayingUnions.some((suid) =>
+        getUnionFamilyMemberIds(suid, nodes, edges).includes(pid)
+      );
+      if (inStaying && anchored) continue;
+      if (!inStaying || !anchored) movingPersons.add(pid);
+    }
+  }
+  const movingNodeIds = new Set<string>([...filteredUnionIds, ...movingPersons]);
+  const stayingNodeIds = new Set<string>([...stayingUnions]);
+  for (const suid of stayingUnions) {
+    for (const pid of getUnionFamilyMemberIds(suid, nodes, edges)) {
+      if (!movingPersons.has(pid)) stayingNodeIds.add(pid);
+    }
+  }
+  for (const pid of sourceFamily.personIds ?? []) {
+    if (!movingPersons.has(pid)) stayingNodeIds.add(pid);
+  }
+  const newEdges = edges.filter((e) => {
+    const touchesMoving = movingNodeIds.has(e.source) || movingNodeIds.has(e.target);
+    const touchesStaying = stayingNodeIds.has(e.source) || stayingNodeIds.has(e.target);
+    return !(touchesMoving && touchesStaying);
+  });
+
+  return {
+    filteredUnionIds,
+    stayingUnions,
+    movingPersons,
+    movingNodeIds,
+    stayingNodeIds,
+    newEdges,
+  };
 }
 
 function assignAutoFamilyNames(families: FamilyGroup[], nodes: Node<FamilyTreeNodeData>[]): void {
@@ -2485,6 +2577,8 @@ interface FamilyTreeStore {
   deleteFocus: "family" | "nodes";
   /** Bloodline warning when deleting a bridge connection inside a family. */
   pendingBloodlineWarning: PendingBloodlineWarning | null;
+  /** Pending delete confirmation (family tab or multi-node selection). */
+  pendingDeleteConfirm: PendingDeleteConfirm | null;
   /** Brief toast when a redundant connecting union is deleted. */
   familyConnectionNotice: string | null;
   /** When set, Inspector shows family-level properties instead of node properties. */
@@ -2516,14 +2610,22 @@ interface FamilyTreeStore {
   moveNodesToFamily: (nodeIds: string[], familyId: string) => void;
   /** Move unassigned union clusters to a new family tab; returns new family id. */
   transferUnionsToNewFamily: (unionIds: string[], sourceFamilyId: string) => string | null;
+  /** Move unassigned union clusters from one family tab into an existing family tab. */
+  transferUnionsToFamily: (unionIds: string[], sourceFamilyId: string, targetFamilyId: string) => void;
   setPersonAnchored: (personId: string, anchored: boolean) => void;
   setIsolationModeActive: (v: boolean) => void;
   setPendingFocusFamilyId: (id: string | null) => void;
   setInspectorFamilyId: (id: string | null) => void;
   setFamilyCustomName: (familyId: string, name: string) => void;
   setFamilyDescription: (familyId: string, description: string) => void;
+  setFamilyNotes: (familyId: string, notes: string) => void;
+  setFamilyColor: (familyId: string, color: string | undefined) => void;
   requestRemoveConnection: (target: RemoveConnectionTarget) => string | null;
   resolveBloodlineWarning: (choice: "deleteDescendants" | "keep") => void;
+  requestDeleteSelection: () => void;
+  performDeleteNodes: (nodeIds: string[]) => void;
+  confirmPendingDelete: () => void;
+  cancelPendingDelete: () => void;
   loadTree: (projectId: string) => Promise<{ hadData: boolean }>;
   saveTree: () => Promise<boolean>;
   applyFamilyTreeScriptEdits: (content: string) => { ok: boolean; errors: string[] };
@@ -3740,6 +3842,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   pendingFocusFamilyId: null as string | null,
   deleteFocus: "nodes" as "family" | "nodes",
   pendingBloodlineWarning: null as PendingBloodlineWarning | null,
+  pendingDeleteConfirm: null as PendingDeleteConfirm | null,
   familyConnectionNotice: null as string | null,
   inspectorFamilyId: null as string | null,
   branches: [] as BranchRecord[],
@@ -3848,59 +3951,17 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const s = get();
     const sourceFamily = s.families.find((f) => f.id === sourceFamilyId);
     if (!sourceFamily) return null;
-    const filteredUnionIds = unionIds.filter((uid) => {
-      const n = s.nodes.find((nn) => nn.id === uid);
-      return !(n?.data as UnionNodeData)?.isMainGraph;
-    });
-    if (filteredUnionIds.length === 0) return null;
-    const crownedId = sourceFamily.unionIds.find(
-      (uid) => (s.nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
-    );
-    const crownedMemberIds = new Set<string>();
-    if (crownedId) {
-      for (const pid of getUnionFamilyMemberIds(crownedId, s.nodes, s.edges)) {
-        crownedMemberIds.add(pid);
-      }
-    }
-    const movingUnions = new Set(filteredUnionIds);
-    const stayingUnions = sourceFamily.unionIds.filter((uid) => !movingUnions.has(uid));
-    const movingPersons = new Set<string>();
-    for (const uid of filteredUnionIds) {
-      for (const pid of getUnionFamilyMemberIds(uid, s.nodes, s.edges)) {
-        if (crownedMemberIds.has(pid)) continue;
-        const person = s.nodes.find((n) => n.id === pid);
-        const anchored = (person?.data as PersonNodeData)?.anchored;
-        const inStaying = stayingUnions.some((suid) =>
-          getUnionFamilyMemberIds(suid, s.nodes, s.edges).includes(pid)
-        );
-        if (inStaying && anchored) continue;
-        if (!inStaying || !anchored) movingPersons.add(pid);
-      }
-    }
-    const movingNodeIds = new Set<string>([...filteredUnionIds, ...movingPersons]);
-    const stayingNodeIds = new Set<string>([...stayingUnions]);
-    for (const suid of stayingUnions) {
-      for (const pid of getUnionFamilyMemberIds(suid, s.nodes, s.edges)) {
-        if (!movingPersons.has(pid)) stayingNodeIds.add(pid);
-      }
-    }
-    for (const pid of sourceFamily.personIds ?? []) {
-      if (!movingPersons.has(pid)) stayingNodeIds.add(pid);
-    }
-    const newEdges = s.edges.filter((e) => {
-      const touchesMoving =
-        movingNodeIds.has(e.source) || movingNodeIds.has(e.target);
-      const touchesStaying =
-        stayingNodeIds.has(e.source) || stayingNodeIds.has(e.target);
-      return !(touchesMoving && touchesStaying);
-    });
+    const sets = computeUnionTransferSets(unionIds, sourceFamily, s.nodes, s.edges);
+    if (!sets) return null;
+    const { filteredUnionIds, stayingUnions, movingPersons, newEdges } = sets;
     const updatedFamilies = s.families.map((f) => {
       if (f.id !== sourceFamilyId) return f;
+      const { memberPersonIds: _mp, ...record } = f;
       return toFamilyGroup(
         {
-          ...f,
+          ...record,
           unionIds: stayingUnions,
-          personIds: (f.personIds ?? []).filter((pid) => !movingPersons.has(pid)),
+          personIds: (record.personIds ?? []).filter((pid) => !movingPersons.has(pid)),
         },
         s.nodes,
         s.edges
@@ -3941,6 +4002,48 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     });
     ensureDefaultDocumentsImpl(get, set);
     return newFamilyId;
+  },
+  transferUnionsToFamily: (unionIds, sourceFamilyId, targetFamilyId) => {
+    const s = get();
+    if (sourceFamilyId === targetFamilyId) return;
+    const sourceFamily = s.families.find((f) => f.id === sourceFamilyId);
+    const targetFamily = s.families.find((f) => f.id === targetFamilyId);
+    if (!sourceFamily || !targetFamily) return;
+    const sets = computeUnionTransferSets(unionIds, sourceFamily, s.nodes, s.edges);
+    if (!sets) return;
+    const { filteredUnionIds, stayingUnions, movingPersons, newEdges } = sets;
+    const updatedFamilies = s.families.map((f) => {
+      const { memberPersonIds: _mp, ...record } = f;
+      if (f.id === sourceFamilyId) {
+        return toFamilyGroup(
+          {
+            ...record,
+            unionIds: stayingUnions,
+            personIds: (record.personIds ?? []).filter((pid) => !movingPersons.has(pid)),
+          },
+          s.nodes,
+          s.edges
+        );
+      }
+      if (f.id === targetFamilyId) {
+        return toFamilyGroup(
+          {
+            ...record,
+            unionIds: [...new Set([...record.unionIds, ...filteredUnionIds])].sort(),
+            personIds: [...new Set([...(record.personIds ?? []), ...movingPersons])].sort(),
+          },
+          s.nodes,
+          s.edges
+        );
+      }
+      return f;
+    });
+    set({
+      families: updatedFamilies,
+      edges: newEdges,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
   },
   setPersonAnchored: (personId, anchored) =>
     set((s) => ({
@@ -4099,6 +4202,24 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       lastSaveError: null,
     });
   },
+  setFamilyNotes: (familyId, notes) => {
+    const s = get();
+    set({
+      families: s.families.map((f) => (f.id === familyId ? { ...f, notes } : f)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  },
+  setFamilyColor: (familyId, color) => {
+    const s = get();
+    set({
+      families: s.families.map((f) =>
+        f.id === familyId ? { ...f, color: color ?? undefined } : f
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+  },
   requestRemoveConnection: (target) => {
     const s = get();
     const affectedUnionIds = getUnionIdsFromTarget(target, s.edges);
@@ -4112,8 +4233,20 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     );
 
     for (const family of affectedFamilies) {
-      const componentsAfter = computeComponentsForUnionSubset(
+      const crownedId = family.unionIds.find(
+        (uid) => (s.nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+      );
+      if (!crownedId) continue;
+      if (target.kind === "union" && target.unionId === crownedId) continue;
+      const componentsBefore = computeComponentsForUnionSubset(
         family.unionIds,
+        s.nodes,
+        s.edges
+      );
+      const crownedComponent = componentsBefore.find((c) => c.includes(crownedId)) ?? [crownedId];
+      if (!affectedUnionIds.some((uid) => crownedComponent.includes(uid))) continue;
+      const componentsAfter = computeComponentsForUnionSubset(
+        crownedComponent,
         simulated.nodes,
         simulated.edges
       );
@@ -4123,6 +4256,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
             target,
             familyId: family.id,
             familyName: family.name,
+            crownedComponentUnionIds: crownedComponent,
           },
         });
         return null;
@@ -4155,25 +4289,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const warning = s.pendingBloodlineWarning;
     if (!warning) return;
 
-    const family = s.families.find((f) => f.id === warning.familyId);
-    if (!family) {
-      set({ pendingBloodlineWarning: null });
-      return;
-    }
-
     set({ pendingBloodlineWarning: null });
-
-    if (choice === "deleteDescendants") {
-      const nodeIds = getFamilyMemberNodeIds(family.unionIds, s.nodes, s.edges);
-      get().removeNodes(nodeIds);
-      set({
-        families: s.families.filter((f) => f.id !== family.id),
-        hasUnsavedChanges: true,
-        lastSaveError: null,
-      });
-      reconcileFamiliesImpl(get, set);
-      return;
-    }
 
     const err = applyRemoveConnectionInternal(get, warning.target);
     if (err) {
@@ -4181,19 +4297,91 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       return;
     }
 
-    const afterState = get();
-    if (family.parentFamilyIds) {
+    const s2 = get();
+    const family = s2.families.find((f) => f.id === warning.familyId);
+    if (family?.parentFamilyIds) {
       const stripped = stripUnifiedFamilyOverlap(
-        afterState.families,
+        s2.families,
         family.id,
-        afterState.nodes,
-        afterState.edges
+        s2.nodes,
+        s2.edges
       );
       set({ families: stripped, hasUnsavedChanges: true, lastSaveError: null });
     }
 
+    if (choice === "deleteDescendants" && family) {
+      const crownedId = family.unionIds.find(
+        (uid) => (get().nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+      );
+      const remainingIds = warning.crownedComponentUnionIds.filter((uid) =>
+        get().nodes.some((n) => n.id === uid)
+      );
+      if (crownedId && remainingIds.includes(crownedId)) {
+        const componentsAfter = computeComponentsForUnionSubset(
+          remainingIds,
+          get().nodes,
+          get().edges
+        );
+        const surviving = componentsAfter.find((c) => c.includes(crownedId)) ?? [];
+        const orphanUnionIds = remainingIds.filter((uid) => !surviving.includes(uid));
+        if (orphanUnionIds.length > 0) {
+          get().removeNodes(
+            getFamilyMemberNodeIds(orphanUnionIds, get().nodes, get().edges)
+          );
+        }
+      }
+    }
+
     reconcileFamiliesImpl(get, set);
   },
+  requestDeleteSelection: () => {
+    const s = get();
+    const focusIsFamily = s.deleteFocus === "family" || s.selectedNodeIds.length === 0;
+    if (focusIsFamily && s.activeFamilyTabId != null) {
+      set({ pendingDeleteConfirm: { kind: "family", familyId: s.activeFamilyTabId } });
+      return;
+    }
+    if (focusIsFamily || s.selectedNodeIds.length === 0) return;
+    const ids = s.selectedNodeIds;
+    const kinds = ids.map(
+      (id) => (s.nodes.find((n) => n.id === id)?.data as { kind?: string })?.kind
+    );
+    const personCount = kinds.filter((k) => k === "person").length;
+    const unionCount = kinds.filter((k) => k === "union").length;
+    if (personCount > 1 || unionCount >= 1) {
+      set({ pendingDeleteConfirm: { kind: "nodes", nodeIds: ids } });
+    } else {
+      get().performDeleteNodes(ids);
+    }
+  },
+  performDeleteNodes: (ids) => {
+    for (const id of ids) {
+      const node = get().nodes.find((n) => n.id === id);
+      const kind = (node?.data as { kind?: string })?.kind;
+      const target =
+        kind === "union"
+          ? ({ kind: "union" as const, unionId: id })
+          : ({ kind: "person" as const, personId: id });
+      const err = get().requestRemoveConnection(target);
+      if (err) alert(err);
+      if (get().pendingBloodlineWarning) break;
+    }
+  },
+  confirmPendingDelete: () => {
+    const pending = get().pendingDeleteConfirm;
+    if (!pending) return;
+    set({ pendingDeleteConfirm: null });
+    if (pending.kind === "family") {
+      const family = get().families.find((f) => f.id === pending.familyId);
+      if (family) {
+        get().removeNodes(getFamilyVisibleNodeIds(family, get().nodes, get().edges));
+        get().deleteFamily(pending.familyId);
+      }
+      return;
+    }
+    get().performDeleteNodes(pending.nodeIds);
+  },
+  cancelPendingDelete: () => set({ pendingDeleteConfirm: null }),
   setSnapToGrid: (v) => set({ snapToGrid: v }),
   setShowNodeInfoEnabled: (v) =>
     set({ showNodeInfoEnabled: v, hasUnsavedChanges: true, lastSaveError: null }),
@@ -5436,13 +5624,31 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   },
   setPlacementTargetId: (id) => set({ placementTargetId: id }),
   placeNodeAt: (nodeId, position) => {
-    const s = get();
+    let s = get();
     const snap = (x: number, y: number) => snapPosition(x, y, s.snapToGrid);
     const pos = snap(position.x, position.y);
     const target = s.nodes.find((n) => n.id === nodeId);
     if (!target) return;
 
     if (target.type === "union" && (target.data as UnionNodeData).kind === "union") {
+      const sourceFamily = findFamilyForNode(nodeId, s.families);
+      const targetFamilyId = s.activeFamilyTabId;
+      if (
+        sourceFamily &&
+        targetFamilyId &&
+        sourceFamily.id !== targetFamilyId &&
+        isUnionClusterUnassigned(nodeId, sourceFamily, s.nodes, s.edges)
+      ) {
+        const clusterUnionIds = getUnassignedClusterUnionIds(
+          nodeId,
+          sourceFamily,
+          s.nodes,
+          s.edges
+        );
+        get().transferUnionsToFamily(clusterUnionIds, sourceFamily.id, targetFamilyId);
+        s = get();
+      }
+
       const data = target.data as UnionNodeData;
       const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
       const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
@@ -5735,6 +5941,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       isolationModeActive: false,
       pendingFocusFamilyId: null,
       pendingBloodlineWarning: null,
+      pendingDeleteConfirm: null,
       familyConnectionNotice: null,
       inspectorFamilyId: null,
       activeBranchTabId: null,
@@ -5939,6 +6146,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       isolationModeActive: false,
       pendingFocusFamilyId: null,
       pendingBloodlineWarning: null,
+      pendingDeleteConfirm: null,
       familyConnectionNotice: null,
       inspectorFamilyId: null,
       activeBranchTabId: null,

@@ -36,7 +36,7 @@ import {
   getUnionFamilyMemberIds,
   getFamilyMemberNodeIds,
   getFamilyVisibleNodeIds,
-  getFamilyColor,
+  getEffectiveFamilyColor,
   findFamilyForNode,
   computeBranchMemberIds,
   getBranchExcludedNodeIds,
@@ -747,7 +747,10 @@ export default function FamilyTreeCanvas({
       return canvasNodes.map((n) => {
         const ownerFamily = findFamilyForNode(n.id, families);
         const familyIndex = ownerFamily ? families.findIndex((f) => f.id === ownerFamily.id) : -1;
-        const familyColor = familyIndex >= 0 ? getFamilyColor(familyIndex) : undefined;
+        const familyColor =
+          ownerFamily && familyIndex >= 0
+            ? getEffectiveFamilyColor(ownerFamily, familyIndex)
+            : undefined;
         const outOfActiveFamily =
           activeFamilyTabId != null &&
           ownerFamily != null &&
@@ -849,7 +852,7 @@ export default function FamilyTreeCanvas({
   const doubleClickIgnoreClearRef = useRef(false);
   const onSelectionChange: OnSelectionChangeFunc = useCallback(
     ({ nodes: selectedNodes }) => {
-      if (selectedNodes.length === 0 && doubleClickIgnoreClearRef.current) return;
+      if (doubleClickIgnoreClearRef.current) return;
       setSelectedNodeIds(selectedNodes.map((n) => n.id));
     },
     [setSelectedNodeIds]
@@ -916,6 +919,28 @@ export default function FamilyTreeCanvas({
     return () => setExportViewportEl(null);
   }, [setExportViewportEl]);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+      const state = useFamilyTreeStore.getState();
+      if (
+        state.pendingDeleteConfirm ||
+        state.pendingBloodlineWarning ||
+        state.pendingGenChangePrompt
+      ) {
+        return;
+      }
+      e.preventDefault();
+      state.requestDeleteSelection();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div
       ref={viewportRef}
@@ -958,6 +983,7 @@ export default function FamilyTreeCanvas({
         elementsSelectable
         nodesDraggable={nodesDraggable}
         nodesConnectable={false}
+        deleteKeyCode={null}
         defaultEdgeOptions={{
           style: { stroke: "#64748b" },
           type: "connectionIcon",

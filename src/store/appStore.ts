@@ -10,6 +10,8 @@ export interface Project {
   enabledModules: string[];
   /** Maps module type name (e.g. "Timeline") to sub-project id. */
   subProjects?: Record<string, string>;
+  /** Neuron core module sub-project id. */
+  neuronId?: string;
   lastOpened: number;
   storageMode?: "localStorage" | "file";
   fileRef?: string;
@@ -19,6 +21,8 @@ export interface StandaloneProject {
   id: string;
   name: string;
   moduleType: string;
+  /** Neuron core module sub-project id (when this standalone project has a binder). */
+  neuronId?: string;
   lastOpened: number;
   storageMode?: "localStorage" | "file";
   fileRef?: string;
@@ -26,6 +30,7 @@ export interface StandaloneProject {
 
 /** Maps driver moduleType to WorkspaceShell moduleType. */
 const DRIVER_TO_STANDALONE_MODULE: Record<string, string> = {
+  neuron: "Neuron",
   charts: "Charts",
   /** @deprecated legacy driver type */
   characterProfiles: "Charts",
@@ -81,7 +86,7 @@ interface AppStore {
   standaloneProjects: StandaloneProject[];
   introDialogOpen: boolean;
   createModularProject: (name: string, enabledModules: string[], subProjects?: Record<string, string>) => string;
-  createStandaloneProject: (name: string, moduleType: string) => string;
+  createStandaloneProject: (name: string, moduleType: string, id?: string) => string;
   removeStandaloneProject: (id: string) => void;
   removeModularProject: (id: string) => void;
   /** Hydrate a project from the driver into standaloneProjects when opening from driver/recent. */
@@ -91,6 +96,10 @@ interface AppStore {
     id: string
   ) => void;
   setIntroDialogOpen: (open: boolean) => void;
+  /** Attach a Neuron sub-project id to a modular or standalone owner project. */
+  setNeuronId: (ownerId: string, neuronId: string, ownerType?: "modular" | "standalone") => void;
+  /** Resolve owner project id from a Neuron sub-project id. */
+  findOwnerProjectId: (neuronId: string) => { ownerId: string; ownerType: "modular" | "standalone" } | null;
 }
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
@@ -105,7 +114,7 @@ function saveToStorage(modularProjects: Project[], standaloneProjects: Standalon
 
 const initialState = loadFromStorage();
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   modularProjects: initialState.modularProjects,
   standaloneProjects: initialState.standaloneProjects,
   introDialogOpen: false,
@@ -129,10 +138,10 @@ export const useAppStore = create<AppStore>((set) => ({
     return id;
   },
 
-  createStandaloneProject: (name, moduleType) => {
-    const id = generateId();
+  createStandaloneProject: (name, moduleType, id) => {
+    const projectId = id ?? generateId();
     const project: StandaloneProject = {
-      id,
+      id: projectId,
       name,
       moduleType,
       lastOpened: Date.now(),
@@ -142,7 +151,7 @@ export const useAppStore = create<AppStore>((set) => ({
       saveToStorage(state.modularProjects, next.standaloneProjects);
       return next;
     });
-    return id;
+    return projectId;
   },
 
   removeStandaloneProject: (id) => {
@@ -171,6 +180,21 @@ export const useAppStore = create<AppStore>((set) => ({
     if (!driverProject) return null;
     const moduleType = DRIVER_TO_STANDALONE_MODULE[driverProject.moduleType];
     if (!moduleType) return null; // familyTree uses /family-tree route, skip
+    if (driverProject.moduleType === "neuron") {
+      const standalone: StandaloneProject = {
+        id: driverProject.id,
+        name: driverProject.name,
+        moduleType: "Neuron",
+        lastOpened: driverProject.updatedAt,
+      };
+      set((state) => {
+        if (state.standaloneProjects.some((p) => p.id === projectId)) return state;
+        const next = { standaloneProjects: [standalone, ...state.standaloneProjects] };
+        saveToStorage(state.modularProjects, next.standaloneProjects);
+        return next;
+      });
+      return standalone;
+    }
     const standalone: StandaloneProject = {
       id: driverProject.id,
       name: driverProject.name,
@@ -206,5 +230,40 @@ export const useAppStore = create<AppStore>((set) => ({
       saveToStorage(state.modularProjects, next.standaloneProjects);
       return next;
     });
+  },
+
+  setNeuronId: (ownerId, neuronId, ownerType) => {
+    set((state) => {
+      if (ownerType === "standalone" || state.standaloneProjects.some((p) => p.id === ownerId)) {
+        const next = {
+          standaloneProjects: state.standaloneProjects.map((p) =>
+            p.id === ownerId ? { ...p, neuronId } : p
+          ),
+        };
+        saveToStorage(state.modularProjects, next.standaloneProjects);
+        return next;
+      }
+      const next = {
+        modularProjects: state.modularProjects.map((p) =>
+          p.id === ownerId ? { ...p, neuronId } : p
+        ),
+      };
+      saveToStorage(next.modularProjects, state.standaloneProjects);
+      return next;
+    });
+  },
+
+  findOwnerProjectId: (neuronId): { ownerId: string; ownerType: "modular" | "standalone" } | null => {
+    const state = get();
+    for (const p of state.modularProjects) {
+      if (p.neuronId === neuronId) return { ownerId: p.id, ownerType: "modular" as const };
+    }
+    for (const p of state.standaloneProjects) {
+      if (p.neuronId === neuronId) return { ownerId: p.id, ownerType: "standalone" as const };
+      if (p.id === neuronId && p.moduleType === "Neuron") {
+        return { ownerId: p.id, ownerType: "standalone" as const };
+      }
+    }
+    return null;
   },
 }));

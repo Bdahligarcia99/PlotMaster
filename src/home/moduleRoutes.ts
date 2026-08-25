@@ -1,5 +1,7 @@
 /** Maps module type display name to client route path prefix. */
 const MODULE_TYPE_TO_ROUTE: Record<string, string> = {
+  Neuron: "/neuron",
+  neuron: "/neuron",
   "Family Tree": "/family-tree",
   familyTree: "/family-tree",
   Timeline: "/timeline",
@@ -22,6 +24,7 @@ export function getModuleRoute(moduleType: string, projectId: string): string {
 /** Reverse lookup: module type name from registry id. */
 export function moduleIdToTypeName(moduleId: string): string {
   const map: Record<string, string> = {
+    neuron: "Neuron",
     familyTree: "Family Tree",
     charts: "Charts",
     timeline: "Timeline",

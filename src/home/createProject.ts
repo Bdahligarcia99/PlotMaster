@@ -1,5 +1,6 @@
 import { getStorageDriver } from "../storage/StorageDriver";
 import { createDefaultTimelinePayload } from "../store/timelineStore";
+import { createDefaultNeuronPayload } from "../store/neuronStore";
 
 const generateId = () => `_${Math.random().toString(36).slice(2, 11)}`;
 
@@ -54,5 +55,30 @@ export async function createTimelineProject(name: string): Promise<string> {
     updatedAt: now,
   });
   await driver.saveProjectData(id, createDefaultTimelinePayload());
+  return id;
+}
+
+/** Creates a driver-backed Neuron binder project with default payload. */
+export async function createNeuronProject(
+  name: string,
+  ownerProjectId?: string
+): Promise<string> {
+  const id = generateId();
+  const driver = getStorageDriver();
+  const now = Date.now();
+  let projectName = name.trim();
+  if (!projectName) {
+    const existing = await driver.listProjects();
+    const num = existing.filter((p) => p.moduleType === "neuron").length + 1;
+    projectName = `Neuron ${num}`;
+  }
+  await driver.createProject({
+    id,
+    name: projectName,
+    moduleType: "neuron",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await driver.saveProjectData(id, createDefaultNeuronPayload(ownerProjectId));
   return id;
 }

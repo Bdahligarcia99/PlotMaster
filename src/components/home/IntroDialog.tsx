@@ -7,7 +7,7 @@ import ModeSwitchNavbar from "../ui/ModeSwitchNavbar";
 import ProjectScopeBox from "./ProjectScopeBox";
 import { getStorageDriver } from "../../storage/StorageDriver";
 import type { ProjectIndexItem } from "../../storage/StorageDriver";
-import { createProject, createTimelineProject } from "../../home/createProject";
+import { createProject, createTimelineProject, createNeuronProject } from "../../home/createProject";
 import { getRegistryItemForModuleKey, MODULE_ID_TO_TYPE } from "../../home/moduleRegistry";
 import { getModuleRoute, moduleIdToTypeName } from "../../home/moduleRoutes";
 import { getSynprojFileIO } from "../../storage/synproj/synprojFileIO";
@@ -101,6 +101,7 @@ export default function IntroDialog({
   const setIntroDialogOpen = useAppStore((s) => s.setIntroDialogOpen);
   const createStandaloneProject = useAppStore((s) => s.createStandaloneProject);
   const createModularProject = useAppStore((s) => s.createModularProject);
+  const setNeuronId = useAppStore((s) => s.setNeuronId);
 
   const recentEntries = buildRecentsList(modularProjects, allProjects, standaloneProjects);
 
@@ -184,7 +185,17 @@ export default function IntroDialog({
     onClose();
 
     if (enabledModules.length === 1) {
-      if (enabledModules[0] === "familyTree") {
+      if (enabledModules[0] === "neuron") {
+        const id = await createNeuronProject(name);
+        createStandaloneProject(name, "Neuron", id);
+        if (fileRef) {
+          const driver = getStorageDriver();
+          await driver.updateProjectMeta(id, { storageMode: "file", fileRef });
+          registerProjectFileRef(id, fileRef);
+          await initializeFileBackedStandaloneProject(id, name, "Neuron", fileRef);
+        }
+        openInNewWindow(`/neuron/${id}`);
+      } else if (enabledModules[0] === "familyTree") {
         const id = await createProject(name, ["familyTree"]);
         if (fileRef) {
           const driver = getStorageDriver();
@@ -218,8 +229,12 @@ export default function IntroDialog({
     } else {
       const subProjects: Record<string, string> = {};
       const moduleNames: string[] = [];
+      let neuronId: string | undefined;
 
-      for (const moduleId of enabledModules) {
+      const engramModules = enabledModules.filter((id) => id !== "neuron");
+      const wantsNeuron = enabledModules.includes("neuron");
+
+      for (const moduleId of engramModules) {
         const typeName = MODULE_ID_TO_TYPE[moduleId] ?? moduleIdToTypeName(moduleId);
         moduleNames.push(typeName);
 
@@ -234,12 +249,18 @@ export default function IntroDialog({
 
       const modularId = createModularProject(name, moduleNames, subProjects);
 
+      if (wantsNeuron) {
+        neuronId = await createNeuronProject(name, modularId);
+        setNeuronId(modularId, neuronId, "modular");
+      }
+
       if (fileRef) {
         const modularProject: Project = {
           id: modularId,
           name,
           enabledModules: moduleNames,
           subProjects,
+          neuronId,
           lastOpened: Date.now(),
           storageMode: "file",
           fileRef,
@@ -247,11 +268,15 @@ export default function IntroDialog({
         await initializeFileBackedModularProject(modularProject, fileRef);
       }
 
-      const firstModuleId = enabledModules[0];
-      const firstTypeName = MODULE_ID_TO_TYPE[firstModuleId] ?? moduleIdToTypeName(firstModuleId);
-      const firstSubId = subProjects[firstTypeName];
-      if (firstSubId) {
-        openInNewWindow(getModuleRoute(firstTypeName, firstSubId));
+      const firstModuleId = wantsNeuron ? "neuron" : enabledModules[0];
+      if (firstModuleId === "neuron" && neuronId) {
+        openInNewWindow(`/neuron/${neuronId}`);
+      } else {
+        const firstTypeName = MODULE_ID_TO_TYPE[firstModuleId] ?? moduleIdToTypeName(firstModuleId);
+        const firstSubId = subProjects[firstTypeName];
+        if (firstSubId) {
+          openInNewWindow(getModuleRoute(firstTypeName, firstSubId));
+        }
       }
     }
 

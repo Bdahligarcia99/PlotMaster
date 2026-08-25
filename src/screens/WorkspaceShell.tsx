@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
@@ -6,6 +6,8 @@ import ModuleBadge from "../components/ui/ModuleBadge";
 import ProjectSaveControls from "../components/ui/ProjectSaveControls";
 import DisplayModeDropdown from "../components/ui/DisplayModeDropdown";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
+import CoreModuleNavbar from "../components/ui/CoreModuleNavbar";
+import { resolveOwnerProjectContext } from "../home/ownerProjectContext";
 import { getSupportedDisplayModes, type DisplayMode } from "../home/displayModes";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import { useAppStore } from "../store/appStore";
@@ -44,6 +46,10 @@ export default function WorkspaceShell() {
   const ensureStandaloneFromDriver = useAppStore((s) => s.ensureStandaloneFromDriver);
 
   const project = standaloneProjects.find((p) => p.id === id);
+  const ownerContext = useMemo(
+    () => (id ? resolveOwnerProjectContext(id) : null),
+    [id]
+  );
   const loadTree = useFamilyTreeStore((s) => s.loadTree);
   const primarySelectedNodeId = useFamilyTreeStore((s) => s.primarySelectedNodeId);
   const updateLastOpened = useAppStore((s) => s.updateLastOpened);
@@ -149,6 +155,17 @@ export default function WorkspaceShell() {
         children={
           id ? (
             <div className="flex items-center justify-center gap-3">
+              {ownerContext && (
+                <>
+                  <CoreModuleNavbar
+                    ownerProjectId={ownerContext.ownerId}
+                    ownerType={ownerContext.ownerType}
+                    neuronId={ownerContext.neuronId}
+                    projectName={ownerContext.projectName}
+                  />
+                  <div className="h-4 w-px bg-dark-accent" />
+                </>
+              )}
               <DisplayModeDropdown
                 activeMode={activeDisplayMode}
                 supportedModes={supportedDisplayModes}

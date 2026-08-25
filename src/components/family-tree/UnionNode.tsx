@@ -24,6 +24,7 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
   const familyColor = (data as { familyColor?: string }).familyColor;
   const outOfActiveFamily = (data as { outOfActiveFamily?: boolean }).outOfActiveFamily;
   const selectionDimmed = (data as { selectionDimmed?: boolean }).selectionDimmed;
+  const isMainGraph = data.isMainGraph ?? false;
   const effectiveStyle = resolveUnionConnectionStyle(data, connectionStyles);
   const styleName = getConnectionStyleName(data, connectionStyles);
   const isEdgeHovered = hoveredConnectionInfo?.unionId === id;
@@ -99,8 +100,11 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
               ? "bg-dark-accent/80 border-blue-500/40"
               : "bg-dark-accent/80 border-blue-500 shadow-md"
             : "bg-dark-accent/50 border-dark-accent hover:border-dark-muted"
-        } ${outOfActiveFamily ? "opacity-40" : ""}`}
-        style={!selected && familyColor ? { borderColor: familyColor } : undefined}
+        } ${isMainGraph ? "ring-2 ring-amber-400/50 ring-offset-1 ring-offset-dark-bg" : ""} ${outOfActiveFamily ? "opacity-40" : ""}`}
+        style={{
+          ...(!selected && familyColor ? { borderColor: familyColor } : {}),
+          ...(isMainGraph ? { backgroundColor: "rgba(251,191,36,0.08)" } : {}),
+        }}
       >
         <span
           className={`absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-surface border border-dark-accent text-dark-muted whitespace-nowrap transition-opacity z-10 pointer-events-none ${
@@ -170,6 +174,16 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
         {showNotesForExport && (
           <span className="text-[10px] text-dark-muted mt-0.5 line-clamp-2 max-w-full break-words text-center">
             {data.notes.trim()}
+          </span>
+        )}
+        {isMainGraph && (
+          <span
+            title="Main graph for this family"
+            className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 flex items-center justify-center w-4 h-4 text-amber-300 pointer-events-none"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <path d="M5 16l3-9 4 5 3-4 4 8H5zm2.5-2h9l-2.2-4.4-2.8 3.5L9.5 9 7.5 14z" />
+            </svg>
           </span>
         )}
       </div>

@@ -1,4 +1,4 @@
-import type { ProjectPayload, TimelineProjectPayload } from "../StorageDriver";
+import type { ProjectPayload, TimelineProjectPayload, NeuronProjectPayload } from "../StorageDriver";
 import type { CharacterEntity, ChartLayoutTemplate, ChartSectionLayoutMode } from "../../store/chartsStore";
 
 /** Charts module payload for .synproj files. */
@@ -20,7 +20,7 @@ export interface LegacyCharacterProfilesPayload {
   chartSectionLayout?: ChartSectionLayoutMode;
 }
 
-export type AnyModulePayload = ProjectPayload | TimelineProjectPayload | ChartsPayload;
+export type AnyModulePayload = ProjectPayload | TimelineProjectPayload | ChartsPayload | NeuronProjectPayload;
 
 export function isChartsPayload(
   payload: AnyModulePayload | null | undefined

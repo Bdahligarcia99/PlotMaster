@@ -6,6 +6,8 @@ import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
 import DisplayModeDropdown from "../components/ui/DisplayModeDropdown";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
+import CoreModuleNavbar from "../components/ui/CoreModuleNavbar";
+import { resolveOwnerProjectContext } from "../home/ownerProjectContext";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import TimelineEntitiesPanel from "../components/timeline/TimelineEntitiesPanel";
 import TimelineBoard from "../components/timeline/TimelineBoard";
@@ -64,6 +66,10 @@ type NewFolderRequest = {
 export default function TimelineScreen() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const ownerContext = useMemo(
+    () => (projectId ? resolveOwnerProjectContext(projectId) : null),
+    [projectId]
+  );
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [textDrafts, setTextDrafts] = useState<TextEditorDrafts>({});
   const [panes, setPanes] = useState<TextEditorPane[]>([]);
@@ -611,6 +617,17 @@ export default function TimelineScreen() {
         children={
           projectId ? (
             <div className="flex items-center justify-center gap-3">
+              {ownerContext && (
+                <>
+                  <CoreModuleNavbar
+                    ownerProjectId={ownerContext.ownerId}
+                    ownerType={ownerContext.ownerType}
+                    neuronId={ownerContext.neuronId}
+                    projectName={ownerContext.projectName}
+                  />
+                  <div className="h-4 w-px bg-dark-accent" />
+                </>
+              )}
               <DisplayModeDropdown
                 activeMode={displayMode}
                 supportedModes={["block", "text"]}

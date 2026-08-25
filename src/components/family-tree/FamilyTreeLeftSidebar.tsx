@@ -189,7 +189,6 @@ export default function FamilyTreeLeftSidebar({
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
-  const requestRemoveConnection = useFamilyTreeStore((s) => s.requestRemoveConnection);
   const families = useFamilyTreeStore((s) => s.families);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const setActiveFamilyTabId = useFamilyTreeStore((s) => s.setActiveFamilyTabId);
@@ -197,6 +196,7 @@ export default function FamilyTreeLeftSidebar({
   const setIsolationModeActive = useFamilyTreeStore((s) => s.setIsolationModeActive);
   const setPendingFocusFamilyId = useFamilyTreeStore((s) => s.setPendingFocusFamilyId);
   const setInspectorFamilyId = useFamilyTreeStore((s) => s.setInspectorFamilyId);
+  const inspectorFamilyId = useFamilyTreeStore((s) => s.inspectorFamilyId);
   const branches = useFamilyTreeStore((s) => s.branches);
   const activeBranchTabId = useFamilyTreeStore((s) => s.activeBranchTabId);
   const setActiveBranchTabId = useFamilyTreeStore((s) => s.setActiveBranchTabId);
@@ -207,9 +207,11 @@ export default function FamilyTreeLeftSidebar({
   const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
   const setPlacementTargetId = useFamilyTreeStore((s) => s.setPlacementTargetId);
   const createFamily = useFamilyTreeStore((s) => s.createFamily);
-  const deleteFamily = useFamilyTreeStore((s) => s.deleteFamily);
-  const removeNodes = useFamilyTreeStore((s) => s.removeNodes);
   const deleteFocus = useFamilyTreeStore((s) => s.deleteFocus);
+  const pendingDeleteConfirm = useFamilyTreeStore((s) => s.pendingDeleteConfirm);
+  const requestDeleteSelection = useFamilyTreeStore((s) => s.requestDeleteSelection);
+  const confirmPendingDelete = useFamilyTreeStore((s) => s.confirmPendingDelete);
+  const cancelPendingDelete = useFamilyTreeStore((s) => s.cancelPendingDelete);
   const subEntitySelectionMode = useFamilyTreeStore((s) => s.subEntitySelectionMode);
   const setSubEntitySelectionMode = useFamilyTreeStore((s) => s.setSubEntitySelectionMode);
   const transferUnionsToNewFamily = useFamilyTreeStore((s) => s.transferUnionsToNewFamily);
@@ -223,7 +225,6 @@ export default function FamilyTreeLeftSidebar({
   const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
   const [branchDraftName, setBranchDraftName] = useState("");
   const [draftName, setDraftName] = useState("");
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [collapseAllActive, setCollapseAllActive] = useState(false);
   const [expandedFamilyGroups, setExpandedFamilyGroups] = useState<Set<string>>(
     () => new Set(["__all__"])
@@ -431,6 +432,9 @@ export default function FamilyTreeLeftSidebar({
       setIsolationModeActive(false);
     } else {
       setPendingFocusFamilyId(familyId);
+      if (inspectorFamilyId != null) {
+        setInspectorFamilyId(familyId);
+      }
     }
   };
 
@@ -561,6 +565,15 @@ export default function FamilyTreeLeftSidebar({
     });
     setSelectedNodeIds([unionId, ...memberIds]);
     setLastEntityClickedId(unionId);
+    onSelectNode?.();
+  };
+
+  const handlePersonRowDoubleClick = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedNodeIds([id]);
+    setLastEntityClickedId(id);
+    onSelectNode?.();
   };
 
   const handleAddFamily = () => {
@@ -628,39 +641,34 @@ export default function FamilyTreeLeftSidebar({
   const canDeleteNodes = !focusIsFamily && hasSelection && editingPersonId == null;
   const canDelete = canDeleteFamily || canDeleteNodes;
 
+  const selectedKinds = selectedNodeIds.map(
+    (id) => (nodes.find((n) => n.id === id)?.data as { kind?: string })?.kind
+  );
+  const allUnions = selectedKinds.length > 0 && selectedKinds.every((k) => k === "union");
+  const allPersons = selectedKinds.length > 0 && selectedKinds.every((k) => k === "person");
+  const deleteLabel = canDeleteFamily
+    ? "Delete family"
+    : canDeleteNodes
+      ? allUnions
+        ? selectedNodeIds.length === 1
+          ? "Delete union"
+          : "Delete unions"
+        : allPersons
+          ? selectedNodeIds.length === 1
+            ? "Delete person"
+            : "Delete people"
+          : "Delete"
+      : "Delete";
+
   const handleDeleteClick = () => {
     if (!canDelete) return;
-    setDeleteConfirmOpen(true);
-  };
-
-  const handleConfirmDelete = () => {
-    if (focusIsFamily && activeFamilyTabId != null) {
-      const family = families.find((f) => f.id === activeFamilyTabId);
-      if (family) {
-        const memberIds = getFamilyVisibleNodeIds(family, nodes, edges);
-        removeNodes(memberIds);
-        deleteFamily(activeFamilyTabId);
-      }
-      setDeleteConfirmOpen(false);
-      return;
-    }
-    for (const id of selectedNodeIds) {
-      const node = nodes.find((n) => n.id === id);
-      const kind = (node?.data as { kind?: string })?.kind;
-      const target =
-        kind === "union"
-          ? ({ kind: "union" as const, unionId: id })
-          : ({ kind: "person" as const, personId: id });
-      const err = requestRemoveConnection(target);
-      if (err) alert(err);
-      if (useFamilyTreeStore.getState().pendingBloodlineWarning) break;
-    }
-    setDeleteConfirmOpen(false);
+    requestDeleteSelection();
   };
 
   const confirmMessage = (() => {
-    if (focusIsFamily && activeFamilyTabId != null) {
-      const family = families.find((f) => f.id === activeFamilyTabId);
+    if (!pendingDeleteConfirm) return "";
+    if (pendingDeleteConfirm.kind === "family") {
+      const family = families.find((f) => f.id === pendingDeleteConfirm.familyId);
       if (!family) return "Delete this family? This cannot be undone.";
       const memberIds = getFamilyVisibleNodeIds(family, nodes, edges);
       const personCount = memberIds.filter(
@@ -675,14 +683,15 @@ export default function FamilyTreeLeftSidebar({
       const memberSummary = parts.length > 0 ? ` and its ${parts.join(" and ")}` : "";
       return `Delete "${family.name}"${memberSummary}? This cannot be undone.`;
     }
-    if (selectedNodeIds.length === 1) {
-      const id = selectedNodeIds[0]!;
+    const ids = pendingDeleteConfirm.nodeIds;
+    if (ids.length === 1) {
+      const id = ids[0]!;
       const node = nodes.find((n) => n.id === id);
       const kind = (node?.data?.kind ?? "person") as "person" | "union";
       const name = getDisplayName(nodes, id, kind);
       return `Delete ${name}? This will remove them and their connections. This action cannot be undone.`;
     }
-    return `Delete ${selectedNodeIds.length} selected entities? This will remove them and their connections. This action cannot be undone.`;
+    return `Delete ${ids.length} selected entities? This will remove them and their connections. This action cannot be undone.`;
   })();
 
   const toggleFamilyGroup = (groupId: string) => {
@@ -864,25 +873,25 @@ export default function FamilyTreeLeftSidebar({
             All
           </button>
           {families.map((family) => (
-              <button
-                key={family.id}
-                type="button"
-                role="tab"
-                aria-selected={activeFamilyTabId === family.id}
-                onClick={() => handleFamilyTabClick(family.id)}
-                onDoubleClick={(e) => handleFamilyTabDoubleClick(e, family.id)}
-                title="Double-click to open in Inspector"
-                className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  activeFamilyTabId === family.id
-                    ? focusIsFamily
-                      ? "bg-dark-accent text-dark-text"
-                      : "bg-dark-accent/40 text-dark-muted"
-                    : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
-                }`}
-              >
-                {family.name}
-              </button>
-            ))}
+            <button
+              key={family.id}
+              type="button"
+              role="tab"
+              aria-selected={activeFamilyTabId === family.id}
+              onClick={() => handleFamilyTabClick(family.id)}
+              onDoubleClick={(e) => handleFamilyTabDoubleClick(e, family.id)}
+              title="Double-click to open in Inspector"
+              className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                activeFamilyTabId === family.id
+                  ? focusIsFamily
+                    ? "bg-dark-accent text-dark-text"
+                    : "bg-dark-accent/40 text-dark-muted"
+                  : "text-dark-muted hover:text-dark-text hover:bg-dark-accent/40"
+              }`}
+            >
+              {family.name}
+            </button>
+          ))}
         </div>
         <button
           type="button"
@@ -904,6 +913,7 @@ export default function FamilyTreeLeftSidebar({
             ) {
               return;
             }
+            if (placementTargetId) setPlacementTargetId(null);
             setSelectedNodeIds([]);
             setLastEntityClickedId(null);
           }}
@@ -1134,12 +1144,17 @@ export default function FamilyTreeLeftSidebar({
                               <button
                                 type="button"
                                 onClick={(e) => handleSidebarEntityClick(e, leftId)}
-                                onDoubleClick={(e) => startEditingPerson(e, leftId, leftName)}
+                                onDoubleClick={(e) => handlePersonRowDoubleClick(e, leftId)}
                                 title={leftName}
                                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(leftId, "hover:bg-dark-accent/30")}`}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{leftName}</span>
+                                <span
+                                  onDoubleClick={(e) => startEditingPerson(e, leftId, leftName)}
+                                  className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1"
+                                >
+                                  {leftName}
+                                </span>
                                 <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={leftId} nodes={nodes} />
                                 <EntityFamilyWarnings nodeId={leftId} family={activeFamily} nodes={nodes} edges={edges} />
@@ -1171,12 +1186,17 @@ export default function FamilyTreeLeftSidebar({
                               <button
                                 type="button"
                                 onClick={(e) => handleSidebarEntityClick(e, rightId)}
-                                onDoubleClick={(e) => startEditingPerson(e, rightId, rightName)}
+                                onDoubleClick={(e) => handlePersonRowDoubleClick(e, rightId)}
                                 title={rightName}
                                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(rightId, "hover:bg-dark-accent/30")}`}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{rightName}</span>
+                                <span
+                                  onDoubleClick={(e) => startEditingPerson(e, rightId, rightName)}
+                                  className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1"
+                                >
+                                  {rightName}
+                                </span>
                                 <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={rightId} nodes={nodes} />
                                 <EntityFamilyWarnings nodeId={rightId} family={activeFamily} nodes={nodes} edges={edges} />
@@ -1217,12 +1237,17 @@ export default function FamilyTreeLeftSidebar({
                                         <button
                                           type="button"
                                           onClick={(e) => handleSidebarEntityClick(e, childId)}
-                                          onDoubleClick={(e) => startEditingPerson(e, childId, name)}
+                                          onDoubleClick={(e) => handlePersonRowDoubleClick(e, childId)}
                                           title={name}
                                           className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left pl-6 min-w-0 ${personRowSelectedClass(childId, "hover:bg-dark-accent/30")}`}
                                         >
                                           <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
-                                          <span className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1">{name}</span>
+                                          <span
+                                            onDoubleClick={(e) => startEditingPerson(e, childId, name)}
+                                            className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1"
+                                          >
+                                            {name}
+                                          </span>
                                           <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                           <AnchorDot personId={childId} nodes={nodes} />
                                           <EntityFamilyWarnings nodeId={childId} family={activeFamily} nodes={nodes} edges={edges} />
@@ -1289,8 +1314,8 @@ export default function FamilyTreeLeftSidebar({
                             onClick={(e) => handleUnassignedClick(e, node.id)}
                             onDoubleClick={
                               isPerson
-                                ? (e) => startEditingPerson(e, node.id, name)
-                                : undefined
+                                ? (e) => handlePersonRowDoubleClick(e, node.id)
+                                : (e) => handleUnionDoubleClick(e, node.id)
                             }
                             title={tooltip}
                             className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border transition-colors text-left cursor-pointer min-w-0 ${
@@ -1303,7 +1328,16 @@ export default function FamilyTreeLeftSidebar({
                           >
                             <div className={`w-6 h-6 rounded-full flex-shrink-0 ${isPerson ? "bg-dark-accent" : "bg-dark-accent/60"}`} />
                             <div className="flex-1 min-w-0">
-                              <span className="text-dark-text text-sm block overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
+                              <span
+                                onDoubleClick={
+                                  isPerson
+                                    ? (e) => startEditingPerson(e, node.id, name)
+                                    : undefined
+                                }
+                                className="text-dark-text text-sm block overflow-hidden text-ellipsis whitespace-nowrap"
+                              >
+                                {name}
+                              </span>
                               <span className="text-[10px] text-dark-muted block truncate">
                                 {node.id}
                                 {docRefs.declaredIn ? ` · ${docRefs.declaredIn}` : ""}
@@ -1369,21 +1403,21 @@ export default function FamilyTreeLeftSidebar({
             <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
-            <span className="truncate">{canDeleteFamily ? "Delete family" : "Delete"}</span>
+            <span className="truncate">{deleteLabel}</span>
           </button>
         </div>
       </div>
 
-      {deleteConfirmOpen &&
+      {pendingDeleteConfirm &&
         createPortal(
           <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
             <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
               <p className="text-sm text-dark-text mb-3">{confirmMessage}</p>
               <div className="flex justify-end gap-2">
-                <Button variant="secondary" size="sm" onClick={() => setDeleteConfirmOpen(false)}>
+                <Button variant="secondary" size="sm" onClick={cancelPendingDelete}>
                   Cancel
                 </Button>
-                <Button variant="danger" size="sm" onClick={handleConfirmDelete}>
+                <Button variant="danger" size="sm" onClick={confirmPendingDelete}>
                   Delete
                 </Button>
               </div>

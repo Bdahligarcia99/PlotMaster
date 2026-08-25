@@ -13,6 +13,8 @@ import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
 import DisplayModeDropdown from "../components/ui/DisplayModeDropdown";
 import ModuleSwitcherNavbar from "../components/ui/ModuleSwitcherNavbar";
+import CoreModuleNavbar from "../components/ui/CoreModuleNavbar";
+import { resolveOwnerProjectContext } from "../home/ownerProjectContext";
 import { useWindowTitle } from "../hooks/useWindowTitle";
 import FamilyTreeCanvas from "../components/family-tree/FamilyTreeCanvas";
 import FamilyTreeToolbar from "../components/family-tree/FamilyTreeToolbar";
@@ -41,6 +43,10 @@ type FileDeleteConfirm = {
 
 export default function FamilyTreeScreen() {
   const { projectId } = useParams<{ projectId: string }>();
+  const ownerContext = useMemo(
+    () => (projectId ? resolveOwnerProjectContext(projectId) : null),
+    [projectId]
+  );
   const navigate = useNavigate();
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
@@ -477,6 +483,17 @@ export default function FamilyTreeScreen() {
         children={
           projectId ? (
             <div className="flex items-center justify-center gap-3">
+              {ownerContext && (
+                <>
+                  <CoreModuleNavbar
+                    ownerProjectId={ownerContext.ownerId}
+                    ownerType={ownerContext.ownerType}
+                    neuronId={ownerContext.neuronId}
+                    projectName={ownerContext.projectName}
+                  />
+                  <div className="h-4 w-px bg-dark-accent" />
+                </>
+              )}
               <DisplayModeDropdown
                 activeMode={displayMode}
                 supportedModes={["nodes", "text"]}

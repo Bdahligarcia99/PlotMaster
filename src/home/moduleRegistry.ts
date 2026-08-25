@@ -1,14 +1,15 @@
 /** Single source of truth for which modules are enabled. */
-export const AVAILABLE_MODULES = ["familyTree", "charts", "timeline", "ideaPlayground"] as const;
+export const AVAILABLE_MODULES = ["neuron", "familyTree", "charts", "timeline", "ideaPlayground"] as const;
 
 /** Modules selectable when creating a multi-module project (functional only). */
-export const CREATEABLE_MODULES = ["familyTree", "charts", "timeline"] as const;
+export const CREATEABLE_MODULES = ["neuron", "familyTree", "charts", "timeline"] as const;
 
 export type AvailableModuleId = (typeof AVAILABLE_MODULES)[number];
 export type CreateableModuleId = (typeof CREATEABLE_MODULES)[number];
 
 /** Maps module id to WorkspaceShell/moduleType display name. */
 export const MODULE_ID_TO_TYPE: Record<string, string> = {
+  neuron: "Neuron",
   familyTree: "Family Tree",
   charts: "Charts",
   timeline: "Timeline",
@@ -22,6 +23,7 @@ export const MODULE_ID_TO_TYPE: Record<string, string> = {
  * truth for icon/label lookup and canonical ordering.
  */
 export const MODULE_TYPE_NAME_TO_REGISTRY_ID: Record<string, string> = {
+  Neuron: "neuron",
   "Family Tree": "familyTree",
   Charts: "charts",
   /** @deprecated legacy modular/subProjects key — read-side migration only */
@@ -46,7 +48,7 @@ export const MODULE_REGISTRY: ModuleRegistryItem[] = [
     id: "neuron",
     label: "Neuron",
     icon: "🗂️",
-    available: false,
+    available: true,
     tier: "primary",
     description: "Scrivener-style binder for hierarchical text files.",
   },
@@ -101,6 +103,7 @@ export const MODULE_REGISTRY: ModuleRegistryItem[] = [
 
 /** Driver index moduleType values that aren't display names. */
 const DRIVER_TYPE_TO_REGISTRY_ID: Record<string, string> = {
+  neuron: "neuron",
   familyTree: "familyTree",
   timeline: "timeline",
   charts: "charts",

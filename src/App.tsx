@@ -4,6 +4,7 @@ import ProjectDashboard from "./screens/ProjectDashboard";
 import WorkspaceShell from "./screens/WorkspaceShell";
 import FamilyTreeScreen from "./screens/FamilyTreeScreen";
 import TimelineScreen from "./screens/TimelineScreen";
+import NeuronScreen from "./screens/NeuronScreen";
 import IntroDialog from "./components/home/IntroDialog";
 import { useAppStore } from "./store/appStore";
 import { useIntroWindowSize } from "./hooks/useIntroWindowSize";
@@ -44,6 +45,7 @@ export default function App() {
         />
         <Route path="/family-tree/:projectId" element={<FamilyTreeScreen />} />
         <Route path="/timeline/:projectId" element={<TimelineScreen />} />
+        <Route path="/neuron/:projectId" element={<NeuronScreen />} />
         <Route path="/projects/:id" element={<ProjectDashboard />} />
         <Route path="/project/:id" element={<WorkspaceShell />} />
         <Route path="/workspaces/:id" element={<WorkspaceRedirect />} />

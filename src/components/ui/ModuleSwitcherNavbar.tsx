@@ -54,13 +54,15 @@ export default function ModuleSwitcherNavbar({
   const navigate = useNavigate();
   const modularProjects = useAppStore((s) => s.modularProjects);
 
-  const modularProject = modularProjects.find((p) =>
-    Object.values(p.subProjects ?? {}).includes(currentProjectId)
+  const modularProject = modularProjects.find(
+    (p) =>
+      Object.values(p.subProjects ?? {}).includes(currentProjectId) ||
+      p.neuronId === currentProjectId
   );
 
-  const entries = modularProject
+  const entries: [string, string][] = modularProject
     ? Object.entries(modularProject.subProjects ?? {})
-    : [[currentModuleType, currentProjectId] as const];
+    : [[currentModuleType, currentProjectId]];
 
   return (
     <nav

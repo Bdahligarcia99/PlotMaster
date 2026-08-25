@@ -20,6 +20,8 @@ import {
   getPersonNameParts,
   getUnionIdsForPerson,
   isChildEdge,
+  findFamilyForNode,
+  getEffectiveFamilyColor,
 } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData, ParentRole } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
@@ -714,6 +716,8 @@ export default function FamilyTreeInspector() {
   const inspectorFamilyId = useFamilyTreeStore((s) => s.inspectorFamilyId);
   const setFamilyCustomName = useFamilyTreeStore((s) => s.setFamilyCustomName);
   const setFamilyDescription = useFamilyTreeStore((s) => s.setFamilyDescription);
+  const setFamilyNotes = useFamilyTreeStore((s) => s.setFamilyNotes);
+  const setFamilyColor = useFamilyTreeStore((s) => s.setFamilyColor);
   const inspectorBranchId = useFamilyTreeStore((s) => s.inspectorBranchId);
   const branches = useFamilyTreeStore((s) => s.branches);
   const setBranchCustomName = useFamilyTreeStore((s) => s.setBranchCustomName);
@@ -746,19 +750,22 @@ export default function FamilyTreeInspector() {
 
   const [familyNameDraft, setFamilyNameDraft] = useState("");
   const [familyDescriptionDraft, setFamilyDescriptionDraft] = useState("");
+  const [familyNotesDraft, setFamilyNotesDraft] = useState("");
   const familyNameRef = useRef<HTMLInputElement>(null);
+  const [crownReassignTarget, setCrownReassignTarget] = useState<string | null>(null);
 
   useEffect(() => {
     if (inspectorFamily) {
       setFamilyNameDraft(inspectorFamily.name);
       setFamilyDescriptionDraft(inspectorFamily.description ?? "");
+      setFamilyNotesDraft(inspectorFamily.notes ?? "");
       const t = setTimeout(() => {
         familyNameRef.current?.focus();
         familyNameRef.current?.select();
       }, 0);
       return () => clearTimeout(t);
     }
-  }, [inspectorFamily?.id, inspectorFamily?.name, inspectorFamily?.description]);
+  }, [inspectorFamily?.id, inspectorFamily?.name, inspectorFamily?.description, inspectorFamily?.notes]);
 
   const selectedNode = !inspectorFamily && !inspectorBranch && primarySelectedNodeId
     ? nodes.find((n) => n.id === primarySelectedNodeId)
@@ -816,6 +823,17 @@ export default function FamilyTreeInspector() {
     const n = 4;
     const nextIndex = shift ? (index - 1 + n) % n : (index + 1) % n;
     refs[nextIndex]?.current?.focus();
+  };
+
+  const handleSetMainGraphClick = (unionId: string) => {
+    const owner = findFamilyForNode(unionId, families);
+    const hasOtherCrown = owner?.unionIds.some(
+      (uid) =>
+        uid !== unionId &&
+        (nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+    );
+    if (hasOtherCrown) setCrownReassignTarget(unionId);
+    else setUnionMainGraph(unionId, true);
   };
 
   if (inspectorBranch) {
@@ -962,17 +980,48 @@ export default function FamilyTreeInspector() {
             placeholder="Family description..."
           />
         </div>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-2">Notes</label>
+          <textarea
+            value={familyNotesDraft}
+            onChange={(e) => setFamilyNotesDraft(e.target.value)}
+            onBlur={() => setFamilyNotes(inspectorFamily.id, familyNotesDraft)}
+            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm resize-y min-h-[60px] focus:outline-none focus:border-blue-500"
+            placeholder="Family notes..."
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-dark-muted text-sm mb-2">Family nodes color</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={getEffectiveFamilyColor(
+                inspectorFamily,
+                families.findIndex((f) => f.id === inspectorFamily.id)
+              )}
+              onChange={(e) => setFamilyColor(inspectorFamily.id, e.target.value)}
+              className="w-9 h-9 rounded border border-dark-accent bg-dark-bg cursor-pointer"
+            />
+            {inspectorFamily.color && (
+              <button
+                type="button"
+                onClick={() => setFamilyColor(inspectorFamily.id, undefined)}
+                className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent"
+              >
+                Reset to auto
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="mb-3">
+          <label className="block text-dark-muted text-sm mb-1">Number of nodes</label>
+          <div className="text-dark-text text-sm">
+            {inspectorFamily.unionIds.length + inspectorFamily.memberPersonIds.length}
+          </div>
+        </div>
         <div className="mb-3">
           <label className="block text-dark-muted text-sm mb-1">Gen Range</label>
           <div className="text-dark-text text-sm">{genRangeLabel}</div>
-        </div>
-        <div className="mb-3">
-          <label className="block text-dark-muted text-sm mb-1">Number of Unions</label>
-          <div className="text-dark-text text-sm">{inspectorFamily.unionIds.length}</div>
-        </div>
-        <div className="mb-3">
-          <label className="block text-dark-muted text-sm mb-1">Number of family members</label>
-          <div className="text-dark-text text-sm">{inspectorFamily.memberPersonIds.length}</div>
         </div>
         <div className="mb-4">
           <label className="block text-dark-muted text-sm mb-2">Connection styles present</label>
@@ -1009,7 +1058,7 @@ export default function FamilyTreeInspector() {
     <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
       <div className="flex items-center gap-2 mb-3">
         <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide flex-1">
-          Inspector
+          Inspector — {nodeData.kind === "person" ? "Person" : "Union"}
         </h3>
         {nodeData.kind === "union" && (
           <SwapPartnersIconButton
@@ -1188,6 +1237,25 @@ export default function FamilyTreeInspector() {
         </>
       ) : (
         <>
+          <div className="mb-4 flex flex-col gap-2">
+            {(nodeData as UnionNodeData).isMainGraph ? (
+              <button
+                type="button"
+                onClick={() => setUnionMainGraph(selectedNode.id, false)}
+                className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent"
+              >
+                Clear Main Graph
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleSetMainGraphClick(selectedNode.id)}
+                className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent"
+              >
+                Set as Main Graph
+              </button>
+            )}
+          </div>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Partners</label>
             <PartnersDisplay nodes={nodes} unionData={nodeData as UnionNodeData} />
@@ -1226,15 +1294,6 @@ export default function FamilyTreeInspector() {
               </div>
             );
           })()}
-          <label className="flex items-center gap-2 mb-4 text-sm text-dark-muted cursor-pointer">
-            <input
-              type="checkbox"
-              checked={(nodeData as UnionNodeData).isMainGraph ?? false}
-              onChange={(e) => setUnionMainGraph(selectedNode.id, e.target.checked)}
-              className="themed-checkbox"
-            />
-            Main graph
-          </label>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Notes</label>
             <textarea
@@ -1245,6 +1304,36 @@ export default function FamilyTreeInspector() {
             />
           </div>
         </>
+      )}
+      {crownReassignTarget && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" role="dialog" aria-modal>
+          <div className="mx-4 max-w-sm rounded-lg border border-dark-accent bg-dark-surface p-4 shadow-xl">
+            <h3 className="text-sm font-medium text-dark-text mb-2">Reassign main graph?</h3>
+            <p className="text-dark-muted text-sm mb-4">
+              Assigning the crown to this union will remove it from the current main graph union in
+              this family. Continue?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setCrownReassignTarget(null)}
+                className="px-3 py-1.5 text-sm rounded border border-dark-accent/50 hover:border-dark-accent text-dark-text"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUnionMainGraph(crownReassignTarget, true);
+                  setCrownReassignTarget(null);
+                }}
+                className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

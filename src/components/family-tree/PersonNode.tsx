@@ -1,7 +1,15 @@
 import { memo, useRef, useEffect, useCallback } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import type { PersonNodeData } from "../../store/familyTreeStore";
-import { useFamilyTreeStore, DEFAULT_PERSON_W, DEFAULT_PERSON_H, getPersonDisplayName, canBranchFromPerson } from "../../store/familyTreeStore";
+import {
+  useFamilyTreeStore,
+  DEFAULT_PERSON_W,
+  DEFAULT_PERSON_H,
+  getPersonDisplayName,
+  canBranchFromPerson,
+  getAnchorAtY,
+  formatGenerationAnchorLabel,
+} from "../../store/familyTreeStore";
 
 function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData>) {
   const nodeData = data;
@@ -10,6 +18,8 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const nodeInfoCenter = useFamilyTreeStore((s) => s.nodeInfoCenter);
   const nodeInfoSize = useFamilyTreeStore((s) => s.nodeInfoSize);
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
+  const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
+  const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const requestRemoveConnection = useFamilyTreeStore((s) => s.requestRemoveConnection);
@@ -91,6 +101,11 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const size = nodeSizesById[id] ?? { width: DEFAULT_PERSON_W, height: DEFAULT_PERSON_H };
   const centerX = Math.round(x + size.width / 2);
   const centerY = Math.round(y + size.height / 2);
+  const previewAnchor = isGenImmune ? getAnchorAtY(generationAnchors, centerY) : null;
+  const previewLabel = previewAnchor
+    ? formatGenerationAnchorLabel(previewAnchor, genLabelMode)
+    : "none";
+  const genInheritTitle = isGenImmune ? `Click to inherit anchor: ${previewLabel}` : undefined;
 
   const parentUnionEdges = edges.filter(
     (e) => e.target === id && (e.data as { type?: string })?.type === "child"
@@ -359,6 +374,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
 
       <div
         ref={sizeRef}
+        title={genInheritTitle}
         className={`px-4 py-3 rounded-xl border-2 min-w-[120px] transition-colors relative ${
           selected
             ? selectionDimmed
