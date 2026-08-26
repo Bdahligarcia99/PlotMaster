@@ -54,7 +54,7 @@ export interface NoteBlock {
   content: string;
 }
 
-export type AttributeType = "text" | "number" | "numberScroll" | "select" | "date" | "custom";
+export type AttributeType = "text" | "number" | "numberScroll" | "date" | "custom";
 
 /** Custom data type defined at template level */
 export interface CustomDataType {
@@ -142,6 +142,7 @@ interface ChartsStore {
   chartLayoutMode: ChartLayoutMode;
   editLayoutDirty: boolean;
   editLayoutDraftSections: ProfileSection[];
+  editLayoutDraftDataTypes: CustomDataType[];
   editingTemplateId: string | null;
   createLayoutDirty: boolean;
   createLayoutDraftSections: ProfileSection[];
@@ -190,6 +191,7 @@ interface ChartsStore {
   setChartLayoutMode: (mode: ChartLayoutMode) => void;
   setEditLayoutDirty: (dirty: boolean) => void;
   setEditLayoutDraftSections: (sections: ProfileSection[]) => void;
+  setEditLayoutDraftDataTypes: (types: CustomDataType[]) => void;
   applyEditLayoutDraftToCharacter: (projectId: string, characterId: string) => boolean;
   setCreateLayoutDraftSections: (sections: ProfileSection[]) => void;
   setCreateLayoutDraftDataTypes: (types: CustomDataType[]) => void;
@@ -917,7 +919,7 @@ export function generateChartsScript(
           if (block.type === "attributes" && Object.keys(block.keyValuePairs ?? {}).length > 0) {
             const attrStr = (block.attributeOrder ?? Object.keys(block.keyValuePairs ?? {}))
               .filter((k) => k in (block.keyValuePairs ?? {}))
-              .map((k) => `${k}: ${(block.keyValuePairs ?? {})[k]}`)
+              .map((k) => `${k}: "${escapeQuotedString((block.keyValuePairs ?? {})[k] ?? "")}"`)
               .join(", ");
             parts.push(attrStr);
           }
@@ -963,16 +965,10 @@ export function generateChartsScript(
                     if (hasNum(min) || hasNum(max) || hasNum(step)) {
                       configStr = ` [${min ?? ""}, ${max ?? ""}, ${step ?? ""}]`;
                     }
-                  } else if (theType === "select" && m?.options?.length) {
-                    configStr = ` [${m.options.join(", ")}]`;
                   }
-                  const allowStr =
-                    (theType === "select" && m?.allowCustom != null)
-                      ? ` allowCustom=${m.allowCustom}`
-                      : "";
-                  typeAnno = ` | ${builtinPrefix}${configStr}${allowStr}`;
+                  typeAnno = ` | ${builtinPrefix}${configStr}`;
                 }
-                lines.push(`${blockIndent}  ${key}: ${value}${typeAnno}`);
+                lines.push(`${blockIndent}  ${key}: "${escapeQuotedString(value)}"${typeAnno}`);
               }
             }
           }
@@ -990,7 +986,6 @@ export function generateChartsScript(
   function collectBuiltinDataTypes(sections: ProfileSection[]): string[] {
     const builtinLines: string[] = [];
     const numConfigs = new Set<string>();
-    const selectConfigs = new Map<string, string>();
 
     function hasNum(n: number | undefined): boolean {
       return n != null && !Number.isNaN(n);
@@ -1010,12 +1005,6 @@ export function generateChartsScript(
                 numConfigs.add(key);
                 builtinLines.push(`@builtin ${t}: [${m.min ?? ""}, ${m.max ?? ""}, ${m.step ?? ""}]`);
               }
-            }
-          } else if (t === "select" && m.options?.length) {
-            const optsKey = m.options.join(",");
-            if (!selectConfigs.has(optsKey)) {
-              selectConfigs.set(optsKey, m.options.join(", "));
-              builtinLines.push(`@builtin select: [${m.options.join(", ")}]`);
             }
           }
         }
@@ -1044,7 +1033,10 @@ export function generateChartsScript(
       lines.push(line);
     }
     for (const t of customDataTypes) {
-      const opts = t.options.length > 0 ? t.options.join(", ") : "";
+      const opts =
+        t.options.length > 0
+          ? t.options.map((o) => `"${escapeQuotedString(o)}"`).join(", ")
+          : "";
       lines.push(`${t.name}: [${opts}]`);
     }
     lines.push("");
@@ -1090,6 +1082,7 @@ export const useChartsStore = create<ChartsStore>(
     chartLayoutMode: "fill" as ChartLayoutMode,
     editLayoutDirty: false,
     editLayoutDraftSections: [],
+    editLayoutDraftDataTypes: [],
     editingTemplateId: null,
     createLayoutDirty: false,
     createLayoutDraftSections: [],
@@ -1509,8 +1502,10 @@ export const useChartsStore = create<ChartsStore>(
         const char = chars.find((c) => c.id === charId);
         const raw = char?.sections ?? [];
         updates.editLayoutDraftSections = raw.length > 0 ? JSON.parse(JSON.stringify(raw)) : [];
+        updates.editLayoutDraftDataTypes = JSON.parse(JSON.stringify(char?.customDataTypes ?? []));
       } else if (prev === "edit") {
         updates.editLayoutDraftSections = [];
+        updates.editLayoutDraftDataTypes = [];
       }
       set(updates);
     },
@@ -1523,11 +1518,16 @@ export const useChartsStore = create<ChartsStore>(
       set({ editLayoutDraftSections: sections, editLayoutDirty: true });
     },
 
+    setEditLayoutDraftDataTypes: (types) => {
+      set({ editLayoutDraftDataTypes: types, editLayoutDirty: true });
+    },
+
     applyEditLayoutDraftToCharacter: (projectId, characterId) => {
       const draft = get().editLayoutDraftSections;
+      const draftDataTypes = get().editLayoutDraftDataTypes;
       const existing = loadFromStorage(projectId);
       const chars = existing.map((c) =>
-        c.id === characterId ? { ...c, sections: draft } : c
+        c.id === characterId ? { ...c, sections: draft, customDataTypes: draftDataTypes } : c
       );
       saveToStorage(projectId, chars);
       if (get().activeProjectId === projectId) {
@@ -1536,9 +1536,10 @@ export const useChartsStore = create<ChartsStore>(
           chartLayoutMode: "fill" as ChartLayoutMode,
           editLayoutDirty: false,
           editLayoutDraftSections: [],
+          editLayoutDraftDataTypes: [],
         });
       } else {
-        set({ editLayoutDirty: false, editLayoutDraftSections: [] });
+        set({ editLayoutDirty: false, editLayoutDraftSections: [], editLayoutDraftDataTypes: [] });
       }
       return true;
     },

@@ -80,6 +80,40 @@ function parseCharacterHeader(line: string): [string, boolean] | null {
 }
 
 
+/** Parse a double-quoted string at the start of s; returns [unescapedValue, restAfterQuote] or null */
+function parseLeadingQuotedString(s: string): [string, string] | null {
+  if (!s.startsWith('"')) return null;
+  let i = 1;
+  let value = "";
+  while (i < s.length) {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      const next = s[i + 1];
+      if (next === "n") value += "\n";
+      else if (next === "r") value += "\r";
+      else if (next === "t") value += "\t";
+      else if (next === '"') value += '"';
+      else if (next === "\\") value += "\\";
+      else value += next;
+      i += 2;
+    } else if (s[i] === '"') {
+      return [value, s.slice(i + 1).trimStart()];
+    } else {
+      value += s[i];
+      i++;
+    }
+  }
+  return null;
+}
+
+/** Strip optional surrounding quotes from a data-type option token */
+function parseOptionToken(token: string): string {
+  const trimmed = token.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+    return unescapeQuotedString(trimmed.slice(1, -1));
+  }
+  return trimmed;
+}
+
 /** Parse data types block: # Data types, @builtin lines (stored), TagName: [opt1, opt2, ...] */
 function parseDataTypesBlock(lines: string[], startIdx: number): {
   dataTypes: CustomDataType[];
@@ -106,7 +140,7 @@ function parseDataTypesBlock(lines: string[], startIdx: number): {
       if (match) {
         const name = match[1].trim() || "New Type";
         const optsStr = match[2] ?? "";
-        const options = optsStr.split(",").map((s) => s.trim()).filter(Boolean);
+        const options = optsStr.split(",").map(parseOptionToken).filter(Boolean);
         dataTypes.push({
           id: generateId(),
           name,
@@ -237,14 +271,36 @@ function parseAttributeLine(
   valuePart: string,
   customDataTypes: CustomDataType[]
 ): { value: string; meta?: AttributeMetaItem } {
-  const sepMatch = valuePart.match(/\s*\|\s*@/);
-  if (!sepMatch) return { value: valuePart.trim() };
-  const sepStart = valuePart.indexOf(sepMatch[0]);
-  const value = valuePart.slice(0, sepStart).trim();
-  let rest = valuePart.slice(sepStart + sepMatch[0].length).trim();
-  if (!rest.startsWith("@")) rest = "@" + rest;
-  rest = rest.slice(1).trim();
+  const trimmed = valuePart.trimStart();
+  const quoted = parseLeadingQuotedString(trimmed);
+  let value: string;
+  let rest: string;
+  if (quoted) {
+    [value, rest] = quoted;
+  } else {
+    const sepMatch = valuePart.match(/\s*\|\s*@/);
+    if (!sepMatch) return { value: valuePart.trim() };
+    const sepStart = valuePart.indexOf(sepMatch[0]);
+    value = valuePart.slice(0, sepStart).trim();
+    rest = valuePart.slice(sepStart + sepMatch[0].length).trim();
+    if (!rest.startsWith("@")) rest = "@" + rest;
+    rest = rest.slice(1).trim();
+    if (!rest) return { value };
+    return parseAttributeTypeAnnotation(value, rest, customDataTypes);
+  }
 
+  const sepMatch = rest.match(/^\s*\|\s*@(.*)$/s);
+  if (!sepMatch) return { value };
+  rest = sepMatch[1].trim();
+  if (!rest) return { value };
+  return parseAttributeTypeAnnotation(value, rest, customDataTypes);
+}
+
+function parseAttributeTypeAnnotation(
+  value: string,
+  rest: string,
+  customDataTypes: CustomDataType[]
+): { value: string; meta?: AttributeMetaItem } {
   const allowMatch = rest.match(/\s+allowCustom=(true|false)/i);
   const allowCustom = allowMatch
     ? allowMatch[1].toLowerCase() === "true"
@@ -262,7 +318,7 @@ function parseAttributeLine(
   }
 
   // Built-in: @builtin:typeName or @builtin:typeName [config], or legacy @typeName
-  const builtinTypes = ["text", "number", "numberScroll", "select", "date"] as const;
+  const builtinTypes = ["text", "number", "numberScroll", "date"] as const;
   const builtinPrefix = "builtin:";
   const isBuiltinPrefixed = typePart.toLowerCase().startsWith(builtinPrefix);
   const legacyBuiltin = !isBuiltinPrefixed && builtinTypes.includes(typePart.toLowerCase() as (typeof builtinTypes)[number]);
@@ -274,7 +330,7 @@ function parseAttributeLine(
     if (builtinTypes.includes(builtinType as (typeof builtinTypes)[number])) {
       const meta: AttributeMetaItem = {
         type: builtinType as AttributeType,
-        allowCustom: allowCustom ?? (builtinType === "select" ? true : undefined),
+        allowCustom: allowCustom,
       };
       if (configArr && configArr.length > 0) {
         if (builtinType === "number" || builtinType === "numberScroll") {
@@ -291,8 +347,6 @@ function parseAttributeLine(
             const n = Number(stepS);
             if (!Number.isNaN(n)) meta.step = n;
           }
-        } else if (builtinType === "select") {
-          meta.options = configArr.filter(Boolean);
         }
       }
       return { value, meta };

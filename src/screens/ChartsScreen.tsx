@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Button from "../components/ui/Button";
+import ErrorBoundary from "../components/ui/ErrorBoundary";
 import Modal from "../components/ui/Modal";
 import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
@@ -299,7 +300,7 @@ export default function ChartsScreen() {
         {!isTextEditor && <ChartsToolbar />}
         <div className="flex-1 flex min-h-0">
           {leftSidebarOpen && (
-            <div className="w-[260px] flex-shrink-0 overflow-hidden">
+            <div className="w-[260px] flex-shrink-0 overflow-hidden flex">
               <ChartsEntitiesPanel
                 textEditorMode={isTextEditor}
                 openFileIds={openFileIds}
@@ -317,6 +318,7 @@ export default function ChartsScreen() {
           )}
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             {isTextEditor ? (
+              <ErrorBoundary fallbackTitle="This display mode is not yet ready">
               <>
                 {textEditorCommitError && (
                   <div className="px-3 py-2 text-xs text-red-400 border-b border-red-500/30 bg-red-500/10 shrink-0">
@@ -339,6 +341,7 @@ export default function ChartsScreen() {
                   }
                 />
               </>
+              </ErrorBoundary>
             ) : (
               <>
                 <ChartsEditor />

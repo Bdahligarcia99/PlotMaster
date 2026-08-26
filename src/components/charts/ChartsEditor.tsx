@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   DndContext,
@@ -10,6 +10,7 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import AttributeValueInput from "./AttributeValueInput";
+import AttributeMetaEditorPopover from "./AttributeMetaEditorPopover";
 import CreateLayoutEditor from "./CreateLayoutEditor";
 import ChartTemplatePicker from "./ChartTemplatePicker";
 import {
@@ -21,7 +22,6 @@ import {
   type ProfileSection,
   type SectionHeadingLevel,
   type AttributeMetaItem,
-  type AttributeType,
 } from "../../store/chartsStore";
 import {
   addSectionToDraft,
@@ -53,162 +53,8 @@ function getAttributeMeta(block: AttributeBlock, key: string): AttributeMetaItem
   return (block.attributeMeta ?? {})[key];
 }
 
-function AttributeMetaEditor({
-  keyName,
-  meta,
-  onSave,
-  onClose,
-  anchorRect,
-}: {
-  keyName: string;
-  meta?: AttributeMetaItem;
-  onSave: (m: Partial<AttributeMetaItem>) => void;
-  onClose: () => void;
-  anchorRect: DOMRect | null;
-}) {
-  const [type, setType] = useState<AttributeType>(meta?.type ?? "text");
-  const [optionsText, setOptionsText] = useState((meta?.options ?? []).join("\n"));
-  const [allowCustom, setAllowCustom] = useState(meta?.allowCustom ?? false);
-  const [min, setMin] = useState<string>(meta?.min != null ? String(meta.min) : "");
-  const [max, setMax] = useState<string>(meta?.max != null ? String(meta.max) : "");
-  const [step, setStep] = useState<string>(meta?.step != null ? String(meta.step) : "1");
-
-  const handleSave = () => {
-    const opts = optionsText
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const payload: Partial<AttributeMetaItem> = {
-      type,
-      options: type === "select" ? opts : undefined,
-      allowCustom: type === "select" ? allowCustom : undefined,
-      min: undefined,
-      max: undefined,
-      step: undefined,
-    };
-    if (type === "number" || type === "numberScroll") {
-      const minNum = min.trim() === "" ? undefined : parseFloat(min);
-      const maxNum = max.trim() === "" ? undefined : parseFloat(max);
-      const stepNum = step.trim() === "" ? undefined : parseFloat(step);
-      if (!Number.isNaN(minNum)) payload.min = minNum;
-      if (!Number.isNaN(maxNum)) payload.max = maxNum;
-      if (!Number.isNaN(stepNum)) payload.step = stepNum;
-    }
-    onSave(payload);
-    onClose();
-  };
-
-  const rect = anchorRect;
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (popoverRef.current && !popoverRef.current.contains(target)) {
-        onClose();
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [onClose]);
-
-  return (
-    <div
-      ref={popoverRef}
-      className="fixed z-[9999] rounded-lg border border-dark-accent bg-dark-surface shadow-xl p-3 min-w-[200px] max-w-[280px]"
-      style={{
-        top: rect ? rect.bottom + 4 : 0,
-        left: rect ? rect.left : 0,
-      }}
-    >
-      <div className="text-xs font-medium text-dark-muted mb-2">Attribute: {keyName}</div>
-      <div className="space-y-2">
-        <div>
-          <label className="block text-[10px] text-dark-muted mb-0.5">Type</label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as AttributeType)}
-            className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
-          >
-            <option value="text">Text</option>
-            <option value="number">Number</option>
-            <option value="numberScroll">Number (Scrollable)</option>
-            <option value="select">Select</option>
-            <option value="date">Date</option>
-          </select>
-        </div>
-        {(type === "number" || type === "numberScroll") && (
-          <>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[10px] text-dark-muted mb-0.5">Min</label>
-                <input
-                  type="number"
-                  value={min}
-                  onChange={(e) => setMin(e.target.value)}
-                  placeholder="—"
-                  className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-dark-muted mb-0.5">Max</label>
-                <input
-                  type="number"
-                  value={max}
-                  onChange={(e) => setMax(e.target.value)}
-                  placeholder="—"
-                  className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-dark-muted mb-0.5">Step</label>
-                <input
-                  type="number"
-                  value={step}
-                  onChange={(e) => setStep(e.target.value)}
-                  placeholder="1"
-                  min={0.0001}
-                  step={0.1}
-                  className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded"
-                />
-              </div>
-            </div>
-          </>
-        )}
-        {type === "select" && (
-          <>
-            <div>
-              <label className="block text-[10px] text-dark-muted mb-0.5">Options (one per line)</label>
-              <textarea
-                value={optionsText}
-                onChange={(e) => setOptionsText(e.target.value)}
-                rows={3}
-                placeholder={"Brown\nGreen\nBlue"}
-                className="w-full px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded resize-y"
-              />
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allowCustom}
-                onChange={(e) => setAllowCustom(e.target.checked)}
-                className="rounded"
-              />
-              <span className="text-xs text-dark-text">Allow custom values</span>
-            </label>
-          </>
-        )}
-      </div>
-      <div className="flex justify-end gap-1 mt-2">
-        <button type="button" onClick={onClose} className="px-2 py-1 text-xs text-dark-muted hover:text-dark-text">
-          Cancel
-        </button>
-        <button type="button" onClick={handleSave} className="px-2 py-1 text-xs bg-blue-600 text-white rounded">
-          Save
-        </button>
-      </div>
-    </div>
-  );
+function generateId() {
+  return `_${Math.random().toString(36).slice(2, 11)}`;
 }
 
 function DragHandle({ listeners, attributes }: { listeners?: object; attributes?: object }) {
@@ -586,7 +432,6 @@ export default function ChartsEditor() {
   const reorderContentBlocks = useChartsStore((s) => s.reorderContentBlocks);
   const updateAttributeKey = useChartsStore((s) => s.updateAttributeKey);
   const renameAttributeKey = useChartsStore((s) => s.renameAttributeKey);
-  const updateAttributeMeta = useChartsStore((s) => s.updateAttributeMeta);
   const createTemplateFromSections = useChartsStore((s) => s.createTemplateFromSections);
   const saveTemplateFromCharacter = useChartsStore((s) => s.saveTemplateFromCharacter);
   const chartLayoutMode = useChartsStore((s) => s.chartLayoutMode);
@@ -594,6 +439,8 @@ export default function ChartsEditor() {
   const editLayoutDirty = useChartsStore((s) => s.editLayoutDirty);
   const editLayoutDraftSections = useChartsStore((s) => s.editLayoutDraftSections);
   const setEditLayoutDraftSections = useChartsStore((s) => s.setEditLayoutDraftSections);
+  const editLayoutDraftDataTypes = useChartsStore((s) => s.editLayoutDraftDataTypes);
+  const setEditLayoutDraftDataTypes = useChartsStore((s) => s.setEditLayoutDraftDataTypes);
   const applyEditLayoutDraftToCharacter = useChartsStore((s) => s.applyEditLayoutDraftToCharacter);
   const chartSectionLayoutMode = useChartsStore((s) => s.chartSectionLayoutMode);
   const unlinkCharacterFromTemplate = useChartsStore((s) => s.unlinkCharacterFromTemplate);
@@ -613,6 +460,9 @@ export default function ChartsEditor() {
   const sourceSections = canEditStructure
     ? editLayoutDraftSections
     : (selectedCharacter?.sections ?? []);
+  const activeCustomDataTypes = canEditStructure
+    ? editLayoutDraftDataTypes
+    : (selectedCharacter?.customDataTypes ?? []);
   const sections = getOrderedSections(sourceSections);
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -911,20 +761,19 @@ export default function ChartsEditor() {
         )}
       </div>
       <div className="flex-1 overflow-y-auto p-4">
+        {!hasLayout && projectId && selectedCharacterId ? (
+          <ChartTemplatePicker
+            projectId={projectId}
+            characterId={selectedCharacterId}
+            characterName={selectedCharacter.name}
+          />
+        ) : (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <div className={chartSectionLayoutMode === "grid" ? "w-full space-y-6" : "max-w-2xl space-y-6"}>
             {visibleSections.length === 0 ? (
-              !hasLayout && projectId && selectedCharacterId ? (
-                <ChartTemplatePicker
-                  projectId={projectId}
-                  characterId={selectedCharacterId}
-                  characterName={selectedCharacter.name}
-                />
-              ) : (
               <p className="text-dark-muted text-sm py-4">
                 No sections yet. Add a top-level section (H1) from the toolbar or the button above.
               </p>
-              )
             ) : (
               <SortableContext
                 items={visibleSections.map((s) => `section-${s.id}`)}
@@ -1162,7 +1011,7 @@ export default function ChartsEditor() {
                                                     updateAttributeKey(projectId, selectedCharacterId, section.id, block.id, key, v);
                                                   }
                                                 }}
-                                                customDataTypes={selectedCharacter?.customDataTypes ?? []}
+                                                customDataTypes={activeCustomDataTypes}
                                                 meta={getAttributeMeta(block, key)}
                                                 inputId={`${block.id}-${key}`}
                                                 placeholder="Value"
@@ -1189,15 +1038,22 @@ export default function ChartsEditor() {
                                                 </svg>
                                               </button>
                                               {metaEditorFor?.blockId === block.id && metaEditorFor?.key === key && (
-                                                <AttributeMetaEditor
+                                                <AttributeMetaEditorPopover
                                                   keyName={key}
                                                   meta={getAttributeMeta(block, key)}
+                                                  customDataTypes={editLayoutDraftDataTypes}
+                                                  onAddCustomDataType={(name, options) => {
+                                                    const id = generateId();
+                                                    setEditLayoutDraftDataTypes([
+                                                      ...editLayoutDraftDataTypes,
+                                                      { id, name, options },
+                                                    ]);
+                                                    return id;
+                                                  }}
                                                   onSave={(m) => {
-                                                    if (canEditStructure) {
-                                                      setEditLayoutDraftSections(updateAttributeMetaInDraft(sourceSections, section.id, block.id, key, m));
-                                                    } else if (projectId && selectedCharacterId) {
-                                                      updateAttributeMeta(projectId, selectedCharacterId, section.id, block.id, key, m);
-                                                    }
+                                                    setEditLayoutDraftSections(
+                                                      updateAttributeMetaInDraft(sourceSections, section.id, block.id, key, m)
+                                                    );
                                                   }}
                                                   onClose={() => setMetaEditorFor(null)}
                                                   anchorRect={metaEditorAnchorRect}
@@ -1297,6 +1153,7 @@ export default function ChartsEditor() {
             )}
           </div>
         </DndContext>
+        )}
       </div>
 
       {saveTemplateOpen && (

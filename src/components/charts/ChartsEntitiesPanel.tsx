@@ -46,6 +46,8 @@ export default function ChartsEntitiesPanel({
   const [editingCharacterId, setEditingCharacterId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [pendingCharacterId, setPendingCharacterId] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const isCreatingLayout = chartLayoutMode === "createLayout";
 
@@ -95,7 +97,6 @@ export default function ChartsEntitiesPanel({
     comparisonCharacterId,
   ].filter((id): id is string => id != null);
   const hasSelection = selectedIds.length > 0;
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const selectedChars = selectedIds
     .map((id) => characters.find((c) => c.id === id))
@@ -121,8 +122,6 @@ export default function ChartsEntitiesPanel({
     setDeleteConfirmOpen(false);
   };
 
-  const panelRef = useRef<HTMLDivElement>(null);
-
   const handlePanelKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Delete" || e.key === "Backspace") {
       const target = e.target as HTMLElement;
@@ -137,7 +136,7 @@ export default function ChartsEntitiesPanel({
       ref={panelRef}
       tabIndex={0}
       onKeyDown={handlePanelKeyDown}
-      className="w-[260px] flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden outline-none focus:ring-1 focus:ring-inset focus:ring-dark-accent/50"
+      className="w-[260px] h-full flex-shrink-0 border-r border-dark-accent/50 bg-dark-surface flex flex-col overflow-hidden outline-none focus:ring-1 focus:ring-inset focus:ring-dark-accent/50"
     >
       <div className="p-4 border-b border-dark-accent/50">
         <h2 className="text-sm font-medium text-dark-muted uppercase tracking-wide">

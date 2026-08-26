@@ -102,7 +102,7 @@ export default function ChartTemplatesModal({
     const targetChar = characters.find((c) => c.id === loadCharacterId);
     const hasExisting = (targetChar?.sections?.length ?? 0) > 0;
     if (loadMode === "replace" && hasExisting) {
-      if (!window.confirm(`Replace "${targetChar?.name}"'s layout? This will remove all existing sections and content.`)) {
+      if (!window.confirm(`Copy layout to "${targetChar?.name}"? This will remove all existing sections and content.`)) {
         return;
       }
     }
@@ -217,7 +217,7 @@ export default function ChartTemplatesModal({
         {mode === "load" && (
           <>
             <p className="text-xs text-dark-muted">
-              Apply a template to a character. Replace applies once; Link applies and keeps the character synced when the template changes.
+              Apply a template to a character. Copy applies once; Link applies and keeps the character synced when the template changes.
             </p>
             <div>
               <label className="block text-xs text-dark-muted mb-1">Template</label>
@@ -261,7 +261,7 @@ export default function ChartTemplatesModal({
                     onChange={() => setLoadMode("replace")}
                     className="rounded-full border-dark-accent bg-dark-bg text-blue-500"
                   />
-                  <span className="text-sm text-dark-text">Replace</span>
+                  <span className="text-sm text-dark-text">Copy</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input

@@ -25,13 +25,11 @@ export default function ChartsToolbar() {
   const templateButtonRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (id) {
+    if (!id) return;
+    if (activeProjectId !== id) {
       setActiveProject(id);
-    } else {
-      setActiveProject(null);
     }
-    return () => setActiveProject(null);
-  }, [id, setActiveProject]);
+  }, [id, activeProjectId, setActiveProject]);
 
   const handleAddCharacter = () => {
     if (id) addCharacter(id);
