@@ -1,6 +1,10 @@
+import { useCallback, useRef } from "react";
 import { useNeuronStore } from "../../store/neuronStore";
 import type { NeuronIconRef } from "../../storage/StorageDriver";
 import { mirrorKey } from "../../neuron/mirror/types";
+import { renameMirrorEntity } from "../../neuron/mirror";
+import { getMirrorEntityDisplayName } from "../../neuron/paneUtils";
+import { getStorageDriver } from "../../storage/StorageDriver";
 
 export type NeuronSelectionTarget =
   | { kind: "folder"; id: string; isMirror: false }
@@ -22,6 +26,7 @@ export default function NeuronInspector({ selection }: NeuronInspectorProps) {
   const folders = useNeuronStore((s) => s.folders);
   const documents = useNeuronStore((s) => s.documents);
   const mirrorMeta = useNeuronStore((s) => s.mirrorMeta);
+  const mirrors = useNeuronStore((s) => s.mirrors);
   const renameFolder = useNeuronStore((s) => s.renameFolder);
   const renameDocument = useNeuronStore((s) => s.renameDocument);
   const setFolderSynopsis = useNeuronStore((s) => s.setFolderSynopsis);
@@ -29,6 +34,33 @@ export default function NeuronInspector({ selection }: NeuronInspectorProps) {
   const setFolderNotes = useNeuronStore((s) => s.setFolderNotes);
   const setDocumentNotes = useNeuronStore((s) => s.setDocumentNotes);
   const setMirrorMeta = useNeuronStore((s) => s.setMirrorMeta);
+  const updateMirror = useNeuronStore((s) => s.updateMirror);
+
+  const mirrorSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const commitMirrorRename = useCallback(
+    (target: Extract<NeuronSelectionTarget, { isMirror: true }>, name: string) => {
+      if (target.kind === "module-root") return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const payload = mirrors[target.subId];
+      if (!payload) return;
+      const patched = renameMirrorEntity(
+        target.registryId,
+        payload,
+        target.entityId,
+        target.kind,
+        trimmed
+      );
+      updateMirror(target.subId, patched);
+      const key = target.subId;
+      if (mirrorSaveTimers.current[key]) clearTimeout(mirrorSaveTimers.current[key]);
+      mirrorSaveTimers.current[key] = setTimeout(() => {
+        void getStorageDriver().saveProjectData(target.subId, patched);
+      }, 500);
+    },
+    [mirrors, updateMirror]
+  );
 
   if (!selection) {
     return (
@@ -71,7 +103,13 @@ export default function NeuronInspector({ selection }: NeuronInspectorProps) {
 
   const key = mirrorKey(selection.subId, selection.entityId);
   const meta = mirrorMeta[key] ?? {};
-  const displayName =
+  const displayName = getMirrorEntityDisplayName(
+    selection.registryId,
+    mirrors[selection.subId],
+    selection.entityId,
+    selection.kind
+  );
+  const typeLabel =
     selection.kind === "module-root"
       ? "Module"
       : selection.kind === "folder"
@@ -80,15 +118,14 @@ export default function NeuronInspector({ selection }: NeuronInspectorProps) {
 
   return (
     <InspectorFields
-      title={meta.synopsis ? "" : ""}
+      title={displayName}
       synopsis={meta.synopsis ?? ""}
       notes={meta.notes ?? ""}
-      onTitleChange={() => {}}
+      onTitleChange={(v) => commitMirrorRename(selection, v)}
       onSynopsisChange={(v) => setMirrorMeta(key, { synopsis: v })}
       onNotesChange={(v) => setMirrorMeta(key, { notes: v })}
-      typeLabel={displayName}
-      hideTitle
-      mirrorTitle={selection.id}
+      typeLabel={typeLabel}
+      titleReadOnly={selection.kind === "module-root"}
     />
   );
 }
@@ -101,8 +138,7 @@ function InspectorFields({
   onSynopsisChange,
   onNotesChange,
   typeLabel,
-  hideTitle,
-  mirrorTitle,
+  titleReadOnly,
 }: {
   title: string;
   synopsis: string;
@@ -111,29 +147,26 @@ function InspectorFields({
   onSynopsisChange: (v: string) => void;
   onNotesChange: (v: string) => void;
   typeLabel: string;
-  hideTitle?: boolean;
-  mirrorTitle?: string;
+  titleReadOnly?: boolean;
 }) {
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
       <div className="text-[10px] uppercase tracking-wide text-dark-muted">{typeLabel}</div>
-      {!hideTitle ? (
-        <div>
-          <label className="block text-xs text-dark-muted mb-1">Title / Name</label>
+      <div>
+        <label className="block text-xs text-dark-muted mb-1">Title / Name</label>
+        {titleReadOnly ? (
+          <div className="text-sm text-dark-text font-medium truncate" title={title}>
+            {title}
+          </div>
+        ) : (
           <input
             type="text"
             value={title}
             onChange={(e) => onTitleChange(e.target.value)}
             className="w-full px-2 py-1.5 text-sm bg-dark-bg border border-dark-accent rounded text-dark-text focus:outline-none focus:border-blue-500"
           />
-        </div>
-      ) : (
-        mirrorTitle && (
-          <div className="text-sm text-dark-text font-medium truncate" title={mirrorTitle}>
-            {mirrorTitle}
-          </div>
-        )
-      )}
+        )}
+      </div>
       <div>
         <label className="block text-xs text-dark-muted mb-1">Synopsis</label>
         <textarea

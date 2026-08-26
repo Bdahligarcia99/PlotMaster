@@ -65,3 +65,10 @@ export function renameMirrorEntity(
   if (!adapter) return payload;
   return adapter.renameEntity(payload, entityId, kind, name);
 }
+
+export {
+  createMirrorDocument,
+  deleteMirrorDocument,
+  getMirrorDocumentParentId,
+  getMirrorDocumentName,
+} from "./mirrorDocumentOps";

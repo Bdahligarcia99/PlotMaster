@@ -710,6 +710,7 @@ export default function FamilyTreeInspector() {
     setReviewNodesModalOpen,
   } = useFamilyTreeStore();
   const setUnionMainGraph = useFamilyTreeStore((s) => s.setUnionMainGraph);
+  const setUnionName = useFamilyTreeStore((s) => s.setUnionName);
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
   const families = useFamilyTreeStore((s) => s.families);
   const documents = useFamilyTreeStore((s) => s.documents);
@@ -752,6 +753,8 @@ export default function FamilyTreeInspector() {
   const [familyDescriptionDraft, setFamilyDescriptionDraft] = useState("");
   const [familyNotesDraft, setFamilyNotesDraft] = useState("");
   const familyNameRef = useRef<HTMLInputElement>(null);
+  const [unionNameDraft, setUnionNameDraft] = useState("");
+  const unionNameRef = useRef<HTMLInputElement>(null);
   const [crownReassignTarget, setCrownReassignTarget] = useState<string | null>(null);
 
   useEffect(() => {
@@ -800,6 +803,12 @@ export default function FamilyTreeInspector() {
       firstRef.current?.focus();
     }
   }, [selectedNode?.id]);
+
+  useEffect(() => {
+    if (selectedNode && (selectedNode.data as { kind?: string }).kind === "union") {
+      setUnionNameDraft((selectedNode.data as UnionNodeData).name ?? "");
+    }
+  }, [selectedNode?.id, (selectedNode?.data as UnionNodeData)?.name]);
 
   const saveNameParts = () => {
     if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
@@ -1255,6 +1264,23 @@ export default function FamilyTreeInspector() {
                 Set as Main Graph
               </button>
             )}
+          </div>
+          <div className="mb-4">
+            <label className="block text-dark-muted text-sm mb-2">Name</label>
+            <input
+              ref={unionNameRef}
+              type="text"
+              value={unionNameDraft}
+              onChange={(e) => setUnionNameDraft(e.target.value)}
+              onBlur={() => setUnionName(selectedNode.id, unionNameDraft)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setUnionName(selectedNode.id, unionNameDraft);
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
+            />
           </div>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Partners</label>

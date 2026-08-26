@@ -73,6 +73,18 @@ interface NeuronStore {
   getMirrorMeta: (mirrorKey: string) => NeuronMirrorMeta;
 }
 
+let saveDebounce: ReturnType<typeof setTimeout> | null = null;
+const SAVE_DEBOUNCE_MS = 500;
+let prevSnapshot: string | null = null;
+
+function storeSnapshot(state: NeuronStore): string {
+  return JSON.stringify({
+    folders: state.folders,
+    documents: state.documents,
+    mirrorMeta: state.mirrorMeta,
+  });
+}
+
 function sortByOrder<T extends { sortOrder: number }>(items: T[]): T[] {
   return [...items].sort((a, b) => a.sortOrder - b.sortOrder);
 }
@@ -333,3 +345,20 @@ export const useNeuronStore = create<NeuronStore>((set, get) => ({
 }));
 
 export { sortByOrder };
+
+useNeuronStore.subscribe((state) => {
+  const snapshot = storeSnapshot(state);
+  const changed = snapshot !== prevSnapshot;
+  prevSnapshot = snapshot;
+
+  if (changed && state.activeProjectId && state.hasUnsavedChanges) {
+    if (saveDebounce) clearTimeout(saveDebounce);
+    saveDebounce = setTimeout(() => {
+      const s = useNeuronStore.getState();
+      if (s.activeProjectId && s.hasUnsavedChanges) {
+        void s.saveProject();
+      }
+      saveDebounce = null;
+    }, SAVE_DEBOUNCE_MS);
+  }
+});

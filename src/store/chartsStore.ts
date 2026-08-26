@@ -112,8 +112,6 @@ export interface ChartLayoutTemplate {
 
 export type ChartLayoutMode = "fill" | "edit" | "createLayout";
 
-export type ScriptPanelLayout = "split" | "codeOnly" | "viewOnly";
-
 export type ChartSectionLayoutMode = "list" | "grid";
 
 interface ChartsStore {
@@ -129,7 +127,6 @@ interface ChartsStore {
   createLayoutDraftSections: ProfileSection[];
   createLayoutDraftDataTypes: CustomDataType[];
   createLayoutDraftBuiltinDataTypes: string[];
-  scriptPanelLayout: ScriptPanelLayout;
   chartSectionLayoutMode: ChartSectionLayoutMode;
   setChartSectionLayoutMode: (mode: ChartSectionLayoutMode) => void;
   setActiveProject: (projectId: string | null) => void;
@@ -142,7 +139,6 @@ interface ChartsStore {
   setCreateLayoutDraftSections: (sections: ProfileSection[]) => void;
   setCreateLayoutDraftDataTypes: (types: CustomDataType[]) => void;
   setCreateLayoutDraftBuiltinDataTypes: (lines: string[]) => void;
-  setScriptPanelLayout: (layout: ScriptPanelLayout) => void;
   loadCharacters: (projectId: string) => void;
   addCharacter: (projectId: string, name?: string) => string;
   removeCharacter: (projectId: string, characterId: string) => void;
@@ -930,7 +926,6 @@ export const useChartsStore = create<ChartsStore>(
     createLayoutDraftSections: [],
     createLayoutDraftDataTypes: [],
     createLayoutDraftBuiltinDataTypes: [],
-    scriptPanelLayout: "split" as ScriptPanelLayout,
     chartSectionLayoutMode: "list" as ChartSectionLayoutMode,
 
     setSelectedCharacter: (characterId, shiftKey) => {
@@ -1056,10 +1051,6 @@ export const useChartsStore = create<ChartsStore>(
       set({ createLayoutDraftBuiltinDataTypes: lines, createLayoutDirty: true });
     },
 
-    setScriptPanelLayout: (layout) => {
-      set({ scriptPanelLayout: layout });
-    },
-
     setChartSectionLayoutMode: (mode) => {
       const projectId = get().activeProjectId;
       if (projectId) saveChartSectionLayoutMode(projectId, mode);
@@ -1114,15 +1105,15 @@ export const useChartsStore = create<ChartsStore>(
     addCharacter: (projectId, name) => {
       const existing = loadFromStorage(projectId);
       const defaultName = (() => {
-        const re = /^New Character\s+(\d+)$/i;
+        const re = /^Chart\s+(\d+)$/i;
         let maxN = 0;
         for (const c of existing) {
           const m = c.name.trim().match(re);
           if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
         }
-        return `New Character ${maxN + 1}`;
+        return `Chart ${maxN + 1}`;
       })();
-      const finalName = (name?.trim() && name !== "New Character") ? name.trim() : defaultName;
+      const finalName = (name?.trim() && name !== "Chart") ? name.trim() : defaultName;
       const id = generateId();
       const entity: CharacterEntity = { id, name: finalName, sections: [], linkedTemplateId: null };
       const chars = [...existing, entity];
@@ -1170,7 +1161,7 @@ export const useChartsStore = create<ChartsStore>(
     },
 
     updateCharacterName: (projectId, characterId, name) => {
-      const trimmed = name.trim() || "New Character";
+      const trimmed = name.trim() || "Chart";
       const existing = loadFromStorage(projectId);
       const chars = existing.map((c) =>
         c.id === characterId ? { ...c, name: trimmed } : c

@@ -31,12 +31,12 @@ export default function ChartsEntitiesPanel() {
     e.preventDefault();
     e.stopPropagation();
     setEditingCharacterId(characterId);
-    setDraftName(currentName || "New Chart");
+    setDraftName(currentName || "Chart");
   };
 
   const saveEdit = (characterId: string) => {
     if (!projectId) return;
-    const trimmed = draftName.trim() || "New Chart";
+    const trimmed = draftName.trim() || "Chart";
     updateCharacterName(projectId, characterId, trimmed);
     setEditingCharacterId(null);
   };

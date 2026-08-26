@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData, FamilyGroup } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings, findFamilyForNode, getUnionFamilyMemberIds, getFamilyVisibleNodeIds } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings, findFamilyForNode, getUnionFamilyMemberIds, getFamilyVisibleNodeIds, computeAnchorBlockedUnionIds } from "../../store/familyTreeStore";
 import {
   getDocumentsForFamily,
   getDocumentRefsForNode,
@@ -188,6 +188,7 @@ export default function FamilyTreeLeftSidebar({
   const documents = useFamilyTreeStore((s) => s.documents);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const setSelectionWithPrimary = useFamilyTreeStore((s) => s.setSelectionWithPrimary);
   const updateNodeName = useFamilyTreeStore((s) => s.updateNodeName);
   const families = useFamilyTreeStore((s) => s.families);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
@@ -207,6 +208,7 @@ export default function FamilyTreeLeftSidebar({
   const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
   const setPlacementTargetId = useFamilyTreeStore((s) => s.setPlacementTargetId);
   const createFamily = useFamilyTreeStore((s) => s.createFamily);
+  const moveNodesToFamily = useFamilyTreeStore((s) => s.moveNodesToFamily);
   const deleteFocus = useFamilyTreeStore((s) => s.deleteFocus);
   const pendingDeleteConfirm = useFamilyTreeStore((s) => s.pendingDeleteConfirm);
   const requestDeleteSelection = useFamilyTreeStore((s) => s.requestDeleteSelection);
@@ -219,7 +221,18 @@ export default function FamilyTreeLeftSidebar({
   const [transferConfirm, setTransferConfirm] = useState<{
     unionIds: string[];
     sourceFamilyId: string;
+    restrictPersonIds: string[] | null;
+    kind: "partial" | "lone";
   } | null>(null);
+  const [createEmptyInstead, setCreateEmptyInstead] = useState(false);
+  const [transferMemberError, setTransferMemberError] = useState(false);
+  const [anchorBlockConfirm, setAnchorBlockConfirm] = useState<{
+    reducedUnionIds: string[];
+    sourceFamilyId: string;
+    restrictPersonIds: string[] | null;
+  } | null>(null);
+  const pendingAnchorTransferWarning = useFamilyTreeStore((s) => s.pendingAnchorTransferWarning);
+  const resolveAnchorTransferWarning = useFamilyTreeStore((s) => s.resolveAnchorTransferWarning);
   const [lastEntityClickedId, setLastEntityClickedId] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
   const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
@@ -377,6 +390,39 @@ export default function FamilyTreeLeftSidebar({
     )?.unionId ?? null;
 
   const expandUnion = (uid: string) => [uid, ...getUnionFamilyMemberIds(uid, nodes, edges)];
+
+  const resolveTransferPersonRestriction = (
+    unionIds: string[]
+  ): { restrictPersonIds: string[] | null; error: boolean } => {
+    if (subEntitySelectionMode === "union") {
+      return { restrictPersonIds: null, error: false };
+    }
+    const memberIds = new Set<string>();
+    for (const uid of unionIds) {
+      for (const pid of getUnionFamilyMemberIds(uid, nodes, edges)) {
+        memberIds.add(pid);
+      }
+    }
+    const selectedMembers = [...memberIds].filter((pid) => selectedNodeIds.includes(pid));
+    if (selectedMembers.length === 0) {
+      return { restrictPersonIds: null, error: true };
+    }
+    return { restrictPersonIds: selectedMembers, error: false };
+  };
+
+  const unassignedUnionSelectionIds = (unionId: string) => {
+    const memberIds = getUnionFamilyMemberIds(unionId, nodes, edges).filter((pid) => {
+      const p = nodes.find((n) => n.id === pid);
+      return !(p?.data as PersonNodeData)?.anchored;
+    });
+    return [unionId, ...memberIds];
+  };
+
+  const isSameSelectionSet = (a: string[], b: string[]) => {
+    if (a.length !== b.length) return false;
+    const setA = new Set(a);
+    return b.every((id) => setA.has(id));
+  };
 
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
@@ -563,7 +609,7 @@ export default function FamilyTreeLeftSidebar({
       const p = nodes.find((n) => n.id === pid);
       return !(p?.data as PersonNodeData)?.anchored;
     });
-    setSelectedNodeIds([unionId, ...memberIds]);
+    setSelectionWithPrimary([unionId, ...memberIds], unionId);
     setLastEntityClickedId(unionId);
     onSelectNode?.();
   };
@@ -575,6 +621,33 @@ export default function FamilyTreeLeftSidebar({
     setLastEntityClickedId(id);
     onSelectNode?.();
   };
+
+  const proceedWithUnionTransfer = (
+    unionIds: string[],
+    sourceFamilyId: string,
+    restrictPersonIds: string[] | null = null
+  ) => {
+    const contextFamily = families.find((f) => f.id === sourceFamilyId);
+    if (!contextFamily || unionIds.length === 0) {
+      createFamily();
+      return;
+    }
+    const analysis = computeFamilyClusterAnalysis(contextFamily, nodes, edges);
+    const allUnassigned = analysis.unassignedUnionIds;
+    const isPartial =
+      unionIds.length < allUnassigned.length &&
+      unionIds.every((id) => allUnassigned.includes(id));
+    setTransferConfirm({
+      unionIds,
+      sourceFamilyId,
+      restrictPersonIds,
+      kind: isPartial ? "partial" : "lone",
+    });
+  };
+
+  useEffect(() => {
+    if (transferConfirm) setCreateEmptyInstead(false);
+  }, [transferConfirm]);
 
   const handleAddFamily = () => {
     const contextFamily =
@@ -590,16 +663,37 @@ export default function FamilyTreeLeftSidebar({
       return isUnionClusterUnassigned(id, contextFamily, nodes, edges);
     });
     if (selectedUnions.length > 0 && contextFamily) {
-      const analysis = computeFamilyClusterAnalysis(contextFamily, nodes, edges);
-      const allUnassigned = analysis.unassignedUnionIds;
-      const isPartial =
-        selectedUnions.length < allUnassigned.length &&
-        selectedUnions.every((id) => allUnassigned.includes(id));
-      if (isPartial) {
-        setTransferConfirm({ unionIds: selectedUnions, sourceFamilyId: contextFamily.id });
+      const { restrictPersonIds, error } = resolveTransferPersonRestriction(selectedUnions);
+      if (error) {
+        setTransferMemberError(true);
         return;
       }
-      transferUnionsToNewFamily(selectedUnions, contextFamily.id);
+      const { blockedUnionIds, reducedUnionIds } = computeAnchorBlockedUnionIds(
+        selectedUnions,
+        nodes,
+        edges
+      );
+      if (blockedUnionIds.length > 0) {
+        setAnchorBlockConfirm({
+          reducedUnionIds,
+          sourceFamilyId: contextFamily.id,
+          restrictPersonIds,
+        });
+        return;
+      }
+      proceedWithUnionTransfer(selectedUnions, contextFamily.id, restrictPersonIds);
+      return;
+    }
+    const selectedPersons = selectedNodeIds.filter((id) => {
+      const n = nodes.find((nn) => nn.id === id);
+      if (!n || (n.data as { kind?: string }).kind !== "person") return false;
+      if (!contextFamily) return false;
+      const analysis = computeFamilyClusterAnalysis(contextFamily, nodes, edges);
+      return analysis.unionlessPersonIds.includes(id);
+    });
+    if (selectedPersons.length > 0 && contextFamily) {
+      const newFamilyId = createFamily();
+      moveNodesToFamily(selectedPersons, newFamilyId);
       return;
     }
     createFamily();
@@ -607,12 +701,22 @@ export default function FamilyTreeLeftSidebar({
 
   const handleUnassignedClick = (e: React.MouseEvent, id: string) => {
     if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      const node = nodes.find((n) => n.id === id);
+      const isUnion = node?.type === "union";
+      const selectionIds = isUnion ? unassignedUnionSelectionIds(id) : [id];
+
       if (placementTargetId === id) {
         setPlacementTargetId(null);
         return;
       }
-      setPlacementTargetId(id);
-      setSelectedNodeIds([id]);
+      const isSoleSelection = isSameSelectionSet(selectedNodeIds, selectionIds);
+      if (isSoleSelection) {
+        setPlacementTargetId(id);
+        return;
+      }
+      if (placementTargetId) setPlacementTargetId(null);
+      setSelectedNodeIds(selectionIds);
+      setLastEntityClickedId(id);
       onSelectNode?.();
       return;
     }
@@ -902,6 +1006,43 @@ export default function FamilyTreeLeftSidebar({
           +
         </button>
       </div>
+      {placementTargetId != null && (() => {
+        const armedNode = nodes.find((n) => n.id === placementTargetId);
+        const armedKind = (armedNode?.data as { kind?: string })?.kind ?? "person";
+        const armedName = armedNode
+          ? getDisplayName(nodes, placementTargetId, armedKind === "union" ? "union" : "person")
+          : placementTargetId;
+        const ownerFamily = findFamilyForNode(placementTargetId, families);
+        const isCrossFamily =
+          ownerFamily != null &&
+          activeFamilyTabId != null &&
+          ownerFamily.id !== activeFamilyTabId;
+        const targetFamilyName = activeFamily?.name ?? "active family";
+        const hint = isCrossFamily
+          ? `Click canvas to move into ${targetFamilyName}`
+          : "Click canvas to place";
+        return (
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-amber-500/30 bg-amber-500/10 flex-shrink-0">
+            <span className="text-[10px] text-amber-400 font-medium uppercase tracking-wide flex-shrink-0">
+              Placing
+            </span>
+            <span className="text-xs text-dark-text truncate flex-1 min-w-0" title={armedName}>
+              {armedName}
+            </span>
+            <span className="text-[10px] text-dark-muted truncate flex-shrink-0 max-w-[45%]" title={hint}>
+              {hint}
+            </span>
+            <button
+              type="button"
+              title="Cancel placement"
+              onClick={() => setPlacementTargetId(null)}
+              className="flex-shrink-0 w-5 h-5 rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/40 text-sm leading-none"
+            >
+              ×
+            </button>
+          </div>
+        );
+      })()}
       <div className="flex-1 min-h-0 flex flex-col">
         <div
           className="flex-1 overflow-y-auto p-2"
@@ -1149,11 +1290,13 @@ export default function FamilyTreeLeftSidebar({
                                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(leftId, "hover:bg-dark-accent/30")}`}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <span
-                                  onDoubleClick={(e) => startEditingPerson(e, leftId, leftName)}
-                                  className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1"
-                                >
-                                  {leftName}
+                                <span className="flex-1 min-w-0 overflow-hidden">
+                                  <span
+                                    onDoubleClick={(e) => startEditingPerson(e, leftId, leftName)}
+                                    className="text-dark-text text-sm inline-block max-w-full align-middle overflow-hidden text-ellipsis whitespace-nowrap"
+                                  >
+                                    {leftName}
+                                  </span>
                                 </span>
                                 <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={leftId} nodes={nodes} />
@@ -1191,11 +1334,13 @@ export default function FamilyTreeLeftSidebar({
                                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(rightId, "hover:bg-dark-accent/30")}`}
                               >
                                 <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <span
-                                  onDoubleClick={(e) => startEditingPerson(e, rightId, rightName)}
-                                  className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1"
-                                >
-                                  {rightName}
+                                <span className="flex-1 min-w-0 overflow-hidden">
+                                  <span
+                                    onDoubleClick={(e) => startEditingPerson(e, rightId, rightName)}
+                                    className="text-dark-text text-sm inline-block max-w-full align-middle overflow-hidden text-ellipsis whitespace-nowrap"
+                                  >
+                                    {rightName}
+                                  </span>
                                 </span>
                                 <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={rightId} nodes={nodes} />
@@ -1242,11 +1387,13 @@ export default function FamilyTreeLeftSidebar({
                                           className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left pl-6 min-w-0 ${personRowSelectedClass(childId, "hover:bg-dark-accent/30")}`}
                                         >
                                           <div className="w-5 h-5 rounded-full bg-dark-accent/70 flex-shrink-0" />
-                                          <span
-                                            onDoubleClick={(e) => startEditingPerson(e, childId, name)}
-                                            className="text-dark-text text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap flex-1"
-                                          >
-                                            {name}
+                                          <span className="flex-1 min-w-0 overflow-hidden">
+                                            <span
+                                              onDoubleClick={(e) => startEditingPerson(e, childId, name)}
+                                              className="text-dark-text text-sm inline-block max-w-full align-middle overflow-hidden text-ellipsis whitespace-nowrap"
+                                            >
+                                              {name}
+                                            </span>
                                           </span>
                                           <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                           <AnchorDot personId={childId} nodes={nodes} />
@@ -1328,15 +1475,17 @@ export default function FamilyTreeLeftSidebar({
                           >
                             <div className={`w-6 h-6 rounded-full flex-shrink-0 ${isPerson ? "bg-dark-accent" : "bg-dark-accent/60"}`} />
                             <div className="flex-1 min-w-0">
-                              <span
-                                onDoubleClick={
-                                  isPerson
-                                    ? (e) => startEditingPerson(e, node.id, name)
-                                    : undefined
-                                }
-                                className="text-dark-text text-sm block overflow-hidden text-ellipsis whitespace-nowrap"
-                              >
-                                {name}
+                              <span className="block overflow-hidden">
+                                <span
+                                  onDoubleClick={
+                                    isPerson
+                                      ? (e) => startEditingPerson(e, node.id, name)
+                                      : undefined
+                                  }
+                                  className="text-dark-text text-sm inline-block max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
+                                >
+                                  {name}
+                                </span>
                               </span>
                               <span className="text-[10px] text-dark-muted block truncate">
                                 {node.id}
@@ -1431,10 +1580,23 @@ export default function FamilyTreeLeftSidebar({
           <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
             <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
               <p className="text-sm text-dark-text mb-3">
-                Moving {transferConfirm.unionIds.length} union
-                {transferConfirm.unionIds.length === 1 ? "" : "s"} to a new family will break
-                connections between selected and unselected unions in this tab. Continue?
+                {transferConfirm.kind === "partial"
+                  ? `Moving ${transferConfirm.unionIds.length} union${
+                      transferConfirm.unionIds.length === 1 ? "" : "s"
+                    } to a new family will break connections between selected and unselected unions in this tab. Continue?`
+                  : `Move ${transferConfirm.unionIds.length} lone union${
+                      transferConfirm.unionIds.length === 1 ? "" : "s"
+                    } to a new family?`}
               </p>
+              <label className="flex items-start gap-2 text-sm text-dark-text mb-4 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={createEmptyInstead}
+                  onChange={(e) => setCreateEmptyInstead(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>Do not move selected unions; create new empty family tab</span>
+              </label>
               <div className="flex justify-end gap-2">
                 <Button variant="secondary" size="sm" onClick={() => setTransferConfirm(null)}>
                   Cancel
@@ -1443,14 +1605,97 @@ export default function FamilyTreeLeftSidebar({
                   variant="primary"
                   size="sm"
                   onClick={() => {
-                    transferUnionsToNewFamily(
-                      transferConfirm.unionIds,
-                      transferConfirm.sourceFamilyId
-                    );
+                    if (createEmptyInstead) {
+                      createFamily();
+                    } else {
+                      transferUnionsToNewFamily(
+                        transferConfirm.unionIds,
+                        transferConfirm.sourceFamilyId,
+                        transferConfirm.restrictPersonIds
+                      );
+                    }
                     setTransferConfirm(null);
                   }}
                 >
-                  Move to new family
+                  {createEmptyInstead ? "Create new family" : "Move to new family"}
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {transferMemberError &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
+            <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
+              <p className="text-sm text-dark-text mb-4">
+                At least one union member must be selected to qualify for transfer
+              </p>
+              <div className="flex justify-end">
+                <Button variant="primary" size="sm" onClick={() => setTransferMemberError(false)}>
+                  OK
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {anchorBlockConfirm &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
+            <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
+              <p className="text-sm text-dark-text mb-3">
+                The current selection contains an anchored node; it, its partner, and children will
+                not be transferred.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setAnchorBlockConfirm(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    proceedWithUnionTransfer(
+                      anchorBlockConfirm.reducedUnionIds,
+                      anchorBlockConfirm.sourceFamilyId,
+                      anchorBlockConfirm.restrictPersonIds
+                    );
+                    setAnchorBlockConfirm(null);
+                  }}
+                >
+                  Proceed
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {pendingAnchorTransferWarning &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50">
+            <div className="bg-dark-surface rounded-lg border border-dark-accent p-4 max-w-sm mx-4 shadow-lg">
+              <p className="text-sm text-dark-text mb-3">
+                The current selection contains an anchored node; it, its partner, and children will
+                not be transferred.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => resolveAnchorTransferWarning("cancel")}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => resolveAnchorTransferWarning("proceed")}
+                >
+                  Proceed
                 </Button>
               </div>
             </div>

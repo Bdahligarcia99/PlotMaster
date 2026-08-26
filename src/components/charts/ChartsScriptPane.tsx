@@ -58,10 +58,6 @@ export default function ChartsScriptPane() {
   const createLayoutDraftDataTypes = useChartsStore(
     (s) => s.createLayoutDraftDataTypes
   );
-  const scriptPanelLayout = useChartsStore((s) => s.scriptPanelLayout);
-  const setScriptPanelLayout = useChartsStore(
-    (s) => s.setScriptPanelLayout
-  );
   const applyProfilesFromScript = useChartsStore(
     (s) => s.applyProfilesFromScript
   );
@@ -121,9 +117,8 @@ export default function ChartsScriptPane() {
   }, [generatedScript, editorDirty]);
 
   const handleCopy = async () => {
-    const text = scriptPanelLayout === "viewOnly" ? generatedScript : editorContent;
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(editorContent);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -249,33 +244,11 @@ export default function ChartsScriptPane() {
     setParseError(null);
   };
 
-  const showCode = scriptPanelLayout === "split" || scriptPanelLayout === "codeOnly";
-  const showView = scriptPanelLayout === "split" || scriptPanelLayout === "viewOnly";
-
   // Working mode: can edit/run when createLayout, or a character is selected, or no characters yet (bootstrap)
   const hasWorkingMode =
     chartLayoutMode === "createLayout" ||
     selectedCharacterId != null ||
     characters.length === 0;
-
-  // View has content only when we have a selection to show
-  const hasViewContent =
-    (chartLayoutMode === "createLayout" && (createLayoutDraftSections?.length ?? 0) > 0) ||
-    (chartLayoutMode !== "createLayout" && selectedCharacterId != null && characters.some((c) => c.id === selectedCharacterId));
-
-  const layoutBtn = (mode: "split" | "codeOnly" | "viewOnly", label: string) => (
-    <button
-      type="button"
-      onClick={() => setScriptPanelLayout(mode)}
-      className={`px-2 py-1 text-xs rounded border transition-colors ${
-        scriptPanelLayout === mode
-          ? "bg-dark-accent border-dark-accent text-dark-text"
-          : "border-dark-accent/50 text-dark-muted hover:text-dark-text hover:border-dark-accent"
-      }`}
-    >
-      {label}
-    </button>
-  );
 
   return (
     <div className="h-full flex flex-col border-t border-dark-accent/50 bg-dark-surface">
@@ -285,27 +258,20 @@ export default function ChartsScriptPane() {
             Script
           </span>
           <span className="text-dark-accent/50">|</span>
-          <span className="text-xs text-dark-muted">Layout:</span>
-          {layoutBtn("split", "Split")}
-          {layoutBtn("codeOnly", "Code")}
-          {layoutBtn("viewOnly", "View")}
+          <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">
+            Code
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          {showCode ? (
-            hasWorkingMode && (
-              <button
-                type="button"
-                onClick={handleRun}
-                className="px-2 py-1 text-xs rounded border border-green-500/50 bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
-                title="Apply script (Ctrl/Cmd+Enter)"
-              >
-                {runSuccess ? "Applied!" : "Run"}
-              </button>
-            )
-          ) : (
-            <span className="text-xs text-dark-muted italic" title="Switch to Split or Code to edit and run the script">
-              Switch to Split or Code to edit and run
-            </span>
+          {hasWorkingMode && (
+            <button
+              type="button"
+              onClick={handleRun}
+              className="px-2 py-1 text-xs rounded border border-green-500/50 bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
+              title="Apply script (Ctrl/Cmd+Enter)"
+            >
+              {runSuccess ? "Applied!" : "Run"}
+            </button>
           )}
           <label className="flex items-center gap-1.5 text-xs text-dark-muted cursor-pointer">
             <input
@@ -325,73 +291,30 @@ export default function ChartsScriptPane() {
           </button>
         </div>
       </div>
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        <div
-          className={`flex flex-col min-w-0 ${
-            scriptPanelLayout === "split" ? "border-r border-dark-accent/50" : ""
-          } ${showCode ? "flex-1" : "hidden"}`}
-        >
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
-            <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">
-              Code
-            </span>
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        {parseError && (
+          <div className="px-3 py-2 bg-red-500/15 border-b border-red-500/30 shrink-0" role="alert">
+            <span className="text-xs text-red-400 block">{parseError}</span>
           </div>
-          {parseError && (
-            <div className="px-3 py-2 bg-red-500/15 border-b border-red-500/30 shrink-0" role="alert">
-              <span className="text-xs text-red-400 block">{parseError}</span>
+        )}
+        <div className="flex-1 overflow-hidden p-3">
+          {hasWorkingMode ? (
+            <textarea
+              ref={textareaRef}
+              value={editorContent}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
+              spellCheck={false}
+              placeholder="@charts&#10;&#10;[CharacterName] {&#10;  h1 &quot;Section&quot;&#10;    note &quot;...&quot;&#10;}"
+            />
+          ) : (
+            <div className="w-full h-full px-3 py-2 bg-dark-bg/50 border border-dark-accent/50 rounded-lg flex items-center justify-center text-center">
+              <p className="text-sm text-dark-muted">
+                Select a character from the Entities panel or create a new layout to use the script editor.
+              </p>
             </div>
           )}
-          <div className="flex-1 overflow-hidden p-3">
-            {hasWorkingMode ? (
-              <textarea
-                ref={textareaRef}
-                value={editorContent}
-                onChange={handleChange}
-                onKeyDown={handleKeyDown}
-                className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
-                spellCheck={false}
-                placeholder="@charts&#10;&#10;[CharacterName] {&#10;  h1 &quot;Section&quot;&#10;    note &quot;...&quot;&#10;}"
-              />
-            ) : (
-              <div className="w-full h-full px-3 py-2 bg-dark-bg/50 border border-dark-accent/50 rounded-lg flex items-center justify-center text-center">
-                <p className="text-sm text-dark-muted">
-                  Select a character from the Entities panel or create a new layout to use the script editor.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {scriptPanelLayout === "split" && (
-          <div className="w-px shrink-0 bg-dark-accent/50" aria-hidden />
-        )}
-
-        <div
-          className={`flex flex-col min-w-0 ${showView ? "flex-1" : "hidden"}`}
-        >
-          <div className="flex justify-between items-center gap-2 px-3 py-1.5 border-b border-dark-accent/30 shrink-0">
-            <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">
-              View
-            </span>
-          </div>
-          <div className="flex-1 overflow-hidden p-3">
-            {hasViewContent ? (
-              <textarea
-                value={generatedScript}
-                readOnly
-                className="w-full h-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-muted text-sm font-mono resize-none focus:outline-none focus:border-blue-500"
-                spellCheck={false}
-              />
-            ) : (
-              <div className="w-full h-full px-3 py-2 bg-dark-bg/30 border border-dark-accent/30 rounded-lg flex items-center justify-center">
-                <p className="text-xs text-dark-muted">
-                  {chartLayoutMode === "createLayout"
-                    ? "Add sections to the layout to see the generated script"
-                    : "Select a character to view its script"}
-                </p>
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>

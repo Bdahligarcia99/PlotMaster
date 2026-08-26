@@ -21,6 +21,9 @@ import NeuronEditorWorkspace, {
 } from "../components/neuron/NeuronEditorWorkspace";
 import NeuronInspector, { type NeuronSelectionTarget } from "../components/neuron/NeuronInspector";
 import NeuronSaveControls from "../components/neuron/NeuronSaveControls";
+import { DEFAULT_BEAT_TEXT_SCALE_PERCENT } from "../store/timelineTypes";
+
+const UNIFORM_PANE_WIDTH_DEFAULT_PX = 420;
 
 export default function NeuronScreen() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -46,6 +49,17 @@ export default function NeuronScreen() {
   const [activePaneId, setActivePaneId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<NeuronDrafts>({});
   const [inspectorSelection, setInspectorSelection] = useState<NeuronSelectionTarget | null>(null);
+  const [unifiedScroll, setUnifiedScroll] = useState(false);
+  const [unifiedSelectionIds, setUnifiedSelectionIds] = useState<string[]>([]);
+  const [paneFractions, setPaneFractions] = useState<number[]>([]);
+  const [uniformPaneWidth, setUniformPaneWidth] = useState(false);
+  const [uniformPaneWidthPx, setUniformPaneWidthPx] = useState(UNIFORM_PANE_WIDTH_DEFAULT_PX);
+  const [sideBySideTextScalePercent, setSideBySideTextScalePercent] = useState(
+    DEFAULT_BEAT_TEXT_SCALE_PERCENT
+  );
+  const [unifiedTextScalePercent, setUnifiedTextScalePercent] = useState(
+    DEFAULT_BEAT_TEXT_SCALE_PERCENT
+  );
 
   const ownerContext = useMemo(() => {
     if (!projectId) return null;
@@ -53,6 +67,18 @@ export default function NeuronScreen() {
   }, [projectId]);
 
   const subProjects = ownerContext?.subProjects ?? {};
+
+  const activeTextScalePercent = unifiedScroll
+    ? unifiedTextScalePercent
+    : sideBySideTextScalePercent;
+
+  const handleTextScalePercentChange = useCallback(
+    (pct: number) => {
+      if (unifiedScroll) setUnifiedTextScalePercent(pct);
+      else setSideBySideTextScalePercent(pct);
+    },
+    [unifiedScroll]
+  );
 
   useWindowTitle(projectName ? `${projectName} - Synapse IWE` : "Synapse IWE");
 
@@ -83,29 +109,48 @@ export default function NeuronScreen() {
     return () => window.removeEventListener("focus", onFocus);
   }, [loadMirrors]);
 
-  const openPane = useCallback((ref: NeuronPaneRef) => {
-    const id = paneIdFromRef(ref);
-    setPanes((prev) => {
-      if (prev.some((p) => p.id === id)) return prev;
-      return [...prev, { id, ref }];
-    });
-    setActivePaneId(id);
-  }, []);
+  const openPane = useCallback(
+    (ref: NeuronPaneRef) => {
+      const id = paneIdFromRef(ref);
+      const existingPane = panes.find((p) => p.id === id);
+
+      if (existingPane && existingPane.id === activePaneId) {
+        return;
+      }
+
+      if (existingPane) {
+        setActivePaneId(existingPane.id);
+        return;
+      }
+
+      if (activePaneId) {
+        setPanes((prev) => prev.map((p) => (p.id === activePaneId ? { id, ref } : p)));
+        setActivePaneId(id);
+        return;
+      }
+
+      setPanes((prev) => [...prev, { id, ref }]);
+      setActivePaneId(id);
+    },
+    [panes, activePaneId]
+  );
 
   const closePane = useCallback(
     (paneId: string) => {
-      setPanes((prev) => prev.filter((p) => p.id !== paneId));
+      setPanes((prev) => {
+        const next = prev.filter((p) => p.id !== paneId);
+        if (activePaneId === paneId) {
+          setActivePaneId(next[0]?.id ?? null);
+        }
+        return next;
+      });
       setDrafts((prev) => {
         const next = { ...prev };
         delete next[paneId];
         return next;
       });
-      if (activePaneId === paneId) {
-        const remaining = panes.filter((p) => p.id !== paneId);
-        setActivePaneId(remaining[0]?.id ?? null);
-      }
     },
-    [activePaneId, panes]
+    [activePaneId]
   );
 
   const handleDraftChange = useCallback((paneId: string, content: string, dirty = true) => {
@@ -228,23 +273,12 @@ export default function NeuronScreen() {
             )}
             <DisplayModeDropdown activeMode="text" supportedModes={["text"]} onSelect={() => {}} />
             {Object.keys(subProjects).length > 0 && (
-              <ModuleSwitcherNavbar
-                currentProjectId={projectId}
-                currentModuleType="Neuron"
-              />
+              <ModuleSwitcherNavbar currentProjectId={projectId} currentModuleType="Neuron" />
             )}
           </div>
         }
         right={
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void loadMirrors()}
-              className="px-2 py-1.5 rounded-lg border border-dark-accent text-xs text-dark-muted hover:text-dark-text"
-              title="Refresh module mirrors"
-            >
-              Refresh
-            </button>
             <NeuronSaveControls />
             <div className="h-4 w-px bg-dark-accent" />
             <button
@@ -259,13 +293,21 @@ export default function NeuronScreen() {
             </button>
             <button
               onClick={() => setInspectorOpen((v) => !v)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              className={`px-3 py-1.5 rounded-lg border transition-colors flex items-center ${
                 inspectorOpen
                   ? "bg-dark-accent border-dark-accent text-dark-text"
                   : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
               }`}
+              title={inspectorOpen ? "Hide Inspector" : "Show Inspector"}
             >
-              Inspector
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
             </button>
           </div>
         }
@@ -277,20 +319,36 @@ export default function NeuronScreen() {
             <NeuronEntitiesPanel
               subProjects={subProjects}
               activePaneId={activePaneId}
+              unifiedSelectionIds={unifiedSelectionIds}
               dirtyPaneIds={dirtyPaneIds}
               onOpenPane={openPane}
+              onUnifiedSelectionChange={setUnifiedSelectionIds}
               onSelectForInspector={setInspectorSelection}
+              onRequestInspectorOpen={() => setInspectorOpen(true)}
             />
           </div>
         )}
 
         <NeuronEditorWorkspace
+          subProjects={subProjects}
           panes={panes}
           activePaneId={activePaneId}
+          unifiedScroll={unifiedScroll}
+          onUnifiedScrollChange={setUnifiedScroll}
+          unifiedSelectionIds={unifiedSelectionIds}
           drafts={drafts}
           onDraftChange={handleDraftChange}
           onActivePaneChange={setActivePaneId}
           onClosePane={closePane}
+          onPanesChange={setPanes}
+          paneFractions={paneFractions}
+          onPaneFractionsChange={setPaneFractions}
+          uniformPaneWidth={uniformPaneWidth}
+          onUniformPaneWidthChange={setUniformPaneWidth}
+          uniformPaneWidthPx={uniformPaneWidthPx}
+          onUniformPaneWidthPxChange={setUniformPaneWidthPx}
+          textScalePercent={activeTextScalePercent}
+          onTextScalePercentChange={handleTextScalePercentChange}
         />
 
         {inspectorOpen && (

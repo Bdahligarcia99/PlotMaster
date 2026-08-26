@@ -272,6 +272,7 @@ function MarqueeOverlay({ isSpacePanning }: { isSpacePanning: boolean }) {
   const nodes = useFamilyTreeStore((s) => s.nodes);
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
 
   const [drag, setDrag] = useState<{
     startFlow: { x: number; y: number };
@@ -413,6 +414,7 @@ function MarqueeOverlay({ isSpacePanning }: { isSpacePanning: boolean }) {
   const rect = domNode.getBoundingClientRect();
 
   if (isSpacePanning) return null;
+  if (placementTargetId) return null;
 
   return (
     <div
@@ -490,6 +492,7 @@ export default function FamilyTreeCanvas({
   const setNodes = useFamilyTreeStore((s) => s.setNodes);
   const setEdges = useFamilyTreeStore((s) => s.setEdges);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
+  const setSelectionWithPrimary = useFamilyTreeStore((s) => s.setSelectionWithPrimary);
   const selectedNodeIds = useFamilyTreeStore((s) => s.selectedNodeIds);
   const deleteFocus = useFamilyTreeStore((s) => s.deleteFocus);
   const snapToGrid = useFamilyTreeStore((s) => s.snapToGrid);
@@ -503,7 +506,6 @@ export default function FamilyTreeCanvas({
   const setNodeGenArmed = useFamilyTreeStore((s) => s.setNodeGenArmed);
   const setHoveredConnectionInfo = useFamilyTreeStore((s) => s.setHoveredConnectionInfo);
   const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
-  const setPlacementTargetId = useFamilyTreeStore((s) => s.setPlacementTargetId);
   const isolationModeActive = useFamilyTreeStore((s) => s.isolationModeActive);
   const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
   const families = useFamilyTreeStore((s) => s.families);
@@ -860,7 +862,7 @@ export default function FamilyTreeCanvas({
   const onNodeClick: NodeMouseHandler = useCallback(
     (evt, node) => {
       if (placementTargetId) {
-        setPlacementTargetId(null);
+        paneClickRef.current?.(evt as unknown as React.MouseEvent);
         return;
       }
       if (node.data?.kind === "person" && (node.data as { isGenArmed?: boolean }).isGenArmed === false) setNodeGenArmed(node.id);
@@ -877,7 +879,7 @@ export default function FamilyTreeCanvas({
         setSelectedNodeIds([node.id]);
       }
     },
-    [setSelectedNodeIds, setNodeGenArmed, placementTargetId, setPlacementTargetId]
+    [setSelectedNodeIds, setNodeGenArmed, placementTargetId]
   );
 
   const onNodeDoubleClick: NodeMouseHandler = useCallback(
@@ -893,7 +895,7 @@ export default function FamilyTreeCanvas({
             return !(p?.data as PersonNodeData)?.anchored;
           }
         );
-        setSelectedNodeIds([node.id, ...memberIds]);
+        setSelectionWithPrimary([node.id, ...memberIds], node.id);
       } else {
         setSelectedNodeIds([node.id]);
       }
@@ -903,7 +905,7 @@ export default function FamilyTreeCanvas({
         doubleClickIgnoreClearRef.current = false;
       }, 100);
     },
-    [setSelectedNodeIds, onNodeSelectForEdit]
+    [setSelectedNodeIds, setSelectionWithPrimary, onNodeSelectForEdit]
   );
   const onPaneClick = useCallback((e: React.MouseEvent) => {
     paneClickRef.current?.(e);
@@ -921,11 +923,19 @@ export default function FamilyTreeCanvas({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Delete" && e.key !== "Backspace") return;
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
         return;
       }
+      if (e.key === "Escape") {
+        const state = useFamilyTreeStore.getState();
+        if (state.placementTargetId) {
+          e.preventDefault();
+          state.setPlacementTargetId(null);
+        }
+        return;
+      }
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
       const state = useFamilyTreeStore.getState();
       if (
         state.pendingDeleteConfirm ||

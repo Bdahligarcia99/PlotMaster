@@ -18,6 +18,10 @@ export interface FamilyTreeDocumentRecord {
   /** Owning family tab; inferred from content when absent (legacy). */
   familyId?: string | null;
   role?: "main" | "unassigned";
+  /** True when the name was auto-generated from the family tab name + suffix. */
+  autoNamed?: boolean;
+  /** Letter suffix used with auto-naming (e.g. "a", "b"). */
+  nameSuffix?: string;
 }
 
 const LEGACY_PERSON_ID_RE = /#\s*id:\s*(_[a-zA-Z0-9]+)/;
@@ -73,6 +77,31 @@ export function scanDocumentDeclaredIds(content: string): {
     personIds: Array.from(personIds),
     unionIds: Array.from(unionIds),
   };
+}
+
+/** Remove Person/Union declaration blocks whose ids appear in idsToRemove. */
+export function removeDeclarationBlocks(content: string, idsToRemove: Set<string>): string {
+  if (idsToRemove.size === 0) return content;
+  const lines = content.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+    const match = PERSON_DECL_RE.exec(trimmed) ?? UNION_DECL_RE.exec(trimmed);
+    if (match && idsToRemove.has(match[1]!)) {
+      const isCompact = trimmed.includes("{") && trimmed.endsWith("}");
+      i++;
+      if (!isCompact) {
+        while (i < lines.length && lines[i]!.trim() !== "}") i++;
+        if (i < lines.length) i++;
+      }
+      continue;
+    }
+    out.push(line);
+    i++;
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /** Which family tab owns this document. Uses stored familyId when present. */
@@ -314,7 +343,14 @@ export function annotateForeignReferences(
     const trimmed = line.trim();
     const unionMatch = UNION_DECL_RE.exec(trimmed);
     if (unionMatch) {
+      const trimmedIsCompactOneLiner = trimmed.includes("{") && trimmed.endsWith("}");
+      if (trimmedIsCompactOneLiner) {
+        out.push(line);
+        i++;
+        continue;
+      }
       const annotations: string[] = [];
+      const bodyLines: string[] = [];
       i++;
       while (i < lines.length && lines[i]!.trim() !== "}") {
         const inner = lines[i]!.trim();
@@ -330,10 +366,12 @@ export function annotateForeignReferences(
             if (fileName) annotations.push(`# ${name} declared in: ${fileName}`);
           }
         }
+        bodyLines.push(lines[i]!);
         i++;
       }
       for (const ann of [...new Set(annotations)]) out.push(ann);
       out.push(line);
+      out.push(...bodyLines);
       if (i < lines.length) {
         out.push(lines[i]!);
         i++;

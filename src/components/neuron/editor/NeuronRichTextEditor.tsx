@@ -26,6 +26,9 @@ interface NeuronRichTextEditorProps {
   showRuler?: boolean;
   onToggleRuler?: () => void;
   placeholder?: string;
+  hideToolbar?: boolean;
+  onEditorReady?: (editor: import("@tiptap/react").Editor | null) => void;
+  toolbarTrailing?: React.ReactNode;
 }
 
 function parseContent(raw: string): object {
@@ -51,6 +54,9 @@ export default function NeuronRichTextEditor({
   showRuler = true,
   onToggleRuler,
   placeholder = "Start writing…",
+  hideToolbar = false,
+  onEditorReady,
+  toolbarTrailing,
 }: NeuronRichTextEditorProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipUpdateRef = useRef(false);
@@ -150,13 +156,20 @@ export default function NeuronRichTextEditor({
     };
   }, [flush]);
 
+  useEffect(() => {
+    onEditorReady?.(editor ?? null);
+  }, [editor, onEditorReady]);
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <NeuronRichTextToolbar
-        editor={editor}
-        showRuler={showRuler}
-        onToggleRuler={onToggleRuler ?? (() => {})}
-      />
+      {!hideToolbar && (
+        <NeuronRichTextToolbar
+          editor={editor}
+          showRuler={showRuler}
+          onToggleRuler={onToggleRuler ?? (() => {})}
+          trailing={toolbarTrailing}
+        />
+      )}
       {showRuler && onMarginChange && (
         <NeuronRuler
           leftMargin={leftMargin}

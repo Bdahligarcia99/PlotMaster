@@ -19,14 +19,26 @@ import { IconDisplay } from "../ui/iconPicker/IconPicker";
 import ContextMenu from "../ui/ContextMenu";
 import IconPicker from "../ui/iconPicker/IconPicker";
 import Modal from "../ui/Modal";
-import type { NeuronPaneRef } from "./NeuronEditorWorkspace";
+import type { NeuronPaneRef } from "../../neuron/paneTypes";
+import { paneIdFromRef } from "../../neuron/paneTypes";
+import {
+  collectBinderFilePaneIds,
+  collectMirrorFilePaneIds,
+} from "../../neuron/paneUtils";
 
 interface NeuronEntitiesPanelProps {
   subProjects: Record<string, string>;
   activePaneId: string | null;
+  unifiedSelectionIds: string[];
   dirtyPaneIds: Set<string>;
   onOpenPane: (pane: NeuronPaneRef) => void;
+  onUnifiedSelectionChange: (ids: string[]) => void;
   onSelectForInspector: (target: import("./NeuronInspector").NeuronSelectionTarget) => void;
+  onRequestInspectorOpen: () => void;
+}
+
+function isMultiSelect(e: React.MouseEvent) {
+  return e.shiftKey || e.metaKey || e.ctrlKey;
 }
 
 function resolveIcon(
@@ -45,7 +57,9 @@ function BinderFolderRow({
   isActive,
   onToggle,
   onOpen,
+  onMultiSelect,
   onContextMenu,
+  onRequestInspectorOpen,
   children,
 }: {
   folderId: string;
@@ -55,8 +69,10 @@ function BinderFolderRow({
   isExpanded: boolean;
   isActive: boolean;
   onToggle: () => void;
-  onOpen: () => void;
+  onOpen: (e: React.MouseEvent) => void;
+  onMultiSelect: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onRequestInspectorOpen: () => void;
   children?: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -79,8 +95,27 @@ function BinderFolderRow({
         <span className="shrink-0 w-5 flex justify-center">
           <IconDisplay icon={icon} size={14} />
         </span>
-        <button type="button" className="flex-1 text-left truncate" onClick={onOpen}>
+        <button
+          type="button"
+          className="flex-1 text-left truncate"
+          onClick={onOpen}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onRequestInspectorOpen();
+          }}
+        >
           {name}
+        </button>
+        <button
+          type="button"
+          className="text-[10px] px-1 text-dark-muted hover:text-dark-text"
+          title="Add to unified selection"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMultiSelect(e);
+          }}
+        >
+          +
         </button>
       </div>
       {isExpanded && children}
@@ -94,18 +129,24 @@ function BinderFileRow({
   icon,
   depth,
   isActive,
+  isUnifiedSelected,
   isDirty,
   onOpen,
+  onMultiSelect,
   onContextMenu,
+  onRequestInspectorOpen,
 }: {
   docId: string;
   name: string;
   icon?: NeuronIconRef;
   depth: number;
   isActive: boolean;
+  isUnifiedSelected: boolean;
   isDirty: boolean;
-  onOpen: () => void;
+  onOpen: (e: React.MouseEvent) => void;
+  onMultiSelect: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onRequestInspectorOpen: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `file-${docId}`,
@@ -117,7 +158,9 @@ function BinderFileRow({
       ref={setNodeRef}
       className={`flex items-center gap-1 rounded px-1 py-1 text-sm ${
         isDragging ? "opacity-50" : ""
-      } ${isActive ? "bg-blue-500/10 ring-1 ring-blue-500/30" : "hover:bg-dark-accent/30"}`}
+      } ${isActive ? "bg-blue-500/10 ring-1 ring-blue-500/30" : ""} ${
+        isUnifiedSelected && !isActive ? "bg-purple-500/10" : ""
+      } hover:bg-dark-accent/30`}
       style={{ paddingLeft: 20 + depth * 12 }}
       onContextMenu={onContextMenu}
     >
@@ -125,6 +168,10 @@ function BinderFileRow({
         type="button"
         className="flex-1 flex items-center gap-1 text-left truncate cursor-grab active:cursor-grabbing"
         onClick={onOpen}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onRequestInspectorOpen();
+        }}
         {...listeners}
         {...attributes}
       >
@@ -136,6 +183,17 @@ function BinderFileRow({
           {isDirty ? " •" : ""}
         </span>
       </button>
+      <button
+        type="button"
+        className="text-[10px] px-1 text-dark-muted hover:text-dark-text shrink-0"
+        title="Toggle unified selection"
+        onClick={(e) => {
+          e.stopPropagation();
+          onMultiSelect(e);
+        }}
+      >
+        {isUnifiedSelected ? "✓" : "+"}
+      </button>
     </div>
   );
 }
@@ -146,25 +204,37 @@ function MirrorTreeRows({
   expanded,
   toggleExpanded,
   activePaneId,
+  unifiedSelectionIds,
   dirtyPaneIds,
   mirrorMeta,
   onOpenMirror,
+  onMultiSelectMirror,
   onContextMenu,
   onSelectInspector,
+  onRequestInspectorOpen,
 }: {
   node: NeuronMirrorNode;
   depth: number;
   expanded: Set<string>;
   toggleExpanded: (id: string) => void;
   activePaneId: string | null;
+  unifiedSelectionIds: Set<string>;
   dirtyPaneIds: Set<string>;
   mirrorMeta: Record<string, { icon?: NeuronIconRef }>;
-  onOpenMirror: (node: NeuronMirrorNode) => void;
+  onOpenMirror: (node: NeuronMirrorNode, e: React.MouseEvent) => void;
+  onMultiSelectMirror: (node: NeuronMirrorNode) => void;
   onContextMenu: (e: React.MouseEvent, node: NeuronMirrorNode) => void;
   onSelectInspector: (target: import("./NeuronInspector").NeuronSelectionTarget) => void;
+  onRequestInspectorOpen: () => void;
 }) {
   const isExpanded = expanded.has(node.id);
-  const paneId = `mirror:${node.moduleSubId}:${node.entityId}`;
+  const paneId = paneIdFromRef({
+    kind: "mirror",
+    subId: node.moduleSubId,
+    registryId: node.registryId,
+    entityId: node.entityId,
+    name: node.name,
+  });
   const metaKey = mirrorKey(node.moduleSubId, node.entityId);
   const icon = resolveIcon(mirrorMeta[metaKey]?.icon, node.defaultIcon);
 
@@ -173,28 +243,32 @@ function MirrorTreeRows({
       <div
         className={`flex items-center gap-1 rounded px-1 py-1 text-sm cursor-pointer hover:bg-dark-accent/30 ${
           activePaneId === paneId ? "bg-blue-500/10 ring-1 ring-blue-500/30" : ""
-        }`}
+        } ${unifiedSelectionIds.has(paneId) && activePaneId !== paneId ? "bg-purple-500/10" : ""}`}
         style={{ paddingLeft: 8 + depth * 12 }}
-        onClick={() => {
-          onOpenMirror(node);
-          onSelectInspector({
-            kind: "file",
-            id: node.name,
-            isMirror: true,
-            subId: node.moduleSubId,
-            entityId: node.entityId,
-            registryId: node.registryId,
-          });
+        onClick={(e) => onOpenMirror(node, e)}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onRequestInspectorOpen();
         }}
         onContextMenu={(e) => onContextMenu(e, node)}
       >
         <span className="shrink-0 w-5 flex justify-center ml-4">
           <IconDisplay icon={icon} size={14} />
         </span>
-        <span className="truncate">
+        <span className="truncate flex-1">
           {node.name}
           {dirtyPaneIds.has(paneId) ? " •" : ""}
         </span>
+        <button
+          type="button"
+          className="text-[10px] px-1 text-dark-muted hover:text-dark-text shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMultiSelectMirror(node);
+          }}
+        >
+          {unifiedSelectionIds.has(paneId) ? "✓" : "+"}
+        </button>
       </div>
     );
   }
@@ -204,7 +278,11 @@ function MirrorTreeRows({
       <div
         className="flex items-center gap-1 rounded px-1 py-1 text-sm cursor-pointer hover:bg-dark-accent/30"
         style={{ paddingLeft: 8 + depth * 12 }}
-        onClick={() => {
+        onClick={(e) => {
+          if (isMultiSelect(e)) {
+            onMultiSelectMirror(node);
+            return;
+          }
           toggleExpanded(node.id);
           onSelectInspector({
             kind: node.kind === "module-root" ? "module-root" : "folder",
@@ -214,6 +292,10 @@ function MirrorTreeRows({
             entityId: node.entityId,
             registryId: node.registryId,
           });
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onRequestInspectorOpen();
         }}
         onContextMenu={(e) => onContextMenu(e, node)}
       >
@@ -230,7 +312,7 @@ function MirrorTreeRows({
         <span className="shrink-0 w-5 flex justify-center">
           <IconDisplay icon={icon} size={14} />
         </span>
-        <span className="truncate font-medium">{node.name}</span>
+        <span className="truncate font-medium flex-1">{node.name}</span>
       </div>
       {isExpanded &&
         node.children?.map((child) => (
@@ -241,11 +323,14 @@ function MirrorTreeRows({
             expanded={expanded}
             toggleExpanded={toggleExpanded}
             activePaneId={activePaneId}
+            unifiedSelectionIds={unifiedSelectionIds}
             dirtyPaneIds={dirtyPaneIds}
             mirrorMeta={mirrorMeta}
             onOpenMirror={onOpenMirror}
+            onMultiSelectMirror={onMultiSelectMirror}
             onContextMenu={onContextMenu}
             onSelectInspector={onSelectInspector}
+            onRequestInspectorOpen={onRequestInspectorOpen}
           />
         ))}
     </div>
@@ -255,9 +340,12 @@ function MirrorTreeRows({
 export default function NeuronEntitiesPanel({
   subProjects,
   activePaneId,
+  unifiedSelectionIds,
   dirtyPaneIds,
   onOpenPane,
+  onUnifiedSelectionChange,
   onSelectForInspector,
+  onRequestInspectorOpen,
 }: NeuronEntitiesPanelProps) {
   const folders = useNeuronStore((s) => s.folders);
   const documents = useNeuronStore((s) => s.documents);
@@ -295,6 +383,85 @@ export default function NeuronEntitiesPanel({
   const mirrorTrees = useMemo(
     () => buildMirrorTrees(subProjects, mirrors),
     [subProjects, mirrors]
+  );
+
+  const unifiedSet = useMemo(() => new Set(unifiedSelectionIds), [unifiedSelectionIds]);
+
+  const toggleUnifiedIds = useCallback(
+    (ids: string[], additive: boolean) => {
+      if (additive) {
+        const next = new Set(unifiedSelectionIds);
+        const allSelected = ids.every((id) => next.has(id));
+        if (allSelected) {
+          for (const id of ids) next.delete(id);
+        } else {
+          for (const id of ids) next.add(id);
+        }
+        onUnifiedSelectionChange([...next]);
+      } else {
+        onUnifiedSelectionChange(ids.length === 1 ? ids : ids);
+      }
+    },
+    [unifiedSelectionIds, onUnifiedSelectionChange]
+  );
+
+  const handleBinderFileClick = useCallback(
+    (docId: string, e: React.MouseEvent) => {
+      const paneId = `user:${docId}`;
+      if (isMultiSelect(e)) {
+        toggleUnifiedIds([paneId], true);
+        return;
+      }
+      onOpenPane({ kind: "user", docId });
+      onUnifiedSelectionChange([paneId]);
+      onSelectForInspector({ kind: "document", id: docId, isMirror: false });
+    },
+    [onOpenPane, onUnifiedSelectionChange, onSelectForInspector, toggleUnifiedIds]
+  );
+
+  const handleBinderFolderMultiSelect = useCallback(
+    (folderId: string, e: React.MouseEvent) => {
+      const ids = collectBinderFilePaneIds(folderId, folders, documents);
+      toggleUnifiedIds(ids, isMultiSelect(e));
+    },
+    [folders, documents, toggleUnifiedIds]
+  );
+
+  const handleMirrorFileClick = useCallback(
+    (node: NeuronMirrorNode, e: React.MouseEvent) => {
+      if (node.kind !== "file") return;
+      const ref: NeuronPaneRef = {
+        kind: "mirror",
+        subId: node.moduleSubId,
+        registryId: node.registryId,
+        entityId: node.entityId,
+        name: node.name,
+      };
+      const paneId = paneIdFromRef(ref);
+      if (isMultiSelect(e)) {
+        toggleUnifiedIds([paneId], true);
+        return;
+      }
+      onOpenPane(ref);
+      onUnifiedSelectionChange([paneId]);
+      onSelectForInspector({
+        kind: "file",
+        id: node.name,
+        isMirror: true,
+        subId: node.moduleSubId,
+        entityId: node.entityId,
+        registryId: node.registryId,
+      });
+    },
+    [onOpenPane, onUnifiedSelectionChange, onSelectForInspector, toggleUnifiedIds]
+  );
+
+  const handleMirrorMultiSelect = useCallback(
+    (node: NeuronMirrorNode) => {
+      const ids = collectMirrorFilePaneIds(node);
+      toggleUnifiedIds(ids, true);
+    },
+    [toggleUnifiedIds]
   );
 
   const rootFolders = useMemo(
@@ -341,14 +508,20 @@ export default function NeuronEntitiesPanel({
               isExpanded={expanded}
               isActive={activeFolderId === folder.id}
               onToggle={() => toggleBinderFolder(folder.id)}
-              onOpen={() => {
+              onOpen={(e) => {
+                if (isMultiSelect(e)) {
+                  handleBinderFolderMultiSelect(folder.id, e);
+                  return;
+                }
                 setActiveFolderId(folder.id);
                 onSelectForInspector({ kind: "folder", id: folder.id, isMirror: false });
               }}
+              onMultiSelect={(e) => handleBinderFolderMultiSelect(folder.id, e)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenu({ x: e.clientX, y: e.clientY, target: { type: "user-folder", id: folder.id } });
               }}
+              onRequestInspectorOpen={onRequestInspectorOpen}
             >
               {hasChildren && expanded ? renderBinderSubtree(folder.id, depth + 1) : null}
             </BinderFolderRow>
@@ -362,15 +535,15 @@ export default function NeuronEntitiesPanel({
             icon={doc.icon}
             depth={depth}
             isActive={activePaneId === `user:${doc.id}`}
+            isUnifiedSelected={unifiedSet.has(`user:${doc.id}`)}
             isDirty={dirtyPaneIds.has(`user:${doc.id}`)}
-            onOpen={() => {
-              onOpenPane({ kind: "user", docId: doc.id });
-              onSelectForInspector({ kind: "document", id: doc.id, isMirror: false });
-            }}
+            onOpen={(e) => handleBinderFileClick(doc.id, e)}
+            onMultiSelect={() => toggleUnifiedIds([`user:${doc.id}`], true)}
             onContextMenu={(e) => {
               e.preventDefault();
               setContextMenu({ x: e.clientX, y: e.clientY, target: { type: "user-doc", id: doc.id } });
             }}
+            onRequestInspectorOpen={onRequestInspectorOpen}
           />
         ))}
       </>
@@ -429,6 +602,7 @@ export default function NeuronEntitiesPanel({
     <div className="flex flex-col h-full bg-dark-surface border-r border-dark-accent">
       <div className="px-3 py-2 border-b border-dark-accent">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-dark-muted">Sub Entities</h2>
+        <p className="text-[10px] text-dark-muted mt-1">Shift/Ctrl-click to build unified view</p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-4">
@@ -479,23 +653,17 @@ export default function NeuronEntitiesPanel({
                 expanded={expandedMirror}
                 toggleExpanded={toggleMirrorFolder}
                 activePaneId={activePaneId}
+                unifiedSelectionIds={unifiedSet}
                 dirtyPaneIds={dirtyPaneIds}
                 mirrorMeta={mirrorMeta}
-                onOpenMirror={(node) => {
-                  if (node.kind !== "file") return;
-                  onOpenPane({
-                    kind: "mirror",
-                    subId: node.moduleSubId,
-                    registryId: node.registryId,
-                    entityId: node.entityId,
-                    name: node.name,
-                  });
-                }}
+                onOpenMirror={handleMirrorFileClick}
+                onMultiSelectMirror={handleMirrorMultiSelect}
                 onContextMenu={(e, node) => {
                   e.preventDefault();
                   setContextMenu({ x: e.clientX, y: e.clientY, target: { type: "mirror", node } });
                 }}
-                onSelectInspector={(target) => onSelectForInspector(target)}
+                onSelectInspector={onSelectForInspector}
+                onRequestInspectorOpen={onRequestInspectorOpen}
               />
             ))}
           </section>

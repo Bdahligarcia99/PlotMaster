@@ -40,15 +40,6 @@ export default function ChartsToolbar() {
   return (
     <div className="flex items-center gap-2 px-3 py-2 bg-dark-surface border-b border-dark-accent/50">
       <Button
-        variant="secondary"
-        size="sm"
-        disabled={!activeProjectId}
-        onClick={() => setChartLayoutMode("createLayout")}
-        title={activeProjectId ? "Create a new layout template" : "No project loaded"}
-      >
-        New layout
-      </Button>
-      <Button
         variant="primary"
         size="sm"
         onClick={handleAddCharacter}
@@ -73,6 +64,28 @@ export default function ChartsToolbar() {
           />
         </svg>
         Chart
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={!activeProjectId}
+        onClick={() => setChartLayoutMode("createLayout")}
+        title={activeProjectId ? "Create a new layout template" : "No project loaded"}
+      >
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 4v16m8-8H4"
+          />
+        </svg>
+        Layout
       </Button>
 
       <div ref={templateButtonRef} className="relative flex rounded-lg overflow-hidden border border-dark-accent/50">

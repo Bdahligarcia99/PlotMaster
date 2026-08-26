@@ -15,6 +15,8 @@ interface NeuronRichTextToolbarProps {
   editor: Editor | null;
   showRuler: boolean;
   onToggleRuler: () => void;
+  trailing?: React.ReactNode;
+  embedded?: boolean;
 }
 
 function ToolbarButton({
@@ -48,11 +50,15 @@ export default function NeuronRichTextToolbar({
   editor,
   showRuler,
   onToggleRuler,
+  trailing,
+  embedded,
 }: NeuronRichTextToolbarProps) {
   if (!editor) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-1 px-3 py-2 border-b border-dark-accent bg-dark-surface">
+    <div
+      className={`flex flex-wrap items-center gap-1 ${embedded ? "" : "px-3 py-2 border-b border-dark-accent bg-dark-surface"}`}
+    >
       <ToolbarButton
         title="Bold"
         active={editor.isActive("bold")}
@@ -182,6 +188,12 @@ export default function NeuronRichTextToolbar({
       <ToolbarButton title="Toggle ruler" active={showRuler} onClick={onToggleRuler}>
         Ruler
       </ToolbarButton>
+      {trailing && (
+        <>
+          <div className="flex-1 min-w-[8px]" />
+          {trailing}
+        </>
+      )}
     </div>
   );
 }

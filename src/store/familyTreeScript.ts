@@ -109,6 +109,7 @@ interface ParsedUnionMember {
 
 interface ParsedUnionBlock {
   unionId: string;
+  name?: string;
   position?: { x: number; y: number };
   positionUnset?: boolean;
   styleName?: string;
@@ -279,6 +280,8 @@ function parseUnionBlock(header: string, bodyLines: string[]): ParsedUnionBlock 
       }
     } else if (key === "style") {
       block.styleName = parseQuotedValue(val);
+    } else if (key === "name") {
+      block.name = parseQuotedValue(val);
     } else if (key === "mainGraph") {
       block.mainGraph = val === "true";
     } else if (key === "arrange") {
@@ -503,6 +506,7 @@ export function parseFamilyTreeScript(
     if (!leftId && !rightId && childMembers.length === 0) {
       const unionData: UnionNodeData = {
         kind: "union",
+        name: block.name ?? (existingUnion?.data as UnionNodeData)?.name,
         partnerIds: [null, null],
         notes: block.notes || (existingUnion?.data as UnionNodeData)?.notes || "",
         unionType: "forward",
@@ -532,6 +536,7 @@ export function parseFamilyTreeScript(
 
     const unionData: UnionNodeData = {
       kind: "union",
+      name: block.name ?? (existingUnion?.data as UnionNodeData)?.name,
       partnerIds: [leftId, rightId],
       leftPartnerId: leftId ?? undefined,
       rightPartnerId: rightId ?? undefined,
