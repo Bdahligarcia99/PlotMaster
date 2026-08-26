@@ -3,8 +3,36 @@ import { useParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useChartsStore } from "../../store/chartsStore";
 import Button from "../ui/Button";
+import ChartsFileTreePanel from "./ChartsFileTreePanel";
+import type { ChartsEntryKind } from "../../store/chartsDocumentHelpers";
 
-export default function ChartsEntitiesPanel() {
+interface ChartsEntitiesPanelProps {
+  textEditorMode?: boolean;
+  openFileIds?: string[];
+  activeFileId?: string | null;
+  dirtyDocIds?: Set<string>;
+  onOpenFile?: (docId: string) => void;
+  onNewUserFile?: (kind: ChartsEntryKind, folderId?: string) => void;
+  onDeleteUserFile?: (docId: string) => void;
+  onRequestNewFolder?: (kind: ChartsEntryKind) => void;
+  onRequestFolderDelete?: (folderId: string, folderName: string) => void;
+  onRenameFolder?: (folderId: string, name: string) => void;
+  onKindMismatch?: (message: string) => void;
+}
+
+export default function ChartsEntitiesPanel({
+  textEditorMode = false,
+  openFileIds = [],
+  activeFileId = null,
+  dirtyDocIds = new Set(),
+  onOpenFile,
+  onNewUserFile,
+  onDeleteUserFile,
+  onRequestNewFolder,
+  onRequestFolderDelete,
+  onRenameFolder,
+  onKindMismatch,
+}: ChartsEntitiesPanelProps) {
   const { id: projectId } = useParams<{ id: string }>();
   const characters = useChartsStore((s) => s.characters);
   const selectedCharacterId = useChartsStore((s) => s.selectedCharacterId);
@@ -20,6 +48,23 @@ export default function ChartsEntitiesPanel() {
   const [pendingCharacterId, setPendingCharacterId] = useState<string | null>(null);
 
   const isCreatingLayout = chartLayoutMode === "createLayout";
+
+  if (textEditorMode) {
+    return (
+      <ChartsFileTreePanel
+        openFileIds={openFileIds}
+        activeFileId={activeFileId}
+        dirtyDocIds={dirtyDocIds}
+        onOpenFile={onOpenFile ?? (() => {})}
+        onNewUserFile={onNewUserFile ?? (() => {})}
+        onDeleteUserFile={onDeleteUserFile ?? (() => {})}
+        onRequestNewFolder={onRequestNewFolder ?? (() => {})}
+        onRequestFolderDelete={onRequestFolderDelete ?? (() => {})}
+        onRenameFolder={onRenameFolder ?? (() => {})}
+        onKindMismatch={onKindMismatch ?? (() => {})}
+      />
+    );
+  }
 
   const needsDirtyConfirm =
     chartLayoutMode === "edit" &&

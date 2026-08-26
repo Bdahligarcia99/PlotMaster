@@ -1,14 +1,18 @@
 import type { ProjectPayload, TimelineProjectPayload, NeuronProjectPayload } from "../StorageDriver";
 import type { CharacterEntity, ChartLayoutTemplate, ChartSectionLayoutMode } from "../../store/chartsStore";
+import type { ChartsDocumentRecord, ChartsFolderRecord } from "../../store/chartsDocumentHelpers";
 
 /** Charts module payload for .synproj files. */
 export interface ChartsPayload {
   version: 1;
   moduleType: "charts";
-  displayMode?: "charts";
+  displayMode?: "charts" | "text";
   characters: CharacterEntity[];
   templates: ChartLayoutTemplate[];
   chartSectionLayout?: ChartSectionLayoutMode;
+  folders?: ChartsFolderRecord[];
+  documents?: ChartsDocumentRecord[];
+  activeFolderId?: string | null;
 }
 
 /** @deprecated Use ChartsPayload — legacy persisted moduleType value. */
@@ -43,6 +47,9 @@ export function normalizeChartsPayload(
     characters: legacy.characters,
     templates: legacy.templates,
     chartSectionLayout: legacy.chartSectionLayout,
+    folders: [],
+    documents: [],
+    activeFolderId: null,
   };
 }
 

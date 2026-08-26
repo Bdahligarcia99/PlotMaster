@@ -41,7 +41,7 @@ export default function NewStandaloneProjectModal({
       }
       const id = createStandaloneProject(trimmedName, moduleType);
       onClose();
-      navigate(`/project/${id}`);
+      navigate(moduleType === "Charts" || moduleType === "Profiles" ? `/charts/${id}` : `/project/${id}`);
     } finally {
       setSubmitting(false);
     }

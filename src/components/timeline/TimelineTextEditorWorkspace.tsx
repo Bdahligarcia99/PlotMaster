@@ -507,7 +507,7 @@ export default function TimelineTextEditorWorkspace({
           )}
           {renderPaneCloseButton(pane.paneId)}
         </div>
-        <div className="min-h-[280px] h-[40vh] px-3 pb-3 pt-2">
+        <div className="min-h-[280px] h-[40vh] px-3 pb-3 pt-2 overflow-hidden flex flex-col">
           {pane.docId && doc ? renderEditor(pane.docId, content) : renderEmptyPaneBody()}
         </div>
       </div>

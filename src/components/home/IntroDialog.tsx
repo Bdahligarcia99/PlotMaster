@@ -209,7 +209,7 @@ export default function IntroDialog({
         if (fileRef) {
           await initializeFileBackedStandaloneProject(id, name, "Charts", fileRef);
         }
-        openInNewWindow(`/project/${id}`);
+        openInNewWindow(`/charts/${id}`);
       } else if (enabledModules[0] === "timeline") {
         const id = await createTimelineProject(name);
         if (fileRef) {
@@ -318,6 +318,7 @@ export default function IntroDialog({
 
   const isProjectRoute = (id: string) =>
     location.pathname === `/project/${id}` ||
+    location.pathname === `/charts/${id}` ||
     location.pathname === `/family-tree/${id}` ||
     location.pathname === `/timeline/${id}`;
 

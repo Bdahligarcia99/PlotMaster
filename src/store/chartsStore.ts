@@ -4,7 +4,20 @@ import {
   loadModulePayloadFromFile,
   saveModulePayloadToFile,
 } from "../storage/synproj/synprojProjectService";
-import { isChartsPayload } from "../storage/synproj/synprojFormat";
+import { normalizeChartsPayload } from "../storage/synproj/synprojFormat";
+import { parseChartsScript } from "../parseChartsScript";
+import {
+  type ChartsDocumentRecord,
+  type ChartsEntryKind,
+  type ChartsFolderRecord,
+  defaultChartDocumentContent,
+  defaultLayoutDocumentContent,
+  ensureDefaultFolders,
+  ensureDocumentsForEntities,
+  generateChartDocumentDisplayContent,
+  nextSortOrder,
+  sortByOrder,
+} from "./chartsDocumentHelpers";
 
 const CHARTS_STORAGE_KEY = (projectId: string) =>
   `synapse-iwe:charts:${projectId}`;
@@ -26,6 +39,11 @@ const LEGACY_CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
   `synapse-iwe:profiles:chartSectionLayout:${projectId}`;
 const SUPER_LEGACY_CHART_SECTION_LAYOUT_KEY = (projectId: string) =>
   `plotmaster:profiles:chartSectionLayout:${projectId}`;
+
+const FOLDERS_STORAGE_KEY = (projectId: string) =>
+  `synapse-iwe:charts:folders:${projectId}`;
+const DOCUMENTS_STORAGE_KEY = (projectId: string) =>
+  `synapse-iwe:charts:documents:${projectId}`;
 
 export type SectionHeadingLevel = "h1" | "h2" | "h3" | "h4";
 
@@ -114,6 +132,8 @@ export type ChartLayoutMode = "fill" | "edit" | "createLayout";
 
 export type ChartSectionLayoutMode = "list" | "grid";
 
+export type ChartsDisplayMode = "charts" | "text";
+
 interface ChartsStore {
   activeProjectId: string | null;
   characters: CharacterEntity[];
@@ -128,6 +148,41 @@ interface ChartsStore {
   createLayoutDraftDataTypes: CustomDataType[];
   createLayoutDraftBuiltinDataTypes: string[];
   chartSectionLayoutMode: ChartSectionLayoutMode;
+  displayMode: ChartsDisplayMode;
+  folders: ChartsFolderRecord[];
+  documents: ChartsDocumentRecord[];
+  activeFolderId: string | null;
+  activeDocumentId: string | null;
+  dirtyDocumentIds: string[];
+  setDisplayMode: (mode: ChartsDisplayMode) => void;
+  setDirtyDocumentIds: (ids: string[]) => void;
+  setActiveFolderId: (folderId: string | null) => void;
+  setActiveDocumentId: (docId: string | null) => void;
+  ensureDefaultFolders: () => void;
+  ensureDocumentsForEntities: () => void;
+  getDocumentDisplayContent: (docId: string) => string;
+  applyChartsDocumentEdits: (
+    edits: { docId: string; content: string }[]
+  ) => { ok: true } | { ok: false; errors: string[] };
+  updateTemplateSections: (
+    projectId: string,
+    templateId: string,
+    sections: ProfileSection[],
+    customDataTypes?: CustomDataType[],
+    builtinDataTypes?: string[]
+  ) => boolean;
+  createFolder: (name: string, kind: ChartsEntryKind) => string;
+  renameFolder: (folderId: string, name: string) => void;
+  deleteFolderCascade: (folderId: string) => { ok: true } | { ok: false; reason: "lastOfKind" };
+  createDocument: (kind: ChartsEntryKind, folderId?: string, name?: string) => string;
+  renameDocument: (docId: string, name: string) => void;
+  deleteDocument: (docId: string) => void;
+  moveDocument: (
+    docId: string,
+    folderId: string
+  ) => { ok: true } | { ok: false; reason: "kindMismatch" };
+  getDocumentForCharacter: (characterId: string) => ChartsDocumentRecord | null;
+  getDocumentForTemplate: (templateId: string) => ChartsDocumentRecord | null;
   setChartSectionLayoutMode: (mode: ChartSectionLayoutMode) => void;
   setActiveProject: (projectId: string | null) => void;
   setSelectedCharacter: (characterId: string | null, shiftKey?: boolean) => void;
@@ -372,16 +427,130 @@ function saveTemplatesToStorage(projectId: string, templates: ChartLayoutTemplat
   void persistChartsModuleToFile(projectId);
 }
 
+function loadFoldersFromStorage(projectId: string): ChartsFolderRecord[] {
+  try {
+    const raw = localStorage.getItem(FOLDERS_STORAGE_KEY(projectId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFoldersToStorage(projectId: string, folders: ChartsFolderRecord[]) {
+  try {
+    localStorage.setItem(FOLDERS_STORAGE_KEY(projectId), JSON.stringify(folders));
+  } catch (e) {
+    console.warn("[ChartsStore] Folder save failed:", e);
+  }
+  void persistChartsModuleToFile(projectId);
+}
+
+function loadDocumentsFromStorage(projectId: string): ChartsDocumentRecord[] {
+  try {
+    const raw = localStorage.getItem(DOCUMENTS_STORAGE_KEY(projectId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDocumentsToStorage(projectId: string, documents: ChartsDocumentRecord[]) {
+  try {
+    localStorage.setItem(DOCUMENTS_STORAGE_KEY(projectId), JSON.stringify(documents));
+  } catch (e) {
+    console.warn("[ChartsStore] Document save failed:", e);
+  }
+  void persistChartsModuleToFile(projectId);
+}
+
+function loadDisplayModeFromStorage(projectId: string): ChartsDisplayMode {
+  try {
+    const raw = localStorage.getItem(`synapse-iwe:charts:displayMode:${projectId}`);
+    if (raw === "text") return "text";
+  } catch {
+    /* ignore */
+  }
+  return "charts";
+}
+
+function saveDisplayModeToStorage(projectId: string, mode: ChartsDisplayMode) {
+  try {
+    localStorage.setItem(`synapse-iwe:charts:displayMode:${projectId}`, mode);
+  } catch {
+    /* ignore */
+  }
+  void persistChartsModuleToFile(projectId);
+}
+
+function loadActiveFolderIdFromStorage(projectId: string): string | null {
+  try {
+    const raw = localStorage.getItem(`synapse-iwe:charts:activeFolderId:${projectId}`);
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveFolderIdToStorage(projectId: string, folderId: string | null) {
+  try {
+    if (folderId) {
+      localStorage.setItem(`synapse-iwe:charts:activeFolderId:${projectId}`, folderId);
+    } else {
+      localStorage.removeItem(`synapse-iwe:charts:activeFolderId:${projectId}`);
+    }
+  } catch {
+    /* ignore */
+  }
+  void persistChartsModuleToFile(projectId);
+}
+
+function createChartDocumentRecord(
+  character: CharacterEntity,
+  folderId: string
+): ChartsDocumentRecord {
+  return {
+    id: generateId(),
+    name: character.name,
+    content: defaultChartDocumentContent(character.name),
+    folderId,
+    kind: "chart",
+    updatedAt: Date.now(),
+    characterId: character.id,
+    autoNamed: true,
+  };
+}
+
+function createLayoutDocumentRecord(
+  template: ChartLayoutTemplate,
+  folderId: string
+): ChartsDocumentRecord {
+  return {
+    id: generateId(),
+    name: template.name,
+    content: defaultLayoutDocumentContent(template),
+    folderId,
+    kind: "layout",
+    updatedAt: Date.now(),
+    templateId: template.id,
+    autoNamed: true,
+  };
+}
+
 async function persistChartsModuleToFile(projectId: string): Promise<void> {
   if (!(await isFileBackedProject(projectId))) return;
   try {
     const payload = {
       version: 1 as const,
       moduleType: "charts" as const,
-      displayMode: "charts" as const,
+      displayMode: loadDisplayModeFromStorage(projectId),
       characters: loadFromStorage(projectId),
       templates: loadTemplatesFromStorage(projectId),
       chartSectionLayout: loadChartSectionLayoutMode(projectId),
+      folders: loadFoldersFromStorage(projectId),
+      documents: loadDocumentsFromStorage(projectId),
+      activeFolderId: loadActiveFolderIdFromStorage(projectId),
     };
     await saveModulePayloadToFile(projectId, payload);
   } catch (e) {
@@ -927,6 +1096,341 @@ export const useChartsStore = create<ChartsStore>(
     createLayoutDraftDataTypes: [],
     createLayoutDraftBuiltinDataTypes: [],
     chartSectionLayoutMode: "list" as ChartSectionLayoutMode,
+    displayMode: "charts" as ChartsDisplayMode,
+    folders: [] as ChartsFolderRecord[],
+    documents: [] as ChartsDocumentRecord[],
+    activeFolderId: null as string | null,
+    activeDocumentId: null as string | null,
+    dirtyDocumentIds: [] as string[],
+
+    setDisplayMode: (mode) => {
+      const projectId = get().activeProjectId;
+      if (projectId) saveDisplayModeToStorage(projectId, mode);
+      set({ displayMode: mode });
+    },
+
+    setDirtyDocumentIds: (ids) => set({ dirtyDocumentIds: ids }),
+
+    setActiveFolderId: (folderId) => {
+      const projectId = get().activeProjectId;
+      if (projectId) saveActiveFolderIdToStorage(projectId, folderId);
+      set({ activeFolderId: folderId });
+    },
+
+    setActiveDocumentId: (docId) => set({ activeDocumentId: docId }),
+
+    ensureDefaultFolders: () => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return;
+      const existing = loadFoldersFromStorage(projectId);
+      const { folders, changed } = ensureDefaultFolders(existing);
+      if (!changed) {
+        if (get().folders.length === 0) set({ folders });
+        return;
+      }
+      saveFoldersToStorage(projectId, folders);
+      set({ folders });
+    },
+
+    ensureDocumentsForEntities: () => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return;
+      const folders = loadFoldersFromStorage(projectId);
+      const characters = loadFromStorage(projectId);
+      const templates = loadTemplatesFromStorage(projectId);
+      const existingDocs = loadDocumentsFromStorage(projectId);
+      const { documents, changed } = ensureDocumentsForEntities(
+        existingDocs,
+        folders,
+        characters,
+        templates
+      );
+      if (!changed) {
+        if (get().documents.length === 0) set({ documents });
+        return;
+      }
+      saveDocumentsToStorage(projectId, documents);
+      set({ documents });
+    },
+
+    getDocumentDisplayContent: (docId) => {
+      const s = get();
+      if (s.dirtyDocumentIds.includes(docId)) {
+        const doc = s.documents.find((d) => d.id === docId);
+        return doc?.content ?? "";
+      }
+      const doc = s.documents.find((d) => d.id === docId);
+      if (!doc) return "";
+      return generateChartDocumentDisplayContent(
+        doc,
+        s.characters,
+        loadTemplatesFromStorage(s.activeProjectId ?? "")
+      );
+    },
+
+    getDocumentForCharacter: (characterId) => {
+      return get().documents.find((d) => d.characterId === characterId) ?? null;
+    },
+
+    getDocumentForTemplate: (templateId) => {
+      return get().documents.find((d) => d.templateId === templateId) ?? null;
+    },
+
+    applyChartsDocumentEdits: (edits) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return { ok: false, errors: ["No project loaded."] };
+      const errors: string[] = [];
+      let characters = loadFromStorage(projectId);
+      let templates = loadTemplatesFromStorage(projectId);
+      let documents = loadDocumentsFromStorage(projectId);
+
+      for (const { docId, content } of edits) {
+        const doc = documents.find((d) => d.id === docId);
+        if (!doc) {
+          errors.push(`Document not found: ${docId}`);
+          continue;
+        }
+        const parsed = parseChartsScript(content);
+        if (!parsed.ok) {
+          errors.push(
+            parsed.error.line != null
+              ? `Line ${parsed.error.line}: ${parsed.error.message}`
+              : parsed.error.message
+          );
+          continue;
+        }
+
+        if (doc.kind === "chart" && doc.characterId) {
+          const parsedChar = parsed.characters[0];
+          if (!parsedChar) {
+            errors.push(`Chart file "${doc.name}" must contain one character block.`);
+            continue;
+          }
+          characters = characters.map((c) =>
+            c.id === doc.characterId
+              ? {
+                  ...c,
+                  name: parsedChar.name || c.name,
+                  sections: parsedChar.sections ?? [],
+                  customDataTypes: parsed.customDataTypes ?? c.customDataTypes,
+                }
+              : c
+          );
+        } else if (doc.kind === "layout" && doc.templateId) {
+          const parsedChar = parsed.characters[0];
+          const sections = parsedChar?.sections ?? [];
+          templates = templates.map((t) =>
+            t.id === doc.templateId
+              ? {
+                  ...t,
+                  name: parsedChar?.name || t.name,
+                  sections: sectionsToTemplateFormat(sections),
+                  customDataTypes: parsed.customDataTypes ?? t.customDataTypes,
+                  builtinDataTypes: parsed.builtinDataTypes ?? t.builtinDataTypes,
+                }
+              : t
+          );
+          const updatedTemplate = templates.find((t) => t.id === doc.templateId);
+          if (updatedTemplate) {
+            const linkedChars = characters.filter(
+              (c) => (c.linkedTemplateId ?? null) === doc.templateId
+            );
+            if (linkedChars.length > 0) {
+              characters = characters.map((c) => {
+                if ((c.linkedTemplateId ?? null) !== doc.templateId) return c;
+                const nextSections = applyTemplateSections(
+                  updatedTemplate.sections,
+                  c.sections ?? [],
+                  "merge"
+                );
+                return {
+                  ...c,
+                  sections: nextSections,
+                  customDataTypes: updatedTemplate.customDataTypes ?? [],
+                };
+              });
+            }
+          }
+        }
+
+        documents = documents.map((d) =>
+          d.id === docId ? { ...d, content, updatedAt: Date.now() } : d
+        );
+      }
+
+      if (errors.length > 0) return { ok: false, errors };
+
+      saveToStorage(projectId, characters);
+      saveTemplatesToStorage(projectId, templates);
+      saveDocumentsToStorage(projectId, documents);
+      set({
+        characters,
+        documents,
+        dirtyDocumentIds: get().dirtyDocumentIds.filter(
+          (id) => !edits.some((e) => e.docId === id)
+        ),
+      });
+      return { ok: true };
+    },
+
+    updateTemplateSections: (projectId, templateId, sections, customDataTypes = [], builtinDataTypes = []) => {
+      const templates = loadTemplatesFromStorage(projectId);
+      const template = templates.find((t) => t.id === templateId);
+      if (!template) return false;
+      const templateSections = sectionsToTemplateFormat(sections);
+      const updatedTemplate = {
+        ...template,
+        sections: templateSections,
+        customDataTypes,
+        builtinDataTypes,
+      };
+      const updatedTemplates = templates.map((t) =>
+        t.id === templateId ? updatedTemplate : t
+      );
+      saveTemplatesToStorage(projectId, updatedTemplates);
+
+      const chars = loadFromStorage(projectId);
+      const linkedChars = chars.filter((c) => (c.linkedTemplateId ?? null) === templateId);
+      if (linkedChars.length > 0) {
+        const nextChars = chars.map((c) => {
+          if ((c.linkedTemplateId ?? null) !== templateId) return c;
+          const nextSections = applyTemplateSections(
+            updatedTemplate.sections,
+            c.sections ?? [],
+            "merge"
+          );
+          return { ...c, sections: nextSections, customDataTypes: updatedTemplate.customDataTypes ?? [] };
+        });
+        saveToStorage(projectId, nextChars);
+        if (get().activeProjectId === projectId) set({ characters: nextChars });
+      }
+      return true;
+    },
+
+    createFolder: (name, kind) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return "";
+      const folders = loadFoldersFromStorage(projectId);
+      const siblings = folders.filter((f) => f.kind === kind);
+      const folder: ChartsFolderRecord = {
+        id: generateId(),
+        name: name.trim() || (kind === "chart" ? "Charts" : "Layouts"),
+        kind,
+        sortOrder: nextSortOrder(siblings),
+      };
+      const next = [...folders, folder];
+      saveFoldersToStorage(projectId, next);
+      set({ folders: next, activeFolderId: folder.id });
+      return folder.id;
+    },
+
+    renameFolder: (folderId, name) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return;
+      const trimmed = name.trim() || "Folder";
+      const folders = loadFoldersFromStorage(projectId).map((f) =>
+        f.id === folderId ? { ...f, name: trimmed } : f
+      );
+      saveFoldersToStorage(projectId, folders);
+      set({ folders });
+    },
+
+    deleteFolderCascade: (folderId) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return { ok: false, reason: "lastOfKind" as const };
+      const folders = loadFoldersFromStorage(projectId);
+      const folder = folders.find((f) => f.id === folderId);
+      if (!folder) return { ok: true };
+      const sameKind = folders.filter((f) => f.kind === folder.kind);
+      if (sameKind.length <= 1) return { ok: false, reason: "lastOfKind" };
+      const nextFolders = folders.filter((f) => f.id !== folderId);
+      const nextDocs = loadDocumentsFromStorage(projectId).filter((d) => d.folderId !== folderId);
+      saveFoldersToStorage(projectId, nextFolders);
+      saveDocumentsToStorage(projectId, nextDocs);
+      set({
+        folders: nextFolders,
+        documents: nextDocs,
+        activeFolderId: get().activeFolderId === folderId ? null : get().activeFolderId,
+      });
+      return { ok: true };
+    },
+
+    createDocument: (kind, folderId, name) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return "";
+      const folders = loadFoldersFromStorage(projectId);
+      const targetFolder =
+        folders.find((f) => f.id === folderId) ??
+        sortByOrder(folders.filter((f) => f.kind === kind))[0];
+      if (!targetFolder || targetFolder.kind !== kind) return "";
+
+      const id = generateId();
+      const now = Date.now();
+      const docName = name?.trim() || (kind === "chart" ? "Untitled Chart" : "Untitled Layout");
+      const doc: ChartsDocumentRecord = {
+        id,
+        name: docName,
+        content:
+          kind === "chart"
+            ? defaultChartDocumentContent(docName)
+            : generateChartsScript([], { source: "template", characterName: docName }),
+        folderId: targetFolder.id,
+        kind,
+        updatedAt: now,
+      };
+      const next = [...loadDocumentsFromStorage(projectId), doc];
+      saveDocumentsToStorage(projectId, next);
+      set({ documents: next, activeDocumentId: id });
+      return id;
+    },
+
+    renameDocument: (docId, name) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return;
+      const trimmed = name.trim() || "Untitled";
+      const documents = loadDocumentsFromStorage(projectId).map((d) =>
+        d.id === docId ? { ...d, name: trimmed, autoNamed: false, updatedAt: Date.now() } : d
+      );
+      saveDocumentsToStorage(projectId, documents);
+      set({ documents });
+    },
+
+    deleteDocument: (docId) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return;
+      const doc = loadDocumentsFromStorage(projectId).find((d) => d.id === docId);
+      if (!doc) return;
+      if (doc.characterId) {
+        get().removeCharacter(projectId, doc.characterId);
+        return;
+      }
+      if (doc.templateId) {
+        get().deleteTemplate(projectId, doc.templateId);
+        return;
+      }
+      const next = loadDocumentsFromStorage(projectId).filter((d) => d.id !== docId);
+      saveDocumentsToStorage(projectId, next);
+      set({
+        documents: next,
+        activeDocumentId: get().activeDocumentId === docId ? null : get().activeDocumentId,
+      });
+    },
+
+    moveDocument: (docId, folderId) => {
+      const projectId = get().activeProjectId;
+      if (!projectId) return { ok: false, reason: "kindMismatch" as const };
+      const folders = loadFoldersFromStorage(projectId);
+      const folder = folders.find((f) => f.id === folderId);
+      const doc = loadDocumentsFromStorage(projectId).find((d) => d.id === docId);
+      if (!folder || !doc) return { ok: true };
+      if (doc.kind !== folder.kind) return { ok: false, reason: "kindMismatch" };
+      const next = loadDocumentsFromStorage(projectId).map((d) =>
+        d.id === docId ? { ...d, folderId, updatedAt: Date.now() } : d
+      );
+      saveDocumentsToStorage(projectId, next);
+      set({ documents: next });
+      return { ok: true };
+    },
 
     setSelectedCharacter: (characterId, shiftKey) => {
       const s = get();
@@ -1064,6 +1568,12 @@ export const useChartsStore = create<ChartsStore>(
         selectedCharacterId: null,
         comparisonCharacterId: null,
         chartSectionLayoutMode: layoutMode,
+        displayMode: projectId ? loadDisplayModeFromStorage(projectId) : "charts",
+        folders: projectId ? loadFoldersFromStorage(projectId) : [],
+        documents: projectId ? loadDocumentsFromStorage(projectId) : [],
+        activeFolderId: projectId ? loadActiveFolderIdFromStorage(projectId) : null,
+        activeDocumentId: null,
+        dirtyDocumentIds: [],
       });
       if (projectId) {
         get().loadCharacters(projectId);
@@ -1077,19 +1587,38 @@ export const useChartsStore = create<ChartsStore>(
         if (await isFileBackedProject(projectId)) {
           try {
             const payload = await loadModulePayloadFromFile(projectId);
-            if (payload && isChartsPayload(payload)) {
+            const normalized = normalizeChartsPayload(payload);
+            if (normalized) {
               try {
-                localStorage.setItem(CHARTS_STORAGE_KEY(projectId), JSON.stringify(payload.characters));
-                localStorage.setItem(TEMPLATES_STORAGE_KEY(projectId), JSON.stringify(payload.templates));
-                if (payload.chartSectionLayout) {
-                  localStorage.setItem(CHART_SECTION_LAYOUT_KEY(projectId), payload.chartSectionLayout);
+                localStorage.setItem(CHARTS_STORAGE_KEY(projectId), JSON.stringify(normalized.characters));
+                localStorage.setItem(TEMPLATES_STORAGE_KEY(projectId), JSON.stringify(normalized.templates));
+                if (normalized.chartSectionLayout) {
+                  localStorage.setItem(CHART_SECTION_LAYOUT_KEY(projectId), normalized.chartSectionLayout);
+                }
+                if (normalized.folders) {
+                  localStorage.setItem(FOLDERS_STORAGE_KEY(projectId), JSON.stringify(normalized.folders));
+                }
+                if (normalized.documents) {
+                  localStorage.setItem(DOCUMENTS_STORAGE_KEY(projectId), JSON.stringify(normalized.documents));
+                }
+                if (normalized.displayMode) {
+                  localStorage.setItem(`synapse-iwe:charts:displayMode:${projectId}`, normalized.displayMode);
+                }
+                if (normalized.activeFolderId) {
+                  localStorage.setItem(`synapse-iwe:charts:activeFolderId:${projectId}`, normalized.activeFolderId);
                 }
               } catch { /* mirror best-effort */ }
               set({
-                characters: payload.characters,
+                characters: normalized.characters,
                 activeProjectId: projectId,
-                chartSectionLayoutMode: payload.chartSectionLayout ?? "list",
+                chartSectionLayoutMode: normalized.chartSectionLayout ?? "list",
+                displayMode: normalized.displayMode === "text" ? "text" : "charts",
+                folders: normalized.folders ?? [],
+                documents: normalized.documents ?? [],
+                activeFolderId: normalized.activeFolderId ?? null,
               });
+              get().ensureDefaultFolders();
+              get().ensureDocumentsForEntities();
               return;
             }
           } catch (e) {
@@ -1098,7 +1627,17 @@ export const useChartsStore = create<ChartsStore>(
         }
         const chars = loadFromStorage(projectId);
         const layoutMode = loadChartSectionLayoutMode(projectId);
-        set({ characters: chars, activeProjectId: projectId, chartSectionLayoutMode: layoutMode });
+        set({
+          characters: chars,
+          activeProjectId: projectId,
+          chartSectionLayoutMode: layoutMode,
+          displayMode: loadDisplayModeFromStorage(projectId),
+          folders: loadFoldersFromStorage(projectId),
+          documents: loadDocumentsFromStorage(projectId),
+          activeFolderId: loadActiveFolderIdFromStorage(projectId),
+        });
+        get().ensureDefaultFolders();
+        get().ensureDocumentsForEntities();
       })();
     },
 
@@ -1118,6 +1657,16 @@ export const useChartsStore = create<ChartsStore>(
       const entity: CharacterEntity = { id, name: finalName, sections: [], linkedTemplateId: null };
       const chars = [...existing, entity];
       saveToStorage(projectId, chars);
+
+      get().ensureDefaultFolders();
+      const folders = loadFoldersFromStorage(projectId);
+      const chartFolder = sortByOrder(folders.filter((f) => f.kind === "chart"))[0];
+      if (chartFolder) {
+        const docs = [...loadDocumentsFromStorage(projectId), createChartDocumentRecord(entity, chartFolder.id)];
+        saveDocumentsToStorage(projectId, docs);
+        if (get().activeProjectId === projectId) set({ documents: docs });
+      }
+
       if (get().activeProjectId === projectId) {
         set({
           characters: chars,
@@ -1132,6 +1681,8 @@ export const useChartsStore = create<ChartsStore>(
       const existing = loadFromStorage(projectId);
       const chars = existing.filter((c) => c.id !== characterId);
       saveToStorage(projectId, chars);
+      const docs = loadDocumentsFromStorage(projectId).filter((d) => d.characterId !== characterId);
+      saveDocumentsToStorage(projectId, docs);
       const s = get();
       if (s.activeProjectId === projectId) {
         const removingPrimary = s.selectedCharacterId === characterId;
@@ -1151,6 +1702,7 @@ export const useChartsStore = create<ChartsStore>(
         if (nextComparison && !chars.some((c) => c.id === nextComparison)) nextComparison = null;
         set({
           characters: chars,
+          documents: docs,
           selectedCharacterId: nextSelected,
           comparisonCharacterId: nextComparison,
           ...(removingPrimary && s.chartLayoutMode === "edit"
@@ -1167,7 +1719,14 @@ export const useChartsStore = create<ChartsStore>(
         c.id === characterId ? { ...c, name: trimmed } : c
       );
       saveToStorage(projectId, chars);
-      if (get().activeProjectId === projectId) set({ characters: chars });
+      const char = chars.find((c) => c.id === characterId);
+      const docs = loadDocumentsFromStorage(projectId).map((d) => {
+        if (d.characterId !== characterId) return d;
+        if (d.autoNamed && char) return { ...d, name: char.name, updatedAt: Date.now() };
+        return d;
+      });
+      saveDocumentsToStorage(projectId, docs);
+      if (get().activeProjectId === projectId) set({ characters: chars, documents: docs });
     },
 
     addSection: (projectId, characterId, parentId = null, label = "New section") => {
@@ -1606,6 +2165,14 @@ export const useChartsStore = create<ChartsStore>(
       };
       const next = [...templates, template];
       saveTemplatesToStorage(projectId, next);
+      get().ensureDefaultFolders();
+      const folders = loadFoldersFromStorage(projectId);
+      const layoutFolder = sortByOrder(folders.filter((f) => f.kind === "layout"))[0];
+      if (layoutFolder) {
+        const docs = [...loadDocumentsFromStorage(projectId), createLayoutDocumentRecord(template, layoutFolder.id)];
+        saveDocumentsToStorage(projectId, docs);
+        if (get().activeProjectId === projectId) set({ documents: docs });
+      }
       return template.id;
     },
 
@@ -1728,6 +2295,14 @@ export const useChartsStore = create<ChartsStore>(
         t.id === templateId ? { ...t, name: trimmed } : t
       );
       saveTemplatesToStorage(projectId, templates);
+      const template = templates.find((t) => t.id === templateId);
+      const docs = loadDocumentsFromStorage(projectId).map((d) => {
+        if (d.templateId !== templateId) return d;
+        if (d.autoNamed && template) return { ...d, name: template.name, updatedAt: Date.now() };
+        return d;
+      });
+      saveDocumentsToStorage(projectId, docs);
+      if (get().activeProjectId === projectId) set({ documents: docs });
     },
 
     deleteTemplate: (projectId, templateId) => {
@@ -1738,7 +2313,9 @@ export const useChartsStore = create<ChartsStore>(
       saveToStorage(projectId, updated);
       const templates = loadTemplatesFromStorage(projectId).filter((t) => t.id !== templateId);
       saveTemplatesToStorage(projectId, templates);
-      if (get().activeProjectId === projectId) set({ characters: updated });
+      const docs = loadDocumentsFromStorage(projectId).filter((d) => d.templateId !== templateId);
+      saveDocumentsToStorage(projectId, docs);
+      if (get().activeProjectId === projectId) set({ characters: updated, documents: docs });
     },
 
     createTemplateFromSections: (projectId, name, sections, customDataTypes = [], builtinDataTypes = []) => {
@@ -1757,6 +2334,14 @@ export const useChartsStore = create<ChartsStore>(
       };
       const next = [...templates, template];
       saveTemplatesToStorage(projectId, next);
+      get().ensureDefaultFolders();
+      const folders = loadFoldersFromStorage(projectId);
+      const layoutFolder = sortByOrder(folders.filter((f) => f.kind === "layout"))[0];
+      if (layoutFolder) {
+        const docs = [...loadDocumentsFromStorage(projectId), createLayoutDocumentRecord(template, layoutFolder.id)];
+        saveDocumentsToStorage(projectId, docs);
+        if (get().activeProjectId === projectId) set({ documents: docs });
+      }
       return template.id;
     },
 

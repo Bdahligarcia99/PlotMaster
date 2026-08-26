@@ -61,6 +61,9 @@ export default function ChartsScriptPane() {
   const applyProfilesFromScript = useChartsStore(
     (s) => s.applyProfilesFromScript
   );
+  const getDocumentForCharacter = useChartsStore((s) => s.getDocumentForCharacter);
+  const getDocumentDisplayContent = useChartsStore((s) => s.getDocumentDisplayContent);
+  const applyChartsDocumentEdits = useChartsStore((s) => s.applyChartsDocumentEdits);
   const setCreateLayoutDraftSections = useChartsStore(
     (s) => s.setCreateLayoutDraftSections
   );
@@ -81,6 +84,10 @@ export default function ChartsScriptPane() {
   const [runSuccess, setRunSuccess] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const activeChartDoc = selectedCharacterId
+    ? getDocumentForCharacter(selectedCharacterId)
+    : null;
+
   const generatedScript = useMemo(() => {
     if (chartLayoutMode === "createLayout") {
       return generateChartsScript(createLayoutDraftSections, {
@@ -91,7 +98,9 @@ export default function ChartsScriptPane() {
         builtinDataTypes: createLayoutDraftBuiltinDataTypes,
       });
     }
-    // fill/edit: show only the selected character
+    if (activeChartDoc) {
+      return getDocumentDisplayContent(activeChartDoc.id);
+    }
     const selectedChar = selectedCharacterId
       ? characters.find((c) => c.id === selectedCharacterId)
       : null;
@@ -103,10 +112,12 @@ export default function ChartsScriptPane() {
     chartLayoutMode,
     characters,
     selectedCharacterId,
+    activeChartDoc,
     createLayoutDraftSections,
     createLayoutDraftDataTypes,
     createLayoutDraftBuiltinDataTypes,
     compactDeclarations,
+    getDocumentDisplayContent,
   ]);
 
   // Sync editor from store when not dirty
@@ -172,6 +183,15 @@ export default function ChartsScriptPane() {
           })
         );
       }
+    } else if (activeChartDoc) {
+      const result = applyChartsDocumentEdits([
+        { docId: activeChartDoc.id, content: editorContent },
+      ]);
+      if (!result.ok) {
+        setParseError(result.errors.join("; "));
+        return;
+      }
+      setEditorContent(getDocumentDisplayContent(activeChartDoc.id));
     } else {
       applyProfilesFromScript(projectId, result.characters);
       const normalized = generateChartsScript(result.characters, {
@@ -190,6 +210,9 @@ export default function ChartsScriptPane() {
     chartLayoutMode,
     compactDeclarations,
     applyProfilesFromScript,
+    applyChartsDocumentEdits,
+    getDocumentDisplayContent,
+    activeChartDoc,
     setCreateLayoutDraftSections,
     setCreateLayoutDraftDataTypes,
     setCreateLayoutDraftBuiltinDataTypes,

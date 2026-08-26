@@ -6,11 +6,11 @@ const MODULE_TYPE_TO_ROUTE: Record<string, string> = {
   familyTree: "/family-tree",
   Timeline: "/timeline",
   timeline: "/timeline",
-  Charts: "/project",
-  charts: "/project",
+  Charts: "/charts",
+  charts: "/charts",
   /** @deprecated legacy type names — read-side migration only */
-  Profiles: "/project",
-  characterProfiles: "/project",
+  Profiles: "/charts",
+  characterProfiles: "/charts",
   Ideas: "/project",
   ideas: "/project",
 };

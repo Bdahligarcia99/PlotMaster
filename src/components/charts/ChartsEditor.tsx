@@ -11,6 +11,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import AttributeValueInput from "./AttributeValueInput";
 import CreateLayoutEditor from "./CreateLayoutEditor";
+import ChartTemplatePicker from "./ChartTemplatePicker";
 import {
   useChartsStore,
   getOrderedSections,
@@ -605,6 +606,9 @@ export default function ChartsEditor() {
   const isLinked = Boolean(linkedTemplate);
   const canEditStructure = chartLayoutMode === "edit" && !isLinked;
   const isFillMode = chartLayoutMode === "fill";
+  const hasLayout =
+    (selectedCharacter?.sections?.length ?? 0) > 0 ||
+    selectedCharacter?.linkedTemplateId != null;
 
   const sourceSections = canEditStructure
     ? editLayoutDraftSections
@@ -841,6 +845,7 @@ export default function ChartsEditor() {
                 </Button>
               </>
             ) : isFillMode ? (
+              hasLayout ? (
               <Button
                 variant="secondary"
                 size="sm"
@@ -849,6 +854,7 @@ export default function ChartsEditor() {
               >
                 Edit layout
               </Button>
+              ) : null
             ) : (
             <>
               <Button
@@ -908,9 +914,17 @@ export default function ChartsEditor() {
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <div className={chartSectionLayoutMode === "grid" ? "w-full space-y-6" : "max-w-2xl space-y-6"}>
             {visibleSections.length === 0 ? (
+              !hasLayout && projectId && selectedCharacterId ? (
+                <ChartTemplatePicker
+                  projectId={projectId}
+                  characterId={selectedCharacterId}
+                  characterName={selectedCharacter.name}
+                />
+              ) : (
               <p className="text-dark-muted text-sm py-4">
                 No sections yet. Add a top-level section (H1) from the toolbar or the button above.
               </p>
+              )
             ) : (
               <SortableContext
                 items={visibleSections.map((s) => `section-${s.id}`)}

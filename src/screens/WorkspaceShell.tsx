@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Navigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
 import ModuleBadge from "../components/ui/ModuleBadge";
@@ -108,6 +108,10 @@ export default function WorkspaceShell() {
               : undefined;
 
   useWindowTitle(project ? `${project.name} - Synapse IWE` : "Synapse IWE");
+
+  if (project && isCharts && id) {
+    return <Navigate to={`/charts/${id}`} replace />;
+  }
 
   if (!project) {
     return (
