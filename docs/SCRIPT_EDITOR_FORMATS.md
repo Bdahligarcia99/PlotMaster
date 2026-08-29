@@ -219,7 +219,7 @@ Union <unionId> {
 }
 ```
 
-- Partner slots come from the first non-`child` members in order; `type: parent` means unassigned role. All `child` members become child edges.
+- Partner slots come from the first non-`child` members in order; `type: parent` means unassigned role. All `child` members become child edges. Unions may list **more than two** parent members — order in the block defines partner slot order (`partner-0`, `partner-1`, …).
 - `type:` is `parent` (unassigned), `child` (structural child edge), a built-in role id (`father`, `mother`, `unknown`, `guardian`, `stepmother`, `stepfather`), a custom role label, or a quoted string for labels with spaces.
 - Child members may include an optional `role:` inside the `{ ... }` block (e.g. `son`, `daughter`, `adoptive_son`, or a custom label). This is stored on the child edge, separate from the structural `type: child`.
 - Union `x`/`y` are absolute canvas coordinates. Member `dx`/`dy` are relative to the union origin (union position = `0,0`). Parser also accepts `x'`/`y'` as aliases for `dx`/`dy`.

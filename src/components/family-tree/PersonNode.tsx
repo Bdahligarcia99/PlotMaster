@@ -9,6 +9,8 @@ import {
   canBranchFromPerson,
   getAnchorAtY,
   formatGenerationAnchorLabel,
+  getUnionPartners,
+  type UnionNodeData,
 } from "../../store/familyTreeStore";
 
 function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData>) {
@@ -88,12 +90,8 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const hasSuggestions = nameRoleSuggestions.some((s) => s.nodeId === id);
   const hasUnassignedRole = nodes.some((n) => {
     if ((n.data as { kind?: string })?.kind !== "union") return false;
-    const d = n.data as { leftPartnerId?: string; rightPartnerId?: string; partnerIds?: (string | null)[]; leftPartnerRole?: string; rightPartnerRole?: string };
-    const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
-    const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
-    if (leftId === id) return !d.leftPartnerRole;
-    if (rightId === id) return !d.rightPartnerRole;
-    return false;
+    const partners = getUnionPartners(n.data as UnionNodeData);
+    return partners.some((p) => p.personId === id && !p.role);
   });
   const personData = nodeData as PersonNodeData;
   const hasNoGender = !personData.gender;
@@ -169,7 +167,6 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const bottomConnectMode =
     connectUnionId != null &&
     selectedNodeIds.includes(id) &&
-    selectedPersonNodes.length <= 2 &&
     !hasPartnerEdgeToUnion(id, connectUnionId);
 
   const connectionButtonClass = (mode: "connect" | "unlink" | "disabled") =>
@@ -348,13 +345,11 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
         title={
           bottomConnectMode
             ? "Link selected person(s) as parent(s) of selected union"
-            : selectedPersonNodes.length > 2
-              ? "Parent link supports at most 2 selected people"
-              : partnerUnionIds.length === 0
-                ? "No partner union to unlink"
-                : partnerUnionIds.length >= 2 && !selectedPartnerUnionId
-                  ? "Select a union below to unlink"
-                  : "Unlink from partner union"
+            : partnerUnionIds.length === 0
+              ? "No partner union to unlink"
+              : partnerUnionIds.length >= 2 && !selectedPartnerUnionId
+                ? "Select a union below to unlink"
+                : "Unlink from partner union"
         }
         disabled={!bottomConnectMode && !bottomUnlinkEnabled}
         onClick={handleBottomButton}

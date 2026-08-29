@@ -8,6 +8,7 @@ import {
   getUnionFamilyMemberIds,
   type PersonNodeData,
   type UnionNodeData,
+  getUnionPartners,
 } from "./familyTreeStore";
 
 export interface FamilyTreeDocumentRecord {
@@ -242,23 +243,16 @@ function unionDisplayLabel(
   const unionNode = nodes.find((n) => n.id === unionId);
   if (!unionNode || (unionNode.data as UnionNodeData).kind !== "union") return unionId;
   const d = unionNode.data as UnionNodeData;
-  const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
-  const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
-  const leftName = leftId
-    ? getPersonDisplayName(
-        nodes.find((n) => n.id === leftId)?.data as PersonNodeData,
-        leftId,
-        nodes
-      )
-    : "?";
-  const rightName = rightId
-    ? getPersonDisplayName(
-        nodes.find((n) => n.id === rightId)?.data as PersonNodeData,
-        rightId,
-        nodes
-      )
-    : "?";
-  return `${leftName} ↔ ${rightName}`;
+  const partners = getUnionPartners(d);
+  if (partners.length === 0) return unionId;
+  const names = partners.map((p) =>
+    getPersonDisplayName(
+      nodes.find((n) => n.id === p.personId)?.data as PersonNodeData,
+      p.personId,
+      nodes
+    ) || "?"
+  );
+  return names.join(" ↔ ");
 }
 
 /** Comment-only reference lines for the per-family Unassigned file. */

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { Node, Edge } from "reactflow";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData, FamilyGroup } from "../../store/familyTreeStore";
-import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings, findFamilyForNode, getUnionFamilyMemberIds, getFamilyVisibleNodeIds, computeAnchorBlockedUnionIds } from "../../store/familyTreeStore";
+import { formatGenerationAnchorLabel, getPersonDisplayName, isChildEdge, computeBranchMemberIds, getUnassignedReasons, isNodeUnassigned, computeFamilyClusterAnalysis, isUnionClusterUnassigned, getFamilyNodeWarnings, findFamilyForNode, getUnionFamilyMemberIds, getFamilyVisibleNodeIds, computeAnchorBlockedUnionIds, getUnionPartners } from "../../store/familyTreeStore";
 import {
   getDocumentsForFamily,
   getDocumentRefsForNode,
@@ -108,7 +108,7 @@ function PersonReviewWarnings({
 
 export interface FamilyUnit {
   unionId: string;
-  parents: [string, string];
+  parents: string[];
   children: string[];
 }
 
@@ -130,28 +130,22 @@ function buildFamilyUnits(
 
   for (const union of unionNodes) {
     const data = union.data as UnionNodeData;
-    const partnerIds = data.partnerIds;
-    if (!partnerIds || partnerIds.length !== 2) continue;
-
-    const leftId = data.leftPartnerId ?? partnerIds[0];
-    const rightId = data.rightPartnerId ?? partnerIds[1];
-    if (leftId == null || rightId == null) continue;
-    const leftPerson = personById.get(leftId);
-    const rightPerson = personById.get(rightId);
-    if (!leftPerson || !rightPerson) continue;
+    const parentIds = getUnionPartners(data)
+      .map((p) => p.personId)
+      .filter((id) => personById.has(id));
+    if (parentIds.length === 0) continue;
 
     const childIds = edges
       .filter((e) => e.source === union.id && isChildEdge(e))
       .map((e) => e.target)
       .filter((id) => personById.has(id));
 
-    linkedPersonIds.add(leftId);
-    linkedPersonIds.add(rightId);
+    parentIds.forEach((id) => linkedPersonIds.add(id));
     childIds.forEach((id) => linkedPersonIds.add(id));
 
     units.push({
       unionId: union.id,
-      parents: [leftId, rightId],
+      parents: parentIds,
       children: childIds,
     });
   }
@@ -185,11 +179,10 @@ function getDisplayName(
   if (!n) return "Entity";
   if (kind === "person") return getPersonDisplayName(n.data as PersonNodeData, n.id, nodes);
   const d = n.data as UnionNodeData;
-  const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
-  const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
-  const leftName = leftId != null ? getPersonName(nodes, leftId) : "?";
-  const rightName = rightId != null ? getPersonName(nodes, rightId) : "?";
-  return `${leftName} ↔ ${rightName}`;
+  const partnerNames = getUnionPartners(d).map(
+    (p) => getPersonName(nodes, p.personId)
+  );
+  return partnerNames.length > 0 ? partnerNames.join(" ↔ ") : "?";
 }
 
 export default function FamilyTreeLeftSidebar({
@@ -389,7 +382,7 @@ export default function FamilyTreeLeftSidebar({
     for (const unit of filteredFamilyUnits) {
       order.push(unit.unionId);
       if (!collapsedUnits.has(unit.unionId)) {
-        order.push(unit.parents[0], unit.parents[1], ...unit.children);
+        order.push(...unit.parents, ...unit.children);
       }
     }
     for (const n of filteredUnassignedEntities) {
@@ -1181,9 +1174,9 @@ export default function FamilyTreeLeftSidebar({
                 </div>
                 <div className="space-y-2">
                   {filteredFamilyUnits.map((unit) => {
-                    const [leftId, rightId] = unit.parents;
-                    const leftName = getPersonName(nodes, leftId);
-                    const rightName = getPersonName(nodes, rightId);
+                    const parentLabel = unit.parents
+                      .map((id) => getPersonName(nodes, id))
+                      .join(" ↔ ");
                     const isCollapsed = collapsedUnits.has(unit.unionId);
                     const unionData = nodes.find((n) => n.id === unit.unionId)?.data as UnionNodeData | undefined;
                     let styleLabel: string | null = null;
@@ -1211,10 +1204,10 @@ export default function FamilyTreeLeftSidebar({
                             type="button"
                             onClick={(e) => handleSidebarEntityClick(e, unit.unionId)}
                             onDoubleClick={(e) => handleUnionDoubleClick(e, unit.unionId)}
-                            title={`${leftName} ↔ ${rightName}`}
+                            title={parentLabel}
                             className={`flex-1 min-w-0 text-left text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap hover:text-blue-400 ${unionRowSelectedClass(unit.unionId)}`}
                           >
-                            {leftName} ↔ {rightName}
+                            {parentLabel}
                           </button>
                           {unionData?.isMainGraph && (
                             <span
@@ -1289,98 +1282,57 @@ export default function FamilyTreeLeftSidebar({
                             <p className="text-dark-muted text-[10px] uppercase mt-1 px-1">
                               Parents
                             </p>
-                            {editingPersonId === leftId ? (
-                              <div
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${personRowSelectedClass(leftId)}`}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <input
-                                  type="text"
-                                  value={draftName}
-                                  onChange={(e) => setDraftName(e.target.value)}
-                                  onBlur={() => savePersonName(leftId)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") savePersonName(leftId);
-                                    if (e.key === "Escape") cancelEditing();
-                                  }}
-                                  autoFocus
-                                  className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                />
-                                <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
-                                <AnchorDot personId={leftId} nodes={nodes} />
-                                <EntityFamilyWarnings nodeId={leftId} family={activeFamily} nodes={nodes} edges={edges} />
-                                <PersonReviewWarnings personId={leftId} suggestions={nameRoleSuggestions} />
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(e) => handleSidebarEntityClick(e, leftId)}
-                                onDoubleClick={(e) => handlePersonRowDoubleClick(e, leftId)}
-                                title={leftName}
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(leftId, "hover:bg-dark-accent/30")}`}
-                              >
-                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <span className="flex-1 min-w-0 overflow-hidden">
-                                  <span
-                                    onDoubleClick={(e) => startEditingPerson(e, leftId, leftName)}
-                                    className="text-dark-text text-sm inline-block max-w-full align-middle overflow-hidden text-ellipsis whitespace-nowrap"
-                                  >
-                                    {leftName}
+                            {unit.parents.map((parentId) => {
+                              const parentName = getPersonName(nodes, parentId);
+                              return editingPersonId === parentId ? (
+                                <div
+                                  key={parentId}
+                                  className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${personRowSelectedClass(parentId)}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
+                                  <input
+                                    type="text"
+                                    value={draftName}
+                                    onChange={(e) => setDraftName(e.target.value)}
+                                    onBlur={() => savePersonName(parentId)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") savePersonName(parentId);
+                                      if (e.key === "Escape") cancelEditing();
+                                    }}
+                                    autoFocus
+                                    className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                  <PersonGenBadge personId={parentId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                  <AnchorDot personId={parentId} nodes={nodes} />
+                                  <EntityFamilyWarnings nodeId={parentId} family={activeFamily} nodes={nodes} edges={edges} />
+                                  <PersonReviewWarnings personId={parentId} suggestions={nameRoleSuggestions} />
+                                </div>
+                              ) : (
+                                <button
+                                  key={parentId}
+                                  type="button"
+                                  onClick={(e) => handleSidebarEntityClick(e, parentId)}
+                                  onDoubleClick={(e) => handlePersonRowDoubleClick(e, parentId)}
+                                  title={parentName}
+                                  className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(parentId, "hover:bg-dark-accent/30")}`}
+                                >
+                                  <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
+                                  <span className="flex-1 min-w-0 overflow-hidden">
+                                    <span
+                                      onDoubleClick={(e) => startEditingPerson(e, parentId, parentName)}
+                                      className="text-dark-text text-sm inline-block max-w-full align-middle overflow-hidden text-ellipsis whitespace-nowrap"
+                                    >
+                                      {parentName}
+                                    </span>
                                   </span>
-                                </span>
-                                <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
-                                <AnchorDot personId={leftId} nodes={nodes} />
-                                <EntityFamilyWarnings nodeId={leftId} family={activeFamily} nodes={nodes} edges={edges} />
-                                <PersonReviewWarnings personId={leftId} suggestions={nameRoleSuggestions} />
-                              </button>
-                            )}
-                            {editingPersonId === rightId ? (
-                              <div
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-0 ${personRowSelectedClass(rightId)}`}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <input
-                                  type="text"
-                                  value={draftName}
-                                  onChange={(e) => setDraftName(e.target.value)}
-                                  onBlur={() => savePersonName(rightId)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") savePersonName(rightId);
-                                    if (e.key === "Escape") cancelEditing();
-                                  }}
-                                  autoFocus
-                                  className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-dark-bg border border-blue-500 rounded text-dark-text focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                />
-                                <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
-                                <AnchorDot personId={rightId} nodes={nodes} />
-                                <EntityFamilyWarnings nodeId={rightId} family={activeFamily} nodes={nodes} edges={edges} />
-                                <PersonReviewWarnings personId={rightId} suggestions={nameRoleSuggestions} />
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(e) => handleSidebarEntityClick(e, rightId)}
-                                onDoubleClick={(e) => handlePersonRowDoubleClick(e, rightId)}
-                                title={rightName}
-                                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left min-w-0 ${personRowSelectedClass(rightId, "hover:bg-dark-accent/30")}`}
-                              >
-                                <div className="w-5 h-5 rounded-full bg-dark-accent flex-shrink-0" />
-                                <span className="flex-1 min-w-0 overflow-hidden">
-                                  <span
-                                    onDoubleClick={(e) => startEditingPerson(e, rightId, rightName)}
-                                    className="text-dark-text text-sm inline-block max-w-full align-middle overflow-hidden text-ellipsis whitespace-nowrap"
-                                  >
-                                    {rightName}
-                                  </span>
-                                </span>
-                                <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
-                                <AnchorDot personId={rightId} nodes={nodes} />
-                                <EntityFamilyWarnings nodeId={rightId} family={activeFamily} nodes={nodes} edges={edges} />
-                                <PersonReviewWarnings personId={rightId} suggestions={nameRoleSuggestions} />
-                              </button>
-                            )}
+                                  <PersonGenBadge personId={parentId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
+                                  <AnchorDot personId={parentId} nodes={nodes} />
+                                  <EntityFamilyWarnings nodeId={parentId} family={activeFamily} nodes={nodes} edges={edges} />
+                                  <PersonReviewWarnings personId={parentId} suggestions={nameRoleSuggestions} />
+                                </button>
+                              );
+                            })}
                             {unit.children.length > 0 && (
                               <>
                                 <p className="text-dark-muted text-[10px] uppercase mt-2 px-1">

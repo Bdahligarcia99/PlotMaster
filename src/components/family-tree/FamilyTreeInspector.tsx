@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import type { Edge } from "reactflow";
+import type { Edge, Node } from "reactflow";
 import {
   DndContext,
   type DragEndEvent,
@@ -19,257 +19,22 @@ import {
   getPersonDisplayName,
   getPersonNameParts,
   getUnionIdsForPerson,
+  getUnionPartners,
+  resolveUnionPartnerNodes,
   isChildEdge,
   findFamilyForNode,
   getEffectiveFamilyColor,
-  BUILT_IN_PARENT_ROLES,
-  BUILT_IN_GENDERS,
-  BUILT_IN_CHILD_ROLES,
   hasUnknownParentRole,
   getAnchorAtY,
   DEFAULT_PERSON_H,
 } from "../../store/familyTreeStore";
-import type { PersonNodeData, UnionNodeData, ParentRole } from "../../store/familyTreeStore";
+import type { PersonNodeData, UnionNodeData, ParentRole, FamilyTreeNodeData } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
-
-const CUSTOM_SENTINEL = "__custom__";
-
-const PARENT_ROLE_LABELS: Record<string, string> = {
-  father: "Father",
-  mother: "Mother",
-  unknown: "Unknown",
-  guardian: "Guardian",
-  stepmother: "Stepmother",
-  stepfather: "Stepfather",
-};
-
-const GENDER_LABELS: Record<string, string> = {
-  male: "Male",
-  female: "Female",
-  other: "Other",
-};
-
-const CHILD_ROLE_LABELS: Record<string, string> = {
-  son: "Son",
-  daughter: "Daughter",
-  child: "Child",
-  adoptive_son: "Adoptive Son",
-  adoptive_daughter: "Adoptive Daughter",
-  adoptive_child: "Adoptive Child",
-};
-
-const selectClassName =
-  "w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500";
-
-function ChildRoleSelect({
-  value,
-  onChange,
-  customChildRoles,
-  addCustomChildRole,
-}: {
-  value: string;
-  onChange: (v: string | null) => void;
-  customChildRoles: string[];
-  addCustomChildRole: (label: string) => void;
-}) {
-  const [showCustom, setShowCustom] = useState(false);
-  const [customLabel, setCustomLabel] = useState("");
-
-  const handleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value;
-    if (v === CUSTOM_SENTINEL) {
-      setShowCustom(true);
-      return;
-    }
-    onChange(v || null);
-  };
-
-  const handleAddCustom = () => {
-    const label = customLabel.trim();
-    if (!label) return;
-    addCustomChildRole(label);
-    onChange(label);
-    setCustomLabel("");
-    setShowCustom(false);
-  };
-
-  return (
-    <div>
-      <select value={value} onChange={handleSelect} className={selectClassName}>
-        <option value="">Unassigned</option>
-        {BUILT_IN_CHILD_ROLES.map((r) => (
-          <option key={r} value={r}>
-            {CHILD_ROLE_LABELS[r] ?? r}
-          </option>
-        ))}
-        {customChildRoles.map((r) => (
-          <option key={r} value={r}>
-            {r}
-          </option>
-        ))}
-        <option value={CUSTOM_SENTINEL}>Custom...</option>
-      </select>
-      {showCustom && (
-        <div className="flex gap-2 mt-2">
-          <input
-            type="text"
-            value={customLabel}
-            onChange={(e) => setCustomLabel(e.target.value)}
-            placeholder="Custom role label"
-            className="flex-1 px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded-lg text-dark-text"
-          />
-          <button
-            type="button"
-            onClick={handleAddCustom}
-            className="px-2 py-1 text-sm rounded border border-dark-accent/50 hover:bg-dark-accent/30 text-dark-text"
-          >
-            Add
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ParentRoleSelect({
-  value,
-  onChange,
-  customParentRoles,
-  addCustomParentRole,
-}: {
-  value: string;
-  onChange: (v: string | null) => void;
-  customParentRoles: string[];
-  addCustomParentRole: (label: string) => void;
-}) {
-  const [showCustom, setShowCustom] = useState(false);
-  const [customLabel, setCustomLabel] = useState("");
-
-  const handleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value;
-    if (v === CUSTOM_SENTINEL) {
-      setShowCustom(true);
-      return;
-    }
-    onChange(v || null);
-  };
-
-  const handleAddCustom = () => {
-    const label = customLabel.trim();
-    if (!label) return;
-    addCustomParentRole(label);
-    onChange(label);
-    setCustomLabel("");
-    setShowCustom(false);
-  };
-
-  return (
-    <div>
-      <select value={value} onChange={handleSelect} className={selectClassName}>
-        <option value="">Unassigned</option>
-        {BUILT_IN_PARENT_ROLES.map((r) => (
-          <option key={r} value={r}>
-            {PARENT_ROLE_LABELS[r] ?? r}
-          </option>
-        ))}
-        {customParentRoles.map((r) => (
-          <option key={r} value={r}>
-            {r}
-          </option>
-        ))}
-        <option value={CUSTOM_SENTINEL}>Custom...</option>
-      </select>
-      {showCustom && (
-        <div className="flex gap-2 mt-2">
-          <input
-            type="text"
-            value={customLabel}
-            onChange={(e) => setCustomLabel(e.target.value)}
-            placeholder="Custom role label"
-            className="flex-1 px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded-lg text-dark-text"
-          />
-          <button
-            type="button"
-            onClick={handleAddCustom}
-            className="px-2 py-1 text-sm rounded border border-dark-accent/50 hover:bg-dark-accent/30 text-dark-text"
-          >
-            Add
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GenderSelect({
-  value,
-  onChange,
-  customGenders,
-  addCustomGender,
-}: {
-  value: string;
-  onChange: (v: string | null) => void;
-  customGenders: string[];
-  addCustomGender: (label: string) => void;
-}) {
-  const [showCustom, setShowCustom] = useState(false);
-  const [customLabel, setCustomLabel] = useState("");
-
-  const handleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value;
-    if (v === CUSTOM_SENTINEL) {
-      setShowCustom(true);
-      return;
-    }
-    onChange(v || null);
-  };
-
-  const handleAddCustom = () => {
-    const label = customLabel.trim();
-    if (!label) return;
-    addCustomGender(label);
-    onChange(label);
-    setCustomLabel("");
-    setShowCustom(false);
-  };
-
-  return (
-    <div>
-      <select value={value} onChange={handleSelect} className={selectClassName}>
-        <option value="">Unassigned</option>
-        {BUILT_IN_GENDERS.map((g) => (
-          <option key={g} value={g}>
-            {GENDER_LABELS[g] ?? g}
-          </option>
-        ))}
-        {customGenders.map((g) => (
-          <option key={g} value={g}>
-            {g}
-          </option>
-        ))}
-        <option value={CUSTOM_SENTINEL}>Custom...</option>
-      </select>
-      {showCustom && (
-        <div className="flex gap-2 mt-2">
-          <input
-            type="text"
-            value={customLabel}
-            onChange={(e) => setCustomLabel(e.target.value)}
-            placeholder="Custom gender label"
-            className="flex-1 px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded-lg text-dark-text"
-          />
-          <button
-            type="button"
-            onClick={handleAddCustom}
-            className="px-2 py-1 text-sm rounded border border-dark-accent/50 hover:bg-dark-accent/30 text-dark-text"
-          >
-            Add
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
+import {
+  ChildRoleSelect,
+  GenderSelect,
+  ParentRoleSelect,
+} from "./roleSelects";
 
 type ChildUnionInfo = {
   unionId: string;
@@ -291,18 +56,11 @@ function getChildUnionsForPerson(
   for (const unionId of parentUnionIds) {
     const unionNode = nodes.find((n) => n.id === unionId && n.type === "union");
     if (!unionNode) continue;
-    const data = unionNode.data as UnionNodeData;
-    const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
-    const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
-    const parents = [leftId, rightId]
-      .filter((id): id is string => !!id)
-      .map((id) => {
-        const node = nodes.find((n) => n.id === id && n.type === "person");
-        const displayName = node?.data
-          ? getPersonDisplayName(node.data as PersonNodeData, id, nodes)
-          : id;
-        return { id, displayName };
-      });
+    const partnerNodes = resolveUnionPartnerNodes(unionId, nodes as Node<FamilyTreeNodeData>[]);
+    const parents = partnerNodes.map((n) => ({
+      id: n.id,
+      displayName: getPersonDisplayName(n.data, n.id, nodes),
+    }));
     const siblingIds = edges
       .filter((e) => isChildEdge(e) && e.source === unionId)
       .map((e) => e.target)
@@ -396,14 +154,14 @@ function PartnersDisplay({
   nodes: { id: string; type?: string; data: unknown }[];
   unionData: UnionNodeData;
 }) {
-  const ids = unionData.leftPartnerId && unionData.rightPartnerId
-    ? [unionData.leftPartnerId, unionData.rightPartnerId]
-    : unionData.partnerIds ?? [];
-  const names = ids.map((pid) => {
-    const partner = nodes.find((n) => n.id === pid && n.type === "person");
-    return partner?.data ? getPersonDisplayName(partner.data as PersonNodeData, pid ?? undefined, nodes) : String(pid ?? "");
+  const partners = getUnionPartners(unionData);
+  const names = partners.map((p) => {
+    const partner = nodes.find((n) => n.id === p.personId && n.type === "person");
+    return partner?.data
+      ? getPersonDisplayName(partner.data as PersonNodeData, p.personId, nodes)
+      : p.personId;
   });
-  const sep = unionData.leftPartnerId && unionData.rightPartnerId ? " \u2014 " : ", ";
+  const sep = partners.length === 2 ? " \u2014 " : ", ";
   return <p className="text-dark-text text-sm">{names.join(sep) || "\u2014"}</p>;
 }
 
@@ -411,66 +169,60 @@ function getSwapPartnersState(
   unionData: UnionNodeData,
   nodes: { id: string; type?: string }[]
 ): { canSwap: boolean; tooltip: string } {
-  if (!unionData.leftPartnerId || !unionData.rightPartnerId) {
-    return { canSwap: false, tooltip: "Partner order not yet set. Select this union and run Sort first." };
+  const partners = getUnionPartners(unionData);
+  if (partners.length < 2) {
+    return { canSwap: false, tooltip: "Need at least 2 partners to swap." };
   }
-  if (!unionData.partnerIds || unionData.partnerIds.length !== 2) {
-    return { canSwap: false, tooltip: "Invalid union data." };
-  }
-  const leftExists = nodes.some((n) => n.id === unionData.leftPartnerId && n.type === "person");
-  const rightExists = nodes.some((n) => n.id === unionData.rightPartnerId && n.type === "person");
-  if (!leftExists || !rightExists) {
+  const allExist = partners.every((p) =>
+    nodes.some((n) => n.id === p.personId && n.type === "person")
+  );
+  if (!allExist) {
     return { canSwap: false, tooltip: "Partner nodes not found." };
   }
-  return { canSwap: true, tooltip: "Swap partners" };
+  if (partners.length === 2) {
+    return { canSwap: true, tooltip: "Swap partners" };
+  }
+  return { canSwap: true, tooltip: "Swap first two partners" };
 }
 
 function UnionRoleControls({
   unionId,
   unionData,
   nodes,
-  updateUnionPartnerRole,
+  updateUnionPartnerRoleAt,
   customParentRoles,
   addCustomParentRole,
 }: {
   unionId: string;
   unionData: UnionNodeData;
   nodes: { id: string; type?: string; data: unknown }[];
-  updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
+  updateUnionPartnerRoleAt: (unionId: string, partnerIndex: number, role: ParentRole | null) => void;
   customParentRoles: string[];
   addCustomParentRole: (label: string) => void;
 }) {
-  const leftId = unionData.leftPartnerId ?? unionData.partnerIds?.[0];
-  const rightId = unionData.rightPartnerId ?? unionData.partnerIds?.[1];
-  if (!leftId || !rightId) return null;
-  const leftName = nodes.find((n) => n.id === leftId && n.type === "person")?.data
-    ? getPersonDisplayName(nodes.find((n) => n.id === leftId)!.data as PersonNodeData, leftId, nodes)
-    : "Left";
-  const rightName = nodes.find((n) => n.id === rightId && n.type === "person")?.data
-    ? getPersonDisplayName(nodes.find((n) => n.id === rightId)!.data as PersonNodeData, rightId, nodes)
-    : "Right";
+  const partners = getUnionPartners(unionData);
+  if (partners.length === 0) return null;
   return (
     <div className="mb-4 space-y-2">
       <label className="block text-dark-muted text-sm mb-2">Parent roles</label>
       <div className="space-y-2">
-        <div>
-          <span className="block text-dark-muted text-xs mb-1">{leftName}</span>
-          <ParentRoleSelect
-            value={unionData.leftPartnerRole ?? ""}
-            onChange={(v) => updateUnionPartnerRole(unionId, "left", v)}
-            customParentRoles={customParentRoles}
-            addCustomParentRole={addCustomParentRole}
-          />
-        </div>
-        <div>
-          <span className="block text-dark-muted text-xs mb-1">{rightName}</span>
-          <ParentRoleSelect
-            value={unionData.rightPartnerRole ?? ""}
-            onChange={(v) => updateUnionPartnerRole(unionId, "right", v)}
-            customParentRoles={customParentRoles}
-            addCustomParentRole={addCustomParentRole}
-          />
-        </div>
+        {partners.map((partner, index) => {
+          const partnerNode = nodes.find((n) => n.id === partner.personId && n.type === "person");
+          const name = partnerNode?.data
+            ? getPersonDisplayName(partnerNode.data as PersonNodeData, partner.personId, nodes)
+            : partner.personId;
+          return (
+            <div key={partner.personId}>
+              <span className="block text-dark-muted text-xs mb-1">{name}</span>
+              <ParentRoleSelect
+                value={partner.role ?? ""}
+                onChange={(v) => updateUnionPartnerRoleAt(unionId, index, v)}
+                customParentRoles={customParentRoles}
+                addCustomParentRole={addCustomParentRole}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -479,11 +231,18 @@ function UnionRoleControls({
 type ParentUnionInfo = {
   unionId: string;
   unionNode: { id: string; data: unknown };
-  slot: "left" | "right";
-  otherPartnerId: string;
-  otherPartnerName: string;
+  partnerIndex: number;
+  otherPartners: { id: string; displayName: string }[];
   children: { id: string; displayName: string }[];
 };
+
+function formatRoleWithLabel(otherPartners: { displayName: string }[]): string {
+  if (otherPartners.length === 0) return "Role";
+  if (otherPartners.length === 1) return `Role with ${otherPartners[0]!.displayName}`;
+  const names = otherPartners.map((p) => p.displayName);
+  if (names.length === 2) return `Role with ${names[0]} & ${names[1]}`;
+  return `Role with ${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
+}
 
 function getParentUnionsForPerson(
   personId: string,
@@ -494,53 +253,37 @@ function getParentUnionsForPerson(
   const unionNodes = nodes.filter((n) => n.type === "union");
   for (const unionNode of unionNodes) {
     const data = unionNode.data as UnionNodeData;
-    const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
-    const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
-    if (personId === leftId && rightId) {
-      const otherName = nodes.find((n) => n.id === rightId && n.type === "person")?.data
-        ? getPersonDisplayName(nodes.find((n) => n.id === rightId)!.data as PersonNodeData, rightId, nodes)
-        : "Partner";
-      const childIds = edges
-        .filter((e) => isChildEdge(e) && e.source === unionNode.id)
-        .map((e) => e.target);
-      const children = childIds.map((id) => {
-        const childNode = nodes.find((n) => n.id === id && n.type === "person");
-        const displayName = childNode?.data
-          ? getPersonDisplayName(childNode.data as PersonNodeData, id, nodes)
-          : id;
-        return { id, displayName };
+    const partners = getUnionPartners(data);
+    const partnerIndex = partners.findIndex((p) => p.personId === personId);
+    if (partnerIndex === -1) continue;
+
+    const otherPartners = partners
+      .filter((_, i) => i !== partnerIndex)
+      .map((p) => {
+        const node = nodes.find((n) => n.id === p.personId && n.type === "person");
+        const displayName = node?.data
+          ? getPersonDisplayName(node.data as PersonNodeData, p.personId, nodes)
+          : p.personId;
+        return { id: p.personId, displayName };
       });
-      result.push({
-        unionId: unionNode.id,
-        unionNode,
-        slot: "left",
-        otherPartnerId: rightId,
-        otherPartnerName: otherName,
-        children,
-      });
-    } else if (personId === rightId && leftId) {
-      const otherName = nodes.find((n) => n.id === leftId && n.type === "person")?.data
-        ? getPersonDisplayName(nodes.find((n) => n.id === leftId)!.data as PersonNodeData, leftId, nodes)
-        : "Partner";
-      const childIds = edges
-        .filter((e) => isChildEdge(e) && e.source === unionNode.id)
-        .map((e) => e.target);
-      const children = childIds.map((id) => {
-        const childNode = nodes.find((n) => n.id === id && n.type === "person");
-        const displayName = childNode?.data
-          ? getPersonDisplayName(childNode.data as PersonNodeData, id, nodes)
-          : id;
-        return { id, displayName };
-      });
-      result.push({
-        unionId: unionNode.id,
-        unionNode,
-        slot: "right",
-        otherPartnerId: leftId,
-        otherPartnerName: otherName,
-        children,
-      });
-    }
+
+    const childIds = edges
+      .filter((e) => isChildEdge(e) && e.source === unionNode.id)
+      .map((e) => e.target);
+    const children = childIds.map((id) => {
+      const childNode = nodes.find((n) => n.id === id && n.type === "person");
+      const displayName = childNode?.data
+        ? getPersonDisplayName(childNode.data as PersonNodeData, id, nodes)
+        : id;
+      return { id, displayName };
+    });
+    result.push({
+      unionId: unionNode.id,
+      unionNode,
+      partnerIndex,
+      otherPartners,
+      children,
+    });
   }
   return result;
 }
@@ -705,7 +448,7 @@ function PersonUnionsSection({
   nodes,
   edges,
   onSelectNode,
-  updateUnionPartnerRole,
+  updateUnionPartnerRoleAt,
   swapPersonUnionSides,
   moveChildToUnion,
   requestRemoveConnection,
@@ -716,7 +459,7 @@ function PersonUnionsSection({
   nodes: { id: string; type?: string; data: unknown }[];
   edges: Edge[];
   onSelectNode: (id: string) => void;
-  updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
+  updateUnionPartnerRoleAt: (unionId: string, partnerIndex: number, role: ParentRole | null) => void;
   swapPersonUnionSides: (personId: string) => boolean;
   moveChildToUnion: (childId: string, fromUnionId: string, toUnionId: string) => boolean;
   requestRemoveConnection: (target: import("../../store/familyTreeStore").RemoveConnectionTarget) => string | null;
@@ -787,19 +530,18 @@ function PersonUnionsSection({
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="space-y-4">
-        {parentUnions.map((union) => (
+        {parentUnions.map((union) => {
+          const partners = getUnionPartners(union.unionNode.data as UnionNodeData);
+          const role = partners[union.partnerIndex]?.role ?? "";
+          return (
           <div key={union.unionId}>
             <div className="mb-2">
               <label className="block text-dark-muted text-sm mb-2">
-                Role with {union.otherPartnerName}
+                {formatRoleWithLabel(union.otherPartners)}
               </label>
               <ParentRoleSelect
-                value={
-                  ((union.unionNode.data as UnionNodeData)[
-                    union.slot === "left" ? "leftPartnerRole" : "rightPartnerRole"
-                  ] ?? "") as string
-                }
-                onChange={(v) => updateUnionPartnerRole(union.unionId, union.slot, v)}
+                value={role}
+                onChange={(v) => updateUnionPartnerRoleAt(union.unionId, union.partnerIndex, v)}
                 customParentRoles={customParentRoles}
                 addCustomParentRole={addCustomParentRole}
               />
@@ -808,22 +550,26 @@ function PersonUnionsSection({
               <div className="space-y-2">
                 <div>
                   <label className="block text-dark-muted text-sm mb-1">Partners</label>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onSelectNode(union.otherPartnerId)}
-                      className="flex-1 text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
-                    >
-                      {union.otherPartnerName}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => handleRemovePartner(union.unionId, union.otherPartnerId, union.otherPartnerName, e)}
-                      title="Remove from union"
-                      className="text-dark-muted hover:text-red-500 px-1 text-xs"
-                    >
-                      ×
-                    </button>
+                  <div className="space-y-1">
+                    {union.otherPartners.map(({ id, displayName }) => (
+                      <div key={id} className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => onSelectNode(id)}
+                          className="flex-1 text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
+                        >
+                          {displayName}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleRemovePartner(union.unionId, id, displayName, e)}
+                          title="Remove from union"
+                          className="text-dark-muted hover:text-red-500 px-1 text-xs"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
                 <div>
@@ -838,7 +584,8 @@ function PersonUnionsSection({
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       <div className="mt-4">
         <SwapSidesSection
@@ -861,21 +608,21 @@ function PersonUnionsSection({
 function SwapPartnersButton({
   unionData,
   unionId,
-  swapUnionPartners,
+  moveUnionPartner,
   nodes,
 }: {
   unionData: UnionNodeData;
   unionId: string;
-  swapUnionPartners: (id: string) => boolean;
+  moveUnionPartner: (unionId: string, fromIndex: number, toIndex: number) => boolean;
   nodes: { id: string; type?: string }[];
 }) {
   const { canSwap, tooltip } = getSwapPartnersState(unionData, nodes);
-  const fullTooltip = canSwap ? "Swap left and right partner. Select this union and run Sort to reflow layout." : tooltip;
+  const fullTooltip = canSwap ? "Swap first two partners. Select this union and run Sort to reflow layout." : tooltip;
   return (
     <button
       type="button"
       disabled={!canSwap}
-      onClick={() => swapUnionPartners(unionId)}
+      onClick={() => moveUnionPartner(unionId, 0, 1)}
       title={fullTooltip}
       className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-dark-accent/50"
     >
@@ -911,12 +658,12 @@ function SwapUnionSidesButton({
 function SwapPartnersIconButton({
   unionData,
   unionId,
-  swapUnionPartners,
+  moveUnionPartner,
   nodes,
 }: {
   unionData: UnionNodeData;
   unionId: string;
-  swapUnionPartners: (id: string) => boolean;
+  moveUnionPartner: (unionId: string, fromIndex: number, toIndex: number) => boolean;
   nodes: { id: string; type?: string }[];
 }) {
   const { canSwap, tooltip } = getSwapPartnersState(unionData, nodes);
@@ -924,7 +671,7 @@ function SwapPartnersIconButton({
     <button
       type="button"
       disabled={!canSwap}
-      onClick={() => swapUnionPartners(unionId)}
+      onClick={() => moveUnionPartner(unionId, 0, 1)}
       title={tooltip}
       className="w-7 h-7 flex items-center justify-center rounded border border-dark-accent/50 hover:bg-dark-accent/20 hover:border-dark-accent text-dark-muted hover:text-dark-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
     >
@@ -945,10 +692,10 @@ export default function FamilyTreeInspector() {
     updatePersonNameParts,
     updatePersonNicknames,
     updateNodeNotes,
-    swapUnionPartners,
     swapUnionHandleSides,
     swapPersonUnionSides,
-    updateUnionPartnerRole,
+    updateUnionPartnerRoleAt,
+    moveUnionPartner,
     updateChildRole,
     moveChildToUnion,
     requestRemoveConnection,
@@ -1395,7 +1142,7 @@ export default function FamilyTreeInspector() {
           <SwapPartnersIconButton
             unionData={nodeData as UnionNodeData}
             unionId={selectedNode.id}
-            swapUnionPartners={swapUnionPartners}
+            moveUnionPartner={moveUnionPartner}
             nodes={nodes}
           />
         )}
@@ -1428,8 +1175,8 @@ export default function FamilyTreeInspector() {
             const suggestionsForNode = nameRoleSuggestions.filter((s) => s.nodeId === selectedNode.id);
             const parentUnions = getParentUnionsForPerson(selectedNode.id, nodes, edges);
             const hasUnresolvedRole = parentUnions.some((pu) => {
-              const d = pu.unionNode.data as UnionNodeData;
-              return !(pu.slot === "left" ? d.leftPartnerRole : d.rightPartnerRole);
+              const partners = getUnionPartners(pu.unionNode.data as UnionNodeData);
+              return partners.some((p) => !p.role);
             });
             if (suggestionsForNode.length === 0 && !hasUnresolvedRole) return null;
             return (
@@ -1563,7 +1310,7 @@ export default function FamilyTreeInspector() {
             nodes={nodes}
             edges={edges}
             onSelectNode={(id) => setSelectedNodeIds([id])}
-            updateUnionPartnerRole={updateUnionPartnerRole}
+            updateUnionPartnerRoleAt={updateUnionPartnerRoleAt}
             swapPersonUnionSides={swapPersonUnionSides}
             moveChildToUnion={moveChildToUnion}
             requestRemoveConnection={requestRemoveConnection}
@@ -1716,7 +1463,7 @@ export default function FamilyTreeInspector() {
             unionId={selectedNode.id}
             unionData={nodeData as UnionNodeData}
             nodes={nodes}
-            updateUnionPartnerRole={updateUnionPartnerRole}
+            updateUnionPartnerRoleAt={updateUnionPartnerRoleAt}
             customParentRoles={customParentRoles}
             addCustomParentRole={addCustomParentRole}
           />
@@ -1724,7 +1471,7 @@ export default function FamilyTreeInspector() {
             <SwapPartnersButton
               unionData={nodeData as UnionNodeData}
               unionId={selectedNode.id}
-              swapUnionPartners={swapUnionPartners}
+              moveUnionPartner={moveUnionPartner}
               nodes={nodes}
             />
             <SwapUnionSidesButton

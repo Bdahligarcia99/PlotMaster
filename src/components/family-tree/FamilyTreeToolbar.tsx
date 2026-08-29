@@ -6,6 +6,7 @@ import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import FamilyTreeExportDialog from "./FamilyTreeExportDialog";
 import FamilyTreeReviewSuggestionsModal from "./FamilyTreeReviewSuggestionsModal";
 import FamilyEradicationWarningModal from "./FamilyEradicationWarningModal";
+import FullUnionAdvancedDialog from "./FullUnionAdvancedDialog";
 import {
   formatGenerationAnchorLabel,
   getPersonDisplayName,
@@ -112,6 +113,7 @@ export default function FamilyTreeToolbar() {
   const legendContainerRef = useRef<HTMLDivElement>(null);
   const legendDropdownRef = useRef<HTMLDivElement>(null);
   const [unionMenuOpen, setUnionMenuOpen] = useState(false);
+  const [fullUnionAdvancedOpen, setFullUnionAdvancedOpen] = useState(false);
   const unionContainerRef = useRef<HTMLDivElement>(null);
   const unionDropdownRef = useRef<HTMLDivElement>(null);
   const [arrangeMenuOpen, setArrangeMenuOpen] = useState(false);
@@ -337,9 +339,7 @@ export default function FamilyTreeToolbar() {
     (selectedUnionId != null ? getUnionVerticalGap(selectedUnionId, nodes, edges) : null) ??
     CHILD_DY;
   const canAddParent =
-    selectedNodeIds.length === 1 &&
-    selectedUnions.length === 1 &&
-    (selectedUnionData?.partnerIds?.filter((id): id is string => id != null).length ?? 0) < 2;
+    selectedNodeIds.length === 1 && selectedUnions.length === 1;
 
   function getFullUnionTooltip(): string {
     const parts: string[] = [];
@@ -367,7 +367,6 @@ export default function FamilyTreeToolbar() {
 
   function getCreateUnionTooltip(): string {
     if (isFullMode) {
-      if (selectedPersons.length > 2) return "Select at most 2 people for a full union.";
       return getFullUnionTooltip();
     }
     if (canLinkPerson && linkPerson) {
@@ -403,10 +402,6 @@ export default function FamilyTreeToolbar() {
   const handleCreateUnion = () => {
     if (isFullMode) {
       const seedPersonIds = selectedPersons.map((n) => n.id);
-      if (seedPersonIds.length > 2) {
-        setMessage("Select at most 2 people for a full union.");
-        return;
-      }
       createFullUnion({ seedPersonIds });
       setMessage(null);
       return;
@@ -725,6 +720,16 @@ export default function FamilyTreeToolbar() {
                       +
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUnionMenuOpen(false);
+                      setFullUnionAdvancedOpen(true);
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-blue-400 hover:bg-dark-accent/50 hover:text-blue-300"
+                  >
+                    Advanced options…
+                  </button>
                 </div>
               )}
             </div>,
@@ -1295,6 +1300,10 @@ export default function FamilyTreeToolbar() {
         }
         onConfirm={confirmClearFamily}
         onClose={cancelClearFamily}
+      />
+      <FullUnionAdvancedDialog
+        isOpen={fullUnionAdvancedOpen}
+        onClose={() => setFullUnionAdvancedOpen(false)}
       />
     </div>
   );

@@ -21,6 +21,7 @@ import {
   resolveEdgeConnectionStyle,
   getEdgeConnectionStyleName,
   getPersonDisplayName,
+  getUnionPartners,
   type PersonNodeData,
   type UnionNodeData,
   type FamilyTreeNodeData,
@@ -236,11 +237,13 @@ function assignPartnerHandles(edges: Edge[], nodes: Node[]): Edge[] {
     const unionNode = unionById.get(e.target);
     if (!unionNode) continue;
     const d = unionNode.data as UnionNodeData;
-    const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
-    const swapped = !!d.partnerHandleSwap;
-    const useLeft = e.source === leftId;
-    const handle = swapped ? (useLeft ? "rightPartner" : "leftPartner") : (useLeft ? "leftPartner" : "rightPartner");
-    targetHandleByEdge.set(e.id, handle);
+    const partners = getUnionPartners(d);
+    let index = partners.findIndex((p) => p.personId === e.source);
+    if (index < 0) continue;
+    if (partners.length === 2 && d.partnerHandleSwap) {
+      index = index === 0 ? 1 : 0;
+    }
+    targetHandleByEdge.set(e.id, `partner-${index}`);
   }
   return edges.map((e) => {
     if (!isPartnerEdge(e)) return e;

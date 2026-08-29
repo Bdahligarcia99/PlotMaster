@@ -13,6 +13,7 @@ import {
   UNION_DY,
   isChildEdge,
   isPartnerEdge,
+  withUnionPartners,
 } from "./familyTreeStore";
 
 export interface ParsedFamilyTreeScript {
@@ -172,11 +173,18 @@ function defaultPersonPosition(existingNodes: Node<FamilyTreeNodeData>[], index:
 }
 
 function unionPositionBetween(
-  leftPos: { x: number; y: number },
-  rightPos: { x: number; y: number }
+  positions: { x: number; y: number }[] | { x: number; y: number },
+  rightPos?: { x: number; y: number }
 ) {
-  const midX = (leftPos.x + rightPos.x) / 2;
-  const unionY = Math.min(leftPos.y, rightPos.y) - UNION_DY;
+  const posList =
+    rightPos != null && !Array.isArray(positions)
+      ? [positions, rightPos]
+      : Array.isArray(positions)
+        ? positions
+        : [positions];
+  if (posList.length === 0) return { x: 100, y: 100 };
+  const midX = posList.reduce((sum, p) => sum + p.x, 0) / posList.length;
+  const unionY = Math.min(...posList.map((p) => p.y)) - UNION_DY;
   return { x: midX - DEFAULT_UNION_W / 2, y: unionY };
 }
 
@@ -503,30 +511,23 @@ export function parseFamilyTreeScript(
       errors.push(`Unknown connection style "${block.styleName}" for union ${block.unionId}`);
     }
 
-    let leftId: string | null = null;
-    let rightId: string | null = null;
-    let leftRole: ParentRole | undefined;
-    let rightRole: ParentRole | undefined;
+    const partnerMembers: ParsedUnionMember[] = [];
     const childMembers: ParsedUnionMember[] = [];
 
     for (const m of block.members) {
       if (m.type.toLowerCase() === "child") {
         childMembers.push(m);
-        continue;
-      }
-      const role: ParentRole | undefined = m.type === "parent" ? undefined : m.type;
-      if (!leftId) {
-        leftId = m.personId;
-        leftRole = role;
-      } else if (!rightId) {
-        rightId = m.personId;
-        rightRole = role;
       } else {
-        childMembers.push(m);
+        partnerMembers.push(m);
       }
     }
 
-    if (!leftId && !rightId && childMembers.length === 0) {
+    const partners = partnerMembers.map((m) => ({
+      personId: m.personId,
+      role: (m.type === "parent" ? undefined : m.type) as ParentRole | undefined,
+    }));
+
+    if (partners.length === 0 && childMembers.length === 0) {
       const unionData: UnionNodeData = {
         kind: "union",
         name: block.name ?? (existingUnion?.data as UnionNodeData)?.name,
@@ -552,19 +553,16 @@ export function parseFamilyTreeScript(
       continue;
     }
 
-    if (leftId && rightId && leftId === rightId) {
+    const partnerIds = partners.map((p) => p.personId);
+    if (new Set(partnerIds).size !== partnerIds.length) {
       errors.push(`Union ${block.unionId}: duplicate partner ids`);
       continue;
     }
 
-    const unionData: UnionNodeData = {
+    const baseUnionData: UnionNodeData = {
       kind: "union",
       name: block.name ?? (existingUnion?.data as UnionNodeData)?.name,
-      partnerIds: [leftId, rightId],
-      leftPartnerId: leftId ?? undefined,
-      rightPartnerId: rightId ?? undefined,
-      leftPartnerRole: leftRole,
-      rightPartnerRole: rightRole,
+      partnerIds: [null, null],
       notes: block.notes || (existingUnion?.data as UnionNodeData)?.notes || "",
       unionType: "forward",
       connectionStyleId: styleId,
@@ -573,11 +571,7 @@ export function parseFamilyTreeScript(
       createdAt: (existingUnion?.data as UnionNodeData)?.createdAt ?? Date.now(),
       positionUnset: block.positionUnset,
     };
-
-    const leftRec = leftId ? personRecords.get(leftId) : undefined;
-    const rightRec = rightId ? personRecords.get(rightId) : undefined;
-    const leftExisting = leftId ? existingById.get(leftId) : undefined;
-    const rightExisting = rightId ? existingById.get(rightId) : undefined;
+    const unionData = withUnionPartners(baseUnionData, partners);
 
     let unionPosition =
       block.positionUnset || !block.position
@@ -598,32 +592,31 @@ export function parseFamilyTreeScript(
       return fallback;
     };
 
-    const leftPos = leftId
-      ? resolveMemberPosition(
-          block.members.find((m) => m.personId === leftId) ?? { personId: leftId, type: "parent" },
-          leftRec?.position ??
-            leftExisting?.position ??
-            defaultPersonPosition(existingNodes, nodes.filter((n) => n.data.kind === "person").length)
-        )
-      : { x: 0, y: 0 };
+    let personLayoutIndex = nodes.filter((n) => n.data.kind === "person").length;
+    const partnerPositions: { x: number; y: number }[] = [];
+    for (const partner of partners) {
+      const rec = personRecords.get(partner.personId);
+      const existing = existingById.get(partner.personId);
+      const member =
+        block.members.find((m) => m.personId === partner.personId) ??
+        ({ personId: partner.personId, type: "parent" } as ParsedUnionMember);
+      const pos = resolveMemberPosition(
+        member,
+        rec?.position ??
+          existing?.position ??
+          defaultPersonPosition(existingNodes, personLayoutIndex++)
+      );
+      partnerPositions.push(pos);
+    }
 
-    const rightPos = rightId
-      ? resolveMemberPosition(
-          block.members.find((m) => m.personId === rightId) ?? { personId: rightId, type: "parent" },
-          rightRec?.position ??
-            rightExisting?.position ??
-            defaultPersonPosition(existingNodes, nodes.filter((n) => n.data.kind === "person").length + 1)
-        )
-      : { x: 0, y: 0 };
-
-    if (!unionPosition) {
-      unionPosition = unionPositionBetween(leftPos, rightPos);
+    if (!unionPosition && partnerPositions.length > 0) {
+      unionPosition = unionPositionBetween(partnerPositions);
     }
 
     nodes.push({
       id: block.unionId,
       type: "union",
-      position: unionPosition,
+      position: unionPosition ?? { x: 100, y: 100 },
       data: unionData,
     });
 
@@ -643,28 +636,20 @@ export function parseFamilyTreeScript(
       }
     };
 
-    if (leftId) {
-      applyMemberPosition(leftId, block.members.find((m) => m.personId === leftId));
+    partners.forEach((partner, index) => {
+      applyMemberPosition(
+        partner.personId,
+        block.members.find((m) => m.personId === partner.personId)
+      );
       edges.push({
-        id: `e-${leftId}-${block.unionId}`,
-        source: leftId,
+        id: `e-${partner.personId}-${block.unionId}`,
+        source: partner.personId,
         target: block.unionId,
         sourceHandle: "partner",
-        targetHandle: "leftPartner",
+        targetHandle: `partner-${index}`,
         data: { type: "partner" },
       });
-    }
-    if (rightId) {
-      applyMemberPosition(rightId, block.members.find((m) => m.personId === rightId));
-      edges.push({
-        id: `e-${rightId}-${block.unionId}`,
-        source: rightId,
-        target: block.unionId,
-        sourceHandle: "partner",
-        targetHandle: "rightPartner",
-        data: { type: "partner" },
-      });
-    }
+    });
 
     for (const child of childMembers) {
       applyMemberPosition(child.personId, child);

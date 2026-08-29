@@ -53,6 +53,10 @@ export interface FamilyTreeUIFlags {
     includeMother?: boolean;
     includeChildren?: boolean;
     childCount?: number;
+    advancedEnabled?: boolean;
+    parents?: { role?: string; gender?: string }[];
+    children?: { childRole?: string; gender?: string }[];
+    autoAssignMissingPartner?: boolean;
   };
 }
 

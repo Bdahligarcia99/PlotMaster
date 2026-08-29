@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "reactflow";
 import type { UnionNodeData } from "../../store/familyTreeStore";
-import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H, resolveUnionConnectionStyle, getConnectionStyleName } from "../../store/familyTreeStore";
+import { useFamilyTreeStore, DEFAULT_UNION_W, DEFAULT_UNION_H, resolveUnionConnectionStyle, getConnectionStyleName, getUnionPartners } from "../../store/familyTreeStore";
 import UnionConnectionStyleEditor from "./UnionConnectionStyleEditor";
 import { renderConnectionIcon } from "./connectionIconRegistry";
 
@@ -74,6 +74,8 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
   const size = nodeSizesById[id] ?? { width: DEFAULT_UNION_W, height: DEFAULT_UNION_H };
   const centerX = Math.round(x + size.width / 2);
   const centerY = Math.round(y + size.height / 2);
+  const partners = getUnionPartners(data);
+  const handleCount = partners.length > 0 ? partners.length : 2;
 
   useEffect(() => {
     if (!editorOpen) return;
@@ -164,8 +166,16 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
         </button>
           </>
         )}
-        <Handle type="target" position={Position.Top} id="leftPartner" style={{ left: "25%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
-        <Handle type="target" position={Position.Top} id="rightPartner" style={{ left: "75%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
+        {Array.from({ length: handleCount }, (_, i) => (
+          <Handle
+            key={`partner-${i}`}
+            type="target"
+            position={Position.Top}
+            id={`partner-${i}`}
+            style={{ left: `${((i + 1) / (handleCount + 1)) * 100}%`, transform: "translateX(-50%)" }}
+            className="!w-2 !h-2 !bg-dark-muted !border-dark-accent"
+          />
+        ))}
         <Handle type="source" position={Position.Bottom} id="children" className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <span className="text-dark-muted text-xs font-medium flex items-center gap-1">
           {effectiveStyle.icon ? (

@@ -260,11 +260,18 @@ export type UnionType = "forward" | "backward";
 /** Toolbar-level union creation mode. "full" builds parents + children in one action. */
 export type UnionCreateMode = UnionType | "full";
 
+export interface FullUnionParentSpec { role?: string; gender?: string }
+export interface FullUnionChildSpec { childRole?: string; gender?: string }
+
 export interface FullUnionSettings {
   includeFather: boolean;
   includeMother: boolean;
   includeChildren: boolean;
   childCount: number;
+  advancedEnabled: boolean;
+  parents: FullUnionParentSpec[];
+  children: FullUnionChildSpec[];
+  autoAssignMissingPartner: boolean;
 }
 
 const DEFAULT_FULL_UNION_SETTINGS: FullUnionSettings = {
@@ -272,6 +279,10 @@ const DEFAULT_FULL_UNION_SETTINGS: FullUnionSettings = {
   includeMother: true,
   includeChildren: false,
   childCount: 0,
+  advancedEnabled: false,
+  parents: [],
+  children: [],
+  autoAssignMissingPartner: true,
 };
 
 export const BUILT_IN_PARENT_ROLES = [
@@ -281,9 +292,29 @@ export const BUILT_IN_PARENT_ROLES = [
   "guardian",
   "stepmother",
   "stepfather",
+  "stepparent",
+  "adoptive_mother",
+  "adoptive_father",
+  "parent",
+  "nanny",
 ] as const;
 /** Built-in role id or a label from customParentRoles. Undefined means unassigned. */
 export type ParentRole = string;
+
+export const ROLE_GENDER_MAP: Record<string, string> = {
+  father: "male",
+  stepfather: "male",
+  adoptive_father: "male",
+  mother: "female",
+  stepmother: "female",
+  adoptive_mother: "female",
+  parent: "other",
+};
+
+export function genderForParentRole(role: string | null | undefined): string | null {
+  if (!role) return null;
+  return ROLE_GENDER_MAP[role.toLowerCase()] ?? null;
+}
 
 export const BUILT_IN_GENDERS = ["male", "female", "other"] as const;
 
@@ -425,6 +456,62 @@ export function getEdgeForPersonAtUnion(
   );
 }
 
+export interface UnionPartnerSlot {
+  personId: string;
+  role?: ParentRole;
+}
+
+export function getUnionPartners(data: UnionNodeData): UnionPartnerSlot[] {
+  if (data.partners && data.partners.length > 0) {
+    return data.partners.map((p) => ({ personId: p.personId, role: p.role }));
+  }
+  const result: UnionPartnerSlot[] = [];
+  const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
+  const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
+  if (leftId) result.push({ personId: leftId, role: data.leftPartnerRole });
+  if (rightId && rightId !== leftId) result.push({ personId: rightId, role: data.rightPartnerRole });
+  // Also include any extra ids from partnerIds beyond left/right (legacy safety)
+  const seen = new Set(result.map((p) => p.personId));
+  for (const id of data.partnerIds ?? []) {
+    if (id && !seen.has(id)) {
+      result.push({ personId: id });
+      seen.add(id);
+    }
+  }
+  return result;
+}
+
+export function withUnionPartners(data: UnionNodeData, partners: UnionPartnerSlot[]): UnionNodeData {
+  const p0 = partners[0];
+  const p1 = partners[1];
+  return {
+    ...data,
+    partners: partners.map((p) => ({ personId: p.personId, ...(p.role ? { role: p.role } : {}) })),
+    partnerIds: [p0?.personId ?? null, p1?.personId ?? null],
+    leftPartnerId: p0?.personId,
+    rightPartnerId: p1?.personId,
+    leftPartnerRole: p0?.role,
+    rightPartnerRole: p1?.role,
+  };
+}
+
+export function resolveUnionPartnerNodes(
+  unionId: string,
+  nodes: Node<FamilyTreeNodeData>[]
+): Node<PersonNodeData>[] {
+  const unionNode = nodes.find(
+    (n) => n.id === unionId && (n.data as { kind?: string }).kind === "union"
+  );
+  if (!unionNode) return [];
+  const partners = getUnionPartners(unionNode.data as UnionNodeData);
+  const personById = new Map(
+    nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n])
+  );
+  return partners
+    .map((p) => personById.get(p.personId))
+    .filter((n): n is Node<PersonNodeData> => n != null);
+}
+
 export interface UnionNodeData {
   kind: "union";
   /** Display name (e.g. "Union 1"); editable in Inspector and persisted in script. */
@@ -434,6 +521,7 @@ export interface UnionNodeData {
   rightPartnerId?: string;
   leftPartnerRole?: ParentRole;
   rightPartnerRole?: ParentRole;
+  partners?: UnionPartnerSlot[];
   /** When true, swap which handle each partner connects to (left↔right) to reduce edge crossings. */
   partnerHandleSwap?: boolean;
   notes: string;
@@ -683,9 +771,7 @@ export function getUnionFamilyMemberIds(
   );
   if (!unionNode) return [];
   const data = unionNode.data as UnionNodeData;
-  const partnerIds = [data.leftPartnerId, data.rightPartnerId, ...(data.partnerIds ?? [])].filter(
-    (id): id is string => id != null
-  );
+  const partnerIds = getUnionPartners(data).map((p) => p.personId);
   const childIds = edges.filter((e) => e.source === unionId && isChildEdge(e)).map((e) => e.target);
   return Array.from(new Set([...partnerIds, ...childIds]));
 }
@@ -762,9 +848,9 @@ export function getUnionParentGap(
   unionId: string,
   nodes: Node<FamilyTreeNodeData>[]
 ): number | null {
-  const resolved = resolveUnionPartners(unionId, nodes);
-  if (!resolved) return null;
-  return Math.abs(resolved.rightNode.position.x - resolved.leftNode.position.x);
+  const partners = resolveUnionPartnerNodes(unionId, nodes);
+  if (partners.length < 2) return null;
+  return Math.abs(partners[1]!.position.x - partners[0]!.position.x);
 }
 
 export function getUnionChildrenAvgGap(
@@ -786,12 +872,11 @@ export function getUnionVerticalGap(
   nodes: Node<FamilyTreeNodeData>[],
   edges: Edge[]
 ): number | null {
-  const resolved = resolveUnionPartners(unionId, nodes);
-  if (!resolved) return null;
+  const partners = resolveUnionPartnerNodes(unionId, nodes);
+  if (partners.length === 0) return null;
   const children = getUnionDirectChildren(unionId, nodes, edges);
   if (children.length === 0) return null;
-  const avgParentY =
-    (resolved.leftNode.position.y + resolved.rightNode.position.y) / 2;
+  const avgParentY = partners.reduce((s, p) => s + p.position.y, 0) / partners.length;
   const avgChildY = children.reduce((s, c) => s + c.position.y, 0) / children.length;
   return avgChildY - avgParentY;
 }
@@ -1260,43 +1345,12 @@ function applyUnionPartnerFixups(
       return false;
     };
 
-    let changed = false;
-    let leftPartnerId = data.leftPartnerId;
-    let rightPartnerId = data.rightPartnerId;
-    let leftPartnerRole = data.leftPartnerRole;
-    let rightPartnerRole = data.rightPartnerRole;
-    let partnerIds: [string | null, string | null] = [...data.partnerIds];
-
-    if (shouldClearPartner(leftPartnerId)) {
-      leftPartnerId = undefined;
-      leftPartnerRole = undefined;
-      changed = true;
-    }
-    if (shouldClearPartner(rightPartnerId)) {
-      rightPartnerId = undefined;
-      rightPartnerRole = undefined;
-      changed = true;
-    }
-    const nextPartnerIds: [string | null, string | null] = [
-      partnerIds[0] != null && shouldClearPartner(partnerIds[0]) ? null : partnerIds[0],
-      partnerIds[1] != null && shouldClearPartner(partnerIds[1]) ? null : partnerIds[1],
-    ];
-    if (nextPartnerIds[0] !== partnerIds[0] || nextPartnerIds[1] !== partnerIds[1]) {
-      partnerIds = nextPartnerIds;
-      changed = true;
-    }
-
-    if (!changed) return n;
+    const partners = getUnionPartners(data);
+    const newPartners = partners.filter((p) => !shouldClearPartner(p.personId));
+    if (newPartners.length === partners.length) return n;
     return {
       ...n,
-      data: {
-        ...data,
-        leftPartnerId,
-        rightPartnerId,
-        leftPartnerRole,
-        rightPartnerRole,
-        partnerIds,
-      },
+      data: withUnionPartners(data, newPartners),
     };
   });
 }
@@ -1492,27 +1546,13 @@ function simulateRemoval(
       const unionNode = nodes.find((n) => n.id === target.unionId);
       if (!unionNode) return { nodes, edges };
       const data = unionNode.data as UnionNodeData;
-      const partnerIds = data.partnerIds ?? [null, null];
-      const leftId = data.leftPartnerId ?? partnerIds[0];
-      const rightId = data.rightPartnerId ?? partnerIds[1];
-      let slot: 0 | 1 | null = null;
-      if (leftId === target.personId) slot = 0;
-      else if (rightId === target.personId) slot = 1;
-      if (slot == null) return { nodes, edges };
-      const newPartnerIds: [string | null, string | null] = [...partnerIds];
-      newPartnerIds[slot] = null;
+      const partners = getUnionPartners(data);
+      const partnerIndex = partners.findIndex((p) => p.personId === target.personId);
+      if (partnerIndex === -1) return { nodes, edges };
+      const newPartners = partners.filter((_, i) => i !== partnerIndex);
+      const newData = withUnionPartners(data, newPartners);
       const newNodes = nodes.map((n) =>
-        n.id === target.unionId
-          ? {
-              ...n,
-              data: {
-                ...data,
-                partnerIds: newPartnerIds,
-                leftPartnerId: newPartnerIds[0] ?? undefined,
-                rightPartnerId: newPartnerIds[1] ?? undefined,
-              },
-            }
-          : n
+        n.id === target.unionId ? { ...n, data: newData } : n
       );
       const newEdges = edges.filter(
         (e) =>
@@ -1617,6 +1657,7 @@ export interface NameRoleSuggestion {
   /** For role suggestions: which union and slot to update. */
   unionId?: string;
   slot?: "left" | "right";
+  partnerIndex?: number;
 }
 
 /**
@@ -1707,29 +1748,21 @@ export function analyzeUnassignedRoleSuggestions(
   for (const u of unionNodes) {
     const d = u.data as UnionNodeData;
     const unionName = d.name ?? u.id;
-    const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
-    const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
-    if (leftId && !d.leftPartnerRole) {
-      suggestions.push({
-        nodeId: leftId,
-        field: "unassignedRole",
-        currentValue: "",
-        proposedValue: "—",
-        reason: `Parent role unassigned in ${unionName}`,
-        unionId: u.id,
-        slot: "left",
-      });
-    }
-    if (rightId && !d.rightPartnerRole) {
-      suggestions.push({
-        nodeId: rightId,
-        field: "unassignedRole",
-        currentValue: "",
-        proposedValue: "—",
-        reason: `Parent role unassigned in ${unionName}`,
-        unionId: u.id,
-        slot: "right",
-      });
+    const partners = getUnionPartners(d);
+    for (let partnerIndex = 0; partnerIndex < partners.length; partnerIndex += 1) {
+      const p = partners[partnerIndex]!;
+      if (!p.role) {
+        suggestions.push({
+          nodeId: p.personId,
+          field: "unassignedRole",
+          currentValue: "",
+          proposedValue: "—",
+          reason: `Parent role unassigned in ${unionName}`,
+          unionId: u.id,
+          slot: partnerIndex === 0 ? "left" : partnerIndex === 1 ? "right" : undefined,
+          partnerIndex,
+        });
+      }
     }
   }
 
@@ -2136,8 +2169,6 @@ export function generateFamilyTreeScript(
 
   for (const union of unionNodes) {
     const data = union.data as UnionNodeData;
-    const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
-    const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
     const unionUnset = data.positionUnset;
     const libraryStyle = data.connectionStyleId
       ? connectionStyles.find((s) => s.id === data.connectionStyleId)
@@ -2208,13 +2239,8 @@ export function generateFamilyTreeScript(
       lines.push(`${indent}Person ${personId} type: ${typeToken} { ${braceInner} }`);
     };
 
-    if (leftId) {
-      const role = data.leftPartnerRole;
-      emitMember(leftId, role ?? "parent");
-    }
-    if (rightId) {
-      const role = data.rightPartnerRole;
-      emitMember(rightId, role ?? "parent");
+    for (const partner of getUnionPartners(data)) {
+      emitMember(partner.personId, partner.role ?? "parent");
     }
 
     const childIds = edges
@@ -2464,7 +2490,7 @@ function nextUnionNumber(nodes: Node<FamilyTreeNodeData>[]): number {
   return max + 1;
 }
 
-/** First known father/mother role for a person across any union, or null. */
+/** First known parent role for a person across any union, or null. */
 function getPersonParentRole(
   personId: string,
   nodes: Node<FamilyTreeNodeData>[]
@@ -2472,10 +2498,9 @@ function getPersonParentRole(
   for (const n of nodes) {
     if ((n.data as UnionNodeData).kind !== "union") continue;
     const data = n.data as UnionNodeData;
-    const leftId = data.leftPartnerId ?? data.partnerIds?.[0] ?? null;
-    const rightId = data.rightPartnerId ?? data.partnerIds?.[1] ?? null;
-    if (leftId === personId && data.leftPartnerRole) return data.leftPartnerRole;
-    if (rightId === personId && data.rightPartnerRole) return data.rightPartnerRole;
+    for (const slot of getUnionPartners(data)) {
+      if (slot.personId === personId && slot.role) return slot.role;
+    }
   }
   return null;
 }
@@ -2488,10 +2513,9 @@ export function hasUnknownParentRole(
   for (const n of nodes) {
     if ((n.data as UnionNodeData).kind !== "union") continue;
     const data = n.data as UnionNodeData;
-    const leftId = data.leftPartnerId ?? data.partnerIds?.[0] ?? null;
-    const rightId = data.rightPartnerId ?? data.partnerIds?.[1] ?? null;
-    if (leftId === personId && data.leftPartnerRole === "unknown") return true;
-    if (rightId === personId && data.rightPartnerRole === "unknown") return true;
+    for (const slot of getUnionPartners(data)) {
+      if (slot.personId === personId && slot.role === "unknown") return true;
+    }
   }
   return false;
 }
@@ -2517,8 +2541,13 @@ function applyUnknownRoleNameToPerson(
   );
 }
 
-function oppositeParentRole(role: ParentRole): ParentRole {
-  return role === "father" ? "mother" : "father";
+function oppositeParentRole(role: ParentRole): ParentRole | undefined {
+  const lower = role.toLowerCase();
+  if (lower === "father") return "mother";
+  if (lower === "mother") return "father";
+  if (lower === "adoptive_father") return "adoptive_mother";
+  if (lower === "adoptive_mother") return "adoptive_father";
+  return undefined;
 }
 
 function makeNewPersonNode(
@@ -2711,14 +2740,17 @@ interface FamilyTreeStore {
   setDefaultUnionType: (t: UnionCreateMode) => void;
   fullUnionSettings: FullUnionSettings;
   setFullUnionSettings: (patch: Partial<FullUnionSettings>) => void;
+  resetFullUnionSettings: () => void;
   updateNodeName: (nodeId: string, name: string) => void;
   updatePersonNameParts: (nodeId: string, parts: { firstName: string; middleName: string; lastName: string }) => void;
   updatePersonNicknames: (nodeId: string, nicknames: string[]) => void;
   updateNodeNotes: (nodeId: string, notes: string) => void;
   setUnionName: (unionId: string, name: string) => void;
   updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
+  updateUnionPartnerRoleAt: (unionId: string, partnerIndex: number, role: ParentRole | null) => void;
   updateChildRole: (unionId: string, personId: string, role: ChildRole | null) => void;
   swapUnionPartners: (unionId: string) => boolean;
+  moveUnionPartner: (unionId: string, fromIndex: number, toIndex: number) => boolean;
   /** Swap which union handle each partner's edge uses (reduces crossings). Does not change partner roles. */
   swapUnionHandleSides: (unionId: string) => boolean;
   /** Swap connection sides for a person with 2+ unions. Reverses partnerUnionOrder. */
@@ -2909,6 +2941,8 @@ let prevDisplayMode: "nodes" | "text" | null = null;
 let prevLegendMode: "tooltips" | "tooltipsAndIcons" | null = null;
 let prevSubEntitySelectionMode: "node" | "union" | null = null;
 let prevLastDocumentIdJson: string | null = null;
+let prevFullUnionSettingsJson: string | null = null;
+let prevDefaultUnionType: UnionCreateMode | null = null;
 
 function applyNodePositionUpdates(
   get: () => FamilyTreeStore,
@@ -2958,23 +2992,53 @@ function snapGenAnchorsInScope(
 }
 
 /** Place parent pair as a rigid unit aligned to the current child row span; children X/Y untouched. */
+function computePartnersCentroidX(
+  partnerNodes: Node<PersonNodeData>[],
+  getW: (id: string) => number,
+  getPos: (id: string) => { x: number; y: number } | undefined
+): number {
+  if (partnerNodes.length === 0) return 0;
+  let sum = 0;
+  for (const n of partnerNodes) {
+    const pos = getPos(n.id);
+    if (!pos) continue;
+    sum += pos.x + getW(n.id) / 2;
+  }
+  return sum / partnerNodes.length;
+}
+
+function computeParentSpanWidth(
+  partnerNodes: Node<PersonNodeData>[],
+  parentSpacing: number,
+  getW: (id: string) => number
+): number {
+  if (partnerNodes.length === 0) return 0;
+  if (partnerNodes.length === 1) return getW(partnerNodes[0]!.id);
+  let span = 0;
+  for (let i = 0; i < partnerNodes.length; i++) {
+    span += getW(partnerNodes[i]!.id);
+    if (i < partnerNodes.length - 1) span += parentSpacing;
+  }
+  return span;
+}
+
 function computeParentAlignmentPositions(
   get: () => FamilyTreeStore,
   unionId: string,
   alignment: "left" | "center" | "right"
 ): Record<string, { x: number; y: number }> | null {
   const s = get();
-  const resolved = resolveUnionPartners(unionId, s.nodes);
+  const partnerNodes = resolveUnionPartnerNodes(unionId, s.nodes);
   const childSpan = getUnionChildRowSpan(unionId, s.nodes, s.edges, s.nodeSizesById);
-  if (!resolved || !childSpan) return null;
+  if (partnerNodes.length === 0 || !childSpan) return null;
 
-  const { leftId, rightId, leftNode, rightNode, unionData } = resolved;
+  const unionNode = s.nodes.find((n) => n.id === unionId);
+  const unionData = (unionNode?.data ?? {}) as UnionNodeData;
   const parentSpacing = unionData.arrangeSpacing?.parentSpacing ?? PARTNER_DX;
   const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
   const getW = (id: string) => s.nodeSizesById[id]?.width ?? DEFAULT_PERSON_W;
 
-  const wR = getW(rightId);
-  const parentSpanWidth = parentSpacing + wR;
+  const parentSpanWidth = computeParentSpanWidth(partnerNodes, parentSpacing, getW);
   const childCenter = (childSpan.left + childSpan.right) / 2;
 
   let targetLeftX: number;
@@ -2986,20 +3050,22 @@ function computeParentAlignmentPositions(
     targetLeftX = childSpan.right - parentSpanWidth;
   }
 
-  const partnerY = (leftNode.position.y + rightNode.position.y) / 2;
-  const leftPos = snap(targetLeftX, partnerY);
-  const rightPos = snap(targetLeftX + parentSpacing, partnerY);
+  const partnerY =
+    partnerNodes.reduce((sum, n) => sum + n.position.y, 0) / partnerNodes.length;
+  const updateMap: Record<string, { x: number; y: number }> = {};
+  let x = targetLeftX;
+  for (let i = 0; i < partnerNodes.length; i++) {
+    const node = partnerNodes[i]!;
+    updateMap[node.id] = snap(x, partnerY);
+    x += getW(node.id);
+    if (i < partnerNodes.length - 1) x += parentSpacing;
+  }
 
-  const wL = getW(leftId);
   const wU = s.nodeSizesById[unionId]?.width ?? DEFAULT_UNION_W;
-  const parentCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+  const parentCenterX = computePartnersCentroidX(partnerNodes, getW, (id) => updateMap[id]);
   const unionY = partnerY + UNION_DY;
 
-  const updateMap: Record<string, { x: number; y: number }> = {
-    [leftId]: leftPos,
-    [rightId]: rightPos,
-    [unionId]: snap(parentCenterX - wU / 2, unionY),
-  };
+  updateMap[unionId] = snap(parentCenterX - wU / 2, unionY);
   return updateMap;
 }
 
@@ -3011,20 +3077,23 @@ function applyParentAlignmentImpl(
   const updateMap = computeParentAlignmentPositions(get, unionId, alignment);
   if (!updateMap) return false;
   const s = get();
-  const resolved = resolveUnionPartners(unionId, s.nodes);
-  if (!resolved) return false;
+  const partnerNodes = resolveUnionPartnerNodes(unionId, s.nodes);
+  if (partnerNodes.length === 0) return false;
 
   const personById = new Map(
     s.nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n as Node<PersonNodeData>])
   );
   const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
   const childIds = getUnionDirectChildren(unionId, s.nodes, s.edges).map((c) => c.id);
-  snapGenAnchorsInScope(get, updateMap, [resolved.leftId, resolved.rightId, ...childIds], personById, snap);
+  snapGenAnchorsInScope(get, updateMap, [...partnerNodes.map((p) => p.id), ...childIds], personById, snap);
 
-  const unionData = resolved.unionData;
+  const unionData = (s.nodes.find((n) => n.id === unionId)?.data ?? {}) as UnionNodeData;
   const backfillNeeded = !unionData.leftPartnerId || !unionData.rightPartnerId;
   const backfill = backfillNeeded
-    ? { leftPartnerId: resolved.leftId, rightPartnerId: resolved.rightId }
+    ? {
+        leftPartnerId: partnerNodes[0]!.id,
+        rightPartnerId: partnerNodes[partnerNodes.length - 1]!.id,
+      }
     : null;
 
   applyNodePositionUpdates(get, updateMap, unionId, backfill);
@@ -3034,15 +3103,19 @@ function applyParentAlignmentImpl(
 function applyAverageParentSpacingImpl(get: () => FamilyTreeStore, unionId: string): boolean {
   const s = get();
   const gap = getUnionParentGap(unionId, s.nodes);
-  const resolved = resolveUnionPartners(unionId, s.nodes);
-  if (gap == null || !resolved) return false;
+  const partnerNodes = resolveUnionPartnerNodes(unionId, s.nodes);
+  if (gap == null || partnerNodes.length < 2) return false;
 
   const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
-  const { leftId, rightId, leftNode, rightNode } = resolved;
-  const updateMap: Record<string, { x: number; y: number }> = {
-    [leftId]: snap(leftNode.position.x, leftNode.position.y),
-    [rightId]: snap(leftNode.position.x + gap, rightNode.position.y),
-  };
+  const updateMap: Record<string, { x: number; y: number }> = {};
+  const first = partnerNodes[0]!;
+  let x = first.position.x;
+  updateMap[first.id] = snap(x, first.position.y);
+  for (let i = 1; i < partnerNodes.length; i++) {
+    x += gap;
+    const node = partnerNodes[i]!;
+    updateMap[node.id] = snap(x, node.position.y);
+  }
   applyNodePositionUpdates(get, updateMap);
   return true;
 }
@@ -3054,17 +3127,19 @@ function applyAverageChildSpacingImpl(get: () => FamilyTreeStore, unionId: strin
   const gap = getUnionChildrenAvgGap(unionId, s.nodes, s.edges);
   if (gap == null) return false;
 
-  const resolved = resolveUnionPartners(unionId, s.nodes);
-  if (!resolved) return false;
+  const partnerNodes = resolveUnionPartnerNodes(unionId, s.nodes);
+  if (partnerNodes.length === 0) return false;
 
   const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
   const getW = (id: string) => s.nodeSizesById[id]?.width ?? DEFAULT_PERSON_W;
-  const { leftId, rightId, leftNode, rightNode } = resolved;
-  const wL = getW(leftId);
-  const wR = getW(rightId);
-  const leftPos = leftNode.position;
-  const rightPos = rightNode.position;
-  const parentCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+  const first = partnerNodes[0]!;
+  const last = partnerNodes[partnerNodes.length - 1]!;
+  const leftPos = first.position;
+  const rightPos = last.position;
+  const wR = getW(last.id);
+  const parentCenterX = computePartnersCentroidX(partnerNodes, getW, (id) =>
+    s.nodes.find((n) => n.id === id)?.position
+  );
 
   const n = children.length;
   const childWidths = children.map((c) => getW(c.id));
@@ -3089,18 +3164,18 @@ function applyAverageChildSpacingImpl(get: () => FamilyTreeStore, unionId: strin
 
 function applyAverageVerticalSpacingImpl(get: () => FamilyTreeStore, unionId: string): boolean {
   const s = get();
-  const resolved = resolveUnionPartners(unionId, s.nodes);
+  const partnerNodes = resolveUnionPartnerNodes(unionId, s.nodes);
   const children = getUnionDirectChildren(unionId, s.nodes, s.edges);
-  if (!resolved || children.length === 0) return false;
+  if (partnerNodes.length === 0 || children.length === 0) return false;
 
-  const avgParentY = (resolved.leftNode.position.y + resolved.rightNode.position.y) / 2;
+  const avgParentY = partnerNodes.reduce((sum, p) => sum + p.position.y, 0) / partnerNodes.length;
   const avgChildY = children.reduce((sum, c) => sum + c.position.y, 0) / children.length;
   const snap = (x: number, y: number) => (s.snapToGrid ? snapPosition(x, y, true) : { x, y });
 
-  const updateMap: Record<string, { x: number; y: number }> = {
-    [resolved.leftId]: snap(resolved.leftNode.position.x, avgParentY),
-    [resolved.rightId]: snap(resolved.rightNode.position.x, avgParentY),
-  };
+  const updateMap: Record<string, { x: number; y: number }> = {};
+  for (const partner of partnerNodes) {
+    updateMap[partner.id] = snap(partner.position.x, avgParentY);
+  }
   for (const child of children) {
     updateMap[child.id] = snap(child.position.x, avgChildY);
   }
@@ -3135,35 +3210,16 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
   if (!unionNode) return false;
 
   const unionData = unionNode.data as UnionNodeData;
-  const partnerIds = unionData.partnerIds;
-  if (!partnerIds || partnerIds.length !== 2) return false;
+  const partnerNodes = resolveUnionPartnerNodes(unionId, nodes);
+  if (partnerNodes.length === 0) return false;
 
   const personById = new Map(
     nodes.filter((n) => (n.data as { kind?: string }).kind === "person").map((n) => [n.id, n])
   );
 
-  const parents = partnerIds
-    .map((id) => (id != null ? personById.get(id) : undefined))
-    .filter((n): n is NonNullable<typeof n> => n != null);
-  if (parents.length !== 2) return false;
-  const [p0, p1] = parents;
-
-  // Resolve left/right: prefer stored order, else current X position, else id order.
-  let leftId: string;
-  let rightId: string;
-  if (unionData.leftPartnerId && unionData.rightPartnerId) {
-    leftId = unionData.leftPartnerId;
-    rightId = unionData.rightPartnerId;
-  } else if (p0.position.x <= p1.position.x) {
-    leftId = p0.id;
-    rightId = p1.id;
-  } else {
-    leftId = p1.id;
-    rightId = p0.id;
-  }
-  const leftNode = personById.get(leftId);
-  const rightNode = personById.get(rightId);
-  if (!leftNode || !rightNode) return false;
+  const partnerIds = partnerNodes.map((n) => n.id);
+  const leftId = partnerIds[0]!;
+  const rightId = partnerIds[partnerIds.length - 1]!;
 
   const backfillNeeded = !unionData.leftPartnerId || !unionData.rightPartnerId;
 
@@ -3186,7 +3242,7 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
     snapGenAnchorsInScope(
       get,
       alignMap,
-      [leftId, rightId, ...childIds],
+      [...partnerIds, ...childIds],
       personById as Map<string, Node<PersonNodeData>>,
       snap
     );
@@ -3197,20 +3253,19 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
 
   const updateMap: Record<string, { x: number; y: number }> = {};
 
-  // Anchor the geometrically left-most partner in place; place the other parentSpacing away.
-  const anchorId = leftNode.position.x <= rightNode.position.x ? leftId : rightId;
-  const otherId = anchorId === leftId ? rightId : leftId;
-  const anchorNode = personById.get(anchorId)!;
+  const anchorNode = partnerNodes.reduce((min, n) => (n.position.x < min.position.x ? n : min));
+  const anchorX = anchorNode.position.x;
   const partnerY = anchorNode.position.y;
 
-  updateMap[anchorId] = snap(anchorNode.position.x, partnerY);
-  updateMap[otherId] = snap(updateMap[anchorId]!.x + parentSpacing, partnerY);
+  for (let i = 0; i < partnerNodes.length; i++) {
+    updateMap[partnerNodes[i]!.id] = snap(anchorX + i * parentSpacing, partnerY);
+  }
 
   const leftPos = updateMap[leftId]!;
   const rightPos = updateMap[rightId]!;
   const wL = getW(leftId);
   const wR = getW(rightId);
-  const parentCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+  const parentCenterX = computePartnersCentroidX(partnerNodes, getW, (id) => updateMap[id]);
   const unionY = partnerY + UNION_DY;
   const wU = getW(unionId);
   updateMap[unionId] = snap(parentCenterX - wU / 2, unionY);
@@ -3307,7 +3362,7 @@ function sortUnionImpl(get: () => FamilyTreeStore, unionId: string): boolean {
   }
 
   // Re-snap Y for any in-scope person pinned to a generation anchor.
-  const scopeIds = [leftId, rightId, ...sortedChildIds];
+  const scopeIds = [...partnerIds, ...sortedChildIds];
   for (const id of scopeIds) {
     const data = personById.get(id)?.data as { genAnchorId?: string | null } | undefined;
     if (data?.genAnchorId) {
@@ -3401,49 +3456,35 @@ function runLayoutImpl(get: () => FamilyTreeStore): boolean {
 
   type UnionWithPartners = {
     union: (typeof unionNodes)[0];
-    leftId: string;
-    rightId: string;
-    leftNode: (typeof nodes)[0];
-    rightNode: (typeof nodes)[0];
+    partnerIds: string[];
+    partnerNodes: Node<PersonNodeData>[];
     unionGen: number;
   };
 
   const validUnions: UnionWithPartners[] = [];
   for (const union of unionNodes) {
     const unionData = union.data as UnionNodeData;
-    const partnerIds = unionData.partnerIds;
-    if (!partnerIds || partnerIds.length !== 2) continue;
-    const parents = partnerIds
-      .map((id) => nodes.find((n) => n.id === id && (n.data as { kind?: string }).kind === "person"))
-      .filter((n): n is NonNullable<typeof n> => n != null);
-    if (parents.length !== 2) continue;
-    const [p0, p1] = parents;
-    const g0 = personGen[p0.id];
-    const g1 = personGen[p1.id];
-    if (g0 === undefined || g1 === undefined) continue;
-    const [leftId, rightId] =
-      p0.id <= p1.id ? [p0.id, p1.id] : [p1.id, p0.id];
+    const partnerNodes = resolveUnionPartnerNodes(union.id, nodes);
+    if (partnerNodes.length === 0) continue;
+    const partnerIds = partnerNodes.map((n) => n.id);
+    const gens = partnerIds.map((id) => personGen[id]).filter((g): g is number => g !== undefined);
+    if (gens.length !== partnerIds.length) continue;
+    const unionGen = Math.max(...gens);
+
     if (!unionData.leftPartnerId || !unionData.rightPartnerId) {
-      const pos0 = getEffectivePos(p0.id);
-      const pos1 = getEffectivePos(p1.id);
-      if (pos0 && pos1) {
-        const [lId, rId] = pos0.x <= pos1.x ? [p0.id, p1.id] : [p1.id, p0.id];
-        backfillMap[union.id] = { leftPartnerId: lId, rightPartnerId: rId };
-      } else {
-        backfillMap[union.id] = { leftPartnerId: leftId, rightPartnerId: rightId };
-      }
+      const sorted = [...partnerNodes].sort((a, b) => {
+        const posA = getEffectivePos(a.id);
+        const posB = getEffectivePos(b.id);
+        if (posA && posB) return posA.x - posB.x;
+        return a.id.localeCompare(b.id);
+      });
+      backfillMap[union.id] = {
+        leftPartnerId: sorted[0]!.id,
+        rightPartnerId: sorted[sorted.length - 1]!.id,
+      };
     }
-    const finalLeft = (unionData.leftPartnerId && unionData.rightPartnerId)
-      ? unionData.leftPartnerId
-      : backfillMap[union.id]?.leftPartnerId ?? leftId;
-    const finalRight = (unionData.leftPartnerId && unionData.rightPartnerId)
-      ? unionData.rightPartnerId
-      : backfillMap[union.id]?.rightPartnerId ?? rightId;
-    const leftNode = personById.get(finalLeft);
-    const rightNode = personById.get(finalRight);
-    if (!leftNode || !rightNode) continue;
-    const unionGen = Math.max(personGen[finalLeft] ?? 0, personGen[finalRight] ?? 0);
-    validUnions.push({ union, leftId: finalLeft, rightId: finalRight, leftNode, rightNode, unionGen });
+
+    validUnions.push({ union, partnerIds, partnerNodes, unionGen });
   }
 
   const unionsByGen = new Map<number, UnionWithPartners[]>();
@@ -3528,8 +3569,8 @@ function runLayoutImpl(get: () => FamilyTreeStore): boolean {
       seen.add(pid);
     }
   }
-  for (const { leftId, rightId } of unionsByGen.get(0) ?? []) {
-    for (const pid of [leftId, rightId]) {
+  for (const { partnerIds } of unionsByGen.get(0) ?? []) {
+    for (const pid of partnerIds) {
       if (!seen.has(pid)) {
         gen0PersonIds.push(pid);
         seen.add(pid);
@@ -3542,16 +3583,18 @@ function runLayoutImpl(get: () => FamilyTreeStore): boolean {
 
   const placeChildrenOfUnion = (
     union: (typeof validUnions)[0]["union"],
-    leftId: string,
-    rightId: string
+    partnerIds: string[],
+    partnerNodes: Node<PersonNodeData>[]
   ) => {
-    const leftPos = getEffectivePos(leftId);
-    const rightPos = getEffectivePos(rightId);
+    const firstId = partnerIds[0]!;
+    const lastId = partnerIds[partnerIds.length - 1]!;
+    const leftPos = getEffectivePos(firstId);
+    const rightPos = getEffectivePos(lastId);
     if (!leftPos || !rightPos) return;
     const rawChildren = childrenOfUnion.get(union.id) ?? [];
-    const wL = getW(leftId);
-    const wR = getW(rightId);
-    const parentCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+    const wL = getW(firstId);
+    const wR = getW(lastId);
+    const parentCenterX = computePartnersCentroidX(partnerNodes, getW, (id) => getEffectivePos(id));
     const sortedIds = sortChildrenForLayout(rawChildren, union.id, parentCenterX);
     const childNodes = sortedIds
       .map((id) => personById.get(id))
@@ -3605,34 +3648,25 @@ function runLayoutImpl(get: () => FamilyTreeStore): boolean {
     const levelUnions = unionsByGen.get(gen) ?? [];
 
     if (gen === 0) {
-      for (let i = 0; i < levelUnions.length; i++) {
-        const { union, leftId, rightId } = levelUnions[i];
-        const wL = getW(leftId);
-        const wR = getW(rightId);
-        const pLx = i * 2 * UNIFORM_SPACING;
-        const pRx = pLx + UNIFORM_SPACING;
-        updateMap[leftId] = snap(pLx, personY);
-        updateMap[rightId] = snap(pRx, personY);
+      let gen0Offset = 0;
+      for (const { union, partnerIds, partnerNodes } of levelUnions) {
+        for (let j = 0; j < partnerIds.length; j++) {
+          updateMap[partnerIds[j]!] = snap(gen0Offset + j * UNIFORM_SPACING, personY);
+        }
+        const unionCenterX = computePartnersCentroidX(partnerNodes, getW, (id) => updateMap[id]);
         const wU = getW(union.id);
-        const unionCenterX = (pLx + wL / 2 + pRx + wR / 2) / 2;
-        const unionX = unionCenterX - wU / 2;
-        updateMap[union.id] = snap(unionX, unionY);
+        updateMap[union.id] = snap(unionCenterX - wU / 2, unionY);
+        gen0Offset += partnerIds.length * UNIFORM_SPACING + UNIFORM_SPACING;
       }
     } else {
       const parentUnions = unionsByGen.get(gen - 1) ?? [];
-      for (const { union, leftId, rightId } of parentUnions) {
-        placeChildrenOfUnion(union, leftId, rightId);
+      for (const { union, partnerIds, partnerNodes } of parentUnions) {
+        placeChildrenOfUnion(union, partnerIds, partnerNodes);
       }
-      for (const { union, leftId, rightId } of levelUnions) {
-        const leftPos = getEffectivePos(leftId);
-        const rightPos = getEffectivePos(rightId);
-        if (!leftPos || !rightPos) continue;
-        const wL = getW(leftId);
-        const wR = getW(rightId);
-        const unionCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+      for (const { union, partnerNodes } of levelUnions) {
+        const unionCenterX = computePartnersCentroidX(partnerNodes, getW, (id) => getEffectivePos(id));
         const wU = getW(union.id);
-        const unionX = unionCenterX - wU / 2;
-        updateMap[union.id] = snap(unionX, unionY);
+        updateMap[union.id] = snap(unionCenterX - wU / 2, unionY);
       }
     }
   }
@@ -3641,22 +3675,16 @@ function runLayoutImpl(get: () => FamilyTreeStore): boolean {
   // Fixes layouts with dependency cycles where parents weren't placed yet on first pass.
   for (let gen = 0; gen <= maxGen; gen++) {
     const parentUnions = unionsByGen.get(gen) ?? [];
-    for (const { union, leftId, rightId } of parentUnions) {
-      placeChildrenOfUnion(union, leftId, rightId);
+    for (const { union, partnerIds, partnerNodes } of parentUnions) {
+      placeChildrenOfUnion(union, partnerIds, partnerNodes);
     }
   }
-  for (const { union, leftId, rightId } of validUnions) {
-    const leftPos = getEffectivePos(leftId);
-    const rightPos = getEffectivePos(rightId);
-    if (!leftPos || !rightPos) continue;
-    const wL = getW(leftId);
-    const wR = getW(rightId);
-    const unionCenterX = (leftPos.x + wL / 2 + rightPos.x + wR / 2) / 2;
+  for (const { union, partnerNodes } of validUnions) {
+    const unionCenterX = computePartnersCentroidX(partnerNodes, getW, (id) => getEffectivePos(id));
     const unionGen = validUnions.find((u) => u.union.id === union.id)?.unionGen ?? 0;
     const unionY = unionGen * CHILD_DY + UNION_DY;
     const wU = getW(union.id);
-    const unionX = unionCenterX - wU / 2;
-    updateMap[union.id] = snap(unionX, unionY);
+    updateMap[union.id] = snap(unionCenterX - wU / 2, unionY);
   }
 
   if (Object.keys(updateMap).length === 0 && unionNodes.length > 0) {
@@ -5443,29 +5471,243 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       .map((id) => nodes.find((n) => n.id === id))
       .filter((n): n is Node<PersonNodeData> => n != null && n.type === "person");
     if (seedNodes.length !== seedPersonIds.length) return null;
-    if (seedPersonIds.length > 2) return null;
 
     const snap = (x: number, y: number) => snapPosition(x, y, snapToGrid);
 
     const newNodes: Node<FamilyTreeNodeData>[] = [];
     const newEdges: Edge[] = [];
     let personNumOffset = nextPersonNumber(nodes);
+    const personPatches = new Map<string, Partial<PersonNodeData>>();
 
-    const makeNewPerson = (x: number, y: number): string => {
+    const patchPerson = (personId: string, patch: Partial<PersonNodeData>) => {
+      const prev = personPatches.get(personId) ?? {};
+      personPatches.set(personId, { ...prev, ...patch });
+    };
+
+    const makeNewPerson = (
+      x: number,
+      y: number,
+      opts?: { gender?: string }
+    ): string => {
       const id = generateId();
       const name = `Person ${personNumOffset}`;
       personNumOffset += 1;
-      newNodes.push(makeNewPersonNode(id, name, snap(x, y)));
+      const node = makeNewPersonNode(id, name, snap(x, y));
+      if (opts?.gender) {
+        node.data = { ...node.data, gender: opts.gender };
+      }
+      newNodes.push(node);
       return id;
     };
+
+    const unionId = generateId();
+    const unionNum = nextUnionNumber(nodes);
+
+    if (settings.advancedEnabled) {
+      const MAX_PARTNERS = 12;
+      const parentSpecs =
+        settings.parents.length > 0 ? settings.parents : [{ role: undefined, gender: undefined }];
+      const slotCount = Math.min(parentSpecs.length, MAX_PARTNERS);
+      if (seedPersonIds.length > slotCount) return null;
+
+      const sortedSeeds = [...seedNodes].sort((a, b) => a.position.x - b.position.x);
+      const n = slotCount;
+
+      let unionCenterX: number;
+      let unionY: number;
+
+      if (sortedSeeds.length > 0) {
+        unionCenterX =
+          sortedSeeds.reduce((sum, node) => sum + node.position.x, 0) / sortedSeeds.length;
+        unionY = Math.max(...sortedSeeds.map((node) => node.position.y)) + UNION_DY;
+      } else if (viewportBounds) {
+        unionCenterX = (viewportBounds.minX + viewportBounds.maxX) / 2;
+        unionY = (viewportBounds.minY + viewportBounds.maxY) / 2;
+      } else {
+        const maxY = nodes.reduce((max, node) => Math.max(max, node.position.y), 0);
+        unionCenterX = 100 + DEFAULT_UNION_W / 2;
+        unionY = maxY + 80;
+      }
+
+      const unionX = unionCenterX - DEFAULT_UNION_W / 2;
+      const partnerSlots: UnionPartnerSlot[] = [];
+
+      for (let i = 0; i < slotCount; i += 1) {
+        const spec = parentSpecs[i] ?? {};
+        let role: ParentRole | undefined = spec.role || undefined;
+        let gender: string | undefined = spec.gender || undefined;
+        const px = unionCenterX + (i - (n - 1) / 2) * PARTNER_DX;
+        const py = unionY - UNION_DY;
+
+        let personId: string;
+        if (i < sortedSeeds.length) {
+          personId = sortedSeeds[i]!.id;
+          const existing = sortedSeeds[i]!.data as PersonNodeData;
+          if (!role) {
+            const seedRole = getPersonParentRole(personId, nodes);
+            if (seedRole) role = seedRole;
+          }
+          if (gender && !existing.gender) patchPerson(personId, { gender });
+        } else {
+          if (
+            sortedSeeds.length === 1 &&
+            settings.autoAssignMissingPartner &&
+            !role
+          ) {
+            const seedRole = getPersonParentRole(sortedSeeds[0]!.id, nodes);
+            if (seedRole) {
+              role = oppositeParentRole(seedRole);
+              if (role && !gender) gender = genderForParentRole(role) ?? undefined;
+            }
+          } else if (!gender && role) {
+            gender = genderForParentRole(role) ?? undefined;
+          }
+          personId = makeNewPerson(px, py, gender ? { gender } : undefined);
+        }
+
+        if (role === "unknown") {
+          patchPerson(personId, {
+            firstName: "Unknown",
+            middleName: "",
+            lastName: "",
+            name: "Unknown",
+          });
+        } else if (role && !gender) {
+          const mapped = genderForParentRole(role);
+          const existingGender = (
+            nodes.find((node) => node.id === personId)?.data as PersonNodeData | undefined
+          )?.gender;
+          if (mapped && !existingGender) patchPerson(personId, { gender: mapped });
+        }
+
+        partnerSlots.push({ personId, ...(role ? { role } : {}) });
+      }
+
+      const childSpecs = settings.children;
+      const childIds: string[] = [];
+      for (let i = 0; i < childSpecs.length; i += 1) {
+        const spec = childSpecs[i] ?? {};
+        const childId = makeNewPerson(
+          unionX + i * DEFAULT_CHILD_ROW_SPACING,
+          unionY + CHILD_DY,
+          spec.gender ? { gender: spec.gender } : undefined
+        );
+        childIds.push(childId);
+      }
+
+      const familyId = ensureActiveFamilyTarget(get, set);
+      const family = get().families.find((f) => f.id === familyId);
+      const hasMainGraph =
+        family?.unionIds.some(
+          (uid) =>
+            (get().nodes.find((node) => node.id === uid)?.data as UnionNodeData)?.isMainGraph
+        ) ?? false;
+
+      const unionData = withUnionPartners(
+        {
+          kind: "union",
+          name: `Union ${unionNum}`,
+          partnerIds: [null, null],
+          notes: "",
+          unionType: partnerSlots.length > 0 ? "forward" : "backward",
+          createdAt: Date.now(),
+          ...(!hasMainGraph ? { isMainGraph: true } : {}),
+        },
+        partnerSlots
+      );
+
+      newNodes.push({
+        id: unionId,
+        type: "union",
+        position: snap(unionX, unionY),
+        data: unionData,
+      });
+
+      partnerSlots.forEach((slot, index) => {
+        newEdges.push({
+          id: `e-${slot.personId}-${unionId}`,
+          source: slot.personId,
+          target: unionId,
+          sourceHandle: "partner",
+          targetHandle: `partner-${index}`,
+          data: { type: "partner" },
+        });
+      });
+
+      childIds.forEach((childId, index) => {
+        const childRole = childSpecs[index]?.childRole;
+        newEdges.push({
+          id: `e-${unionId}-${childId}`,
+          source: unionId,
+          target: childId,
+          sourceHandle: "children",
+          targetHandle: "parent",
+          data: {
+            type: "child",
+            ...(childRole ? { childRole } : {}),
+          },
+        });
+      });
+
+      set((s) => ({
+        nodes: [
+          ...s.nodes.map((node) => {
+            const patch = personPatches.get(node.id);
+            if (!patch) return node;
+            return {
+              ...node,
+              data: { ...(node.data as PersonNodeData), ...patch } as FamilyTreeNodeData,
+            };
+          }),
+          ...newNodes,
+        ],
+        edges: [...s.edges, ...newEdges],
+        selectedNodeIds: [unionId],
+        primarySelectedNodeId: unionId,
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      }));
+
+      const familyIdAfter = ensureActiveFamilyTarget(get, set);
+      const after = get();
+      let updatedFamilies = after.families;
+      const allNewPersonIds = newNodes
+        .filter((node) => node.type === "person")
+        .map((node) => node.id);
+
+      updatedFamilies = appendNodeToFamilyRecord(
+        updatedFamilies,
+        familyIdAfter,
+        unionId,
+        "union",
+        after.nodes,
+        after.edges
+      );
+      for (const pid of allNewPersonIds) {
+        updatedFamilies = appendNodeToFamilyRecord(
+          updatedFamilies,
+          familyIdAfter,
+          pid,
+          "person",
+          after.nodes,
+          after.edges
+        );
+      }
+      set({ families: updatedFamilies });
+
+      appendNodeDeclarationToDocumentImpl(get, set, familyIdAfter, [
+        unionId,
+        ...allNewPersonIds,
+      ]);
+      return unionId;
+    }
+
+    if (seedPersonIds.length > 2) return null;
 
     let leftId: string | null = null;
     let rightId: string | null = null;
     let leftRole: ParentRole | undefined;
     let rightRole: ParentRole | undefined;
-
-    const unionId = generateId();
-    const unionNum = nextUnionNumber(nodes);
 
     let unionX: number;
     let unionY: number;
@@ -5537,8 +5779,9 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       }
     }
 
-    const partnerIds: [string | null, string | null] = [leftId, rightId];
-    const parents = [leftId, rightId].filter((id): id is string => id != null);
+    const partnerSlots: UnionPartnerSlot[] = [];
+    if (leftId) partnerSlots.push({ personId: leftId, ...(leftRole ? { role: leftRole } : {}) });
+    if (rightId) partnerSlots.push({ personId: rightId, ...(rightRole ? { role: rightRole } : {}) });
 
     const familyId = ensureActiveFamilyTarget(get, set);
     const family = get().families.find((f) => f.id === familyId);
@@ -5548,46 +5791,36 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           (get().nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
       ) ?? false;
 
-    const unionNode: Node<UnionNodeData> = {
-      id: unionId,
-      type: "union",
-      position: snap(unionX, unionY),
-      data: {
+    const unionData = withUnionPartners(
+      {
         kind: "union",
         name: `Union ${unionNum}`,
-        partnerIds,
-        leftPartnerId: leftId ?? undefined,
-        rightPartnerId: rightId ?? undefined,
-        leftPartnerRole: leftRole,
-        rightPartnerRole: rightRole,
+        partnerIds: [null, null],
         notes: "",
-        unionType: parents.length > 0 ? "forward" : "backward",
+        unionType: partnerSlots.length > 0 ? "forward" : "backward",
         createdAt: Date.now(),
         ...(!hasMainGraph ? { isMainGraph: true } : {}),
       },
-    };
-    newNodes.push(unionNode);
+      partnerSlots
+    );
 
-    if (leftId) {
+    newNodes.push({
+      id: unionId,
+      type: "union",
+      position: snap(unionX, unionY),
+      data: unionData,
+    });
+
+    partnerSlots.forEach((slot, index) => {
       newEdges.push({
-        id: `e-${leftId}-${unionId}`,
-        source: leftId,
+        id: `e-${slot.personId}-${unionId}`,
+        source: slot.personId,
         target: unionId,
         sourceHandle: "partner",
-        targetHandle: "partners",
+        targetHandle: `partner-${index}`,
         data: { type: "partner" },
       });
-    }
-    if (rightId) {
-      newEdges.push({
-        id: `e-${rightId}-${unionId}`,
-        source: rightId,
-        target: unionId,
-        sourceHandle: "partner",
-        targetHandle: "partners",
-        data: { type: "partner" },
-      });
-    }
+    });
     for (const childId of childIds) {
       newEdges.push({
         id: `e-${unionId}-${childId}`,
@@ -5701,8 +5934,16 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       if (typeof next.childCount === "number") {
         next.childCount = Math.min(12, Math.max(0, Math.round(next.childCount)));
       }
+      if (next.parents && next.parents.length > 12) {
+        next.parents = next.parents.slice(0, 12);
+      }
+      if (next.children && next.children.length > 12) {
+        next.children = next.children.slice(0, 12);
+      }
       return { fullUnionSettings: next };
     }),
+
+  resetFullUnionSettings: () => set({ fullUnionSettings: { ...DEFAULT_FULL_UNION_SETTINGS } }),
 
   createBackwardUnion: (childNodeIds) => {
     const state = get();
@@ -5761,26 +6002,33 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     );
     if (!unionNode) return null;
     const unionData = unionNode.data as UnionNodeData;
-    const partnerIds = unionData.partnerIds ?? [null, null];
-    const filled = partnerIds.filter((id): id is string => id != null).length;
-    if (filled >= 2) return null;
+    const partners = getUnionPartners(unionData);
 
     const nextNum = nextPersonNumber(state.nodes);
     const parentId = generateId();
     const unionAboveY = unionNode.position.y;
+
+    let newX = unionNode.position.x;
+    let newY = unionAboveY - UNION_DY - DEFAULT_PERSON_H;
+    if (partners.length > 0) {
+      const existingNodes = partners
+        .map((p) => state.nodes.find((n) => n.id === p.personId))
+        .filter((n): n is Node<PersonNodeData> => n != null && n.type === "person");
+      if (existingNodes.length > 0) {
+        newX = Math.max(...existingNodes.map((n) => n.position.x)) + PARTNER_DX;
+        newY = existingNodes[0]!.position.y;
+      }
+    }
+
     const newPersonNode: Node<PersonNodeData> = {
       id: parentId,
       type: "person",
-      position: {
-        x: unionNode.position.x,
-        y: unionAboveY - UNION_DY - DEFAULT_PERSON_H,
-      },
+      position: { x: newX, y: newY },
       data: { kind: "person", name: `Person ${nextNum}`, firstName: `Person ${nextNum}`, middleName: "", lastName: "", notes: "", nicknames: [], isGenArmed: false },
     };
 
-    const idx = partnerIds[0] == null ? 0 : 1;
-    const newPartnerIds: [string | null, string | null] = [...partnerIds];
-    newPartnerIds[idx] = parentId;
+    const newPartners: UnionPartnerSlot[] = [...partners, { personId: parentId }];
+    const newData = withUnionPartners(unionData, newPartners);
 
     const partnerEdge: Edge = {
       id: `e-${parentId}-${unionNodeId}`,
@@ -5791,28 +6039,9 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       data: { type: "partner" },
     };
 
-    const leftId = newPartnerIds[0];
-    const rightId = newPartnerIds[1];
-    const leftPartnerId = leftId ?? undefined;
-    const rightPartnerId = rightId ?? undefined;
-    const newLeftPartnerRole = idx === 0 ? undefined : unionData.leftPartnerRole;
-    const newRightPartnerRole = idx === 1 ? undefined : unionData.rightPartnerRole;
-
     set((s) => ({
       nodes: s.nodes.map((n) =>
-        n.id === unionNodeId
-          ? {
-              ...n,
-              data: {
-                ...unionData,
-                partnerIds: newPartnerIds,
-                leftPartnerId,
-                rightPartnerId,
-                leftPartnerRole: newLeftPartnerRole,
-                rightPartnerRole: newRightPartnerRole,
-              },
-            }
-          : n
+        n.id === unionNodeId ? { ...n, data: newData } : n
       ).concat(newPersonNode),
       edges: [...s.edges, partnerEdge],
       selectedNodeIds: state.persistUnionSelectionOnChildCreate ? [unionNodeId] : [parentId],
@@ -5834,7 +6063,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     );
     if (!personNode) return "Person not found.";
     const unionData = unionNode.data as UnionNodeData;
-    const partnerIds = unionData.partnerIds ?? [null, null];
     const partnerEdgeExists = state.edges.some(
       (e) =>
         (e.data as { type?: string })?.type === "partner" &&
@@ -5849,16 +6077,11 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     );
 
     if (mode === "forward") {
-      const filled = partnerIds.filter((id): id is string => id != null).length;
-      if (filled >= 2) return "Union already has 2 parents.";
       if (partnerEdgeExists) return "Person is already a parent of this union.";
-      const idx = partnerIds[0] == null ? 0 : 1;
-      const newPartnerIds: [string | null, string | null] = [...partnerIds];
-      newPartnerIds[idx] = personId;
-      const leftId = newPartnerIds[0];
-      const rightId = newPartnerIds[1];
-      const newLeftPartnerRole = idx === 0 ? undefined : unionData.leftPartnerRole;
-      const newRightPartnerRole = idx === 1 ? undefined : unionData.rightPartnerRole;
+      const partners = getUnionPartners(unionData);
+      if (partners.some((p) => p.personId === personId)) return "Person is already a parent of this union.";
+      const newPartners: UnionPartnerSlot[] = [...partners, { personId }];
+      const newData = withUnionPartners(unionData, newPartners);
       const partnerEdge: Edge = {
         id: `e-${personId}-${unionId}`,
         source: personId,
@@ -5869,19 +6092,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       };
       set((s) => ({
         nodes: s.nodes.map((n) =>
-          n.id === unionId
-            ? {
-                ...n,
-                data: {
-                  ...unionData,
-                  partnerIds: newPartnerIds,
-                  leftPartnerId: leftId ?? undefined,
-                  rightPartnerId: rightId ?? undefined,
-                  leftPartnerRole: newLeftPartnerRole,
-                  rightPartnerRole: newRightPartnerRole,
-                },
-              }
-            : n
+          n.id === unionId ? { ...n, data: newData } : n
         ),
         edges: [...s.edges, partnerEdge],
         selectedNodeIds: [unionId],
@@ -5992,29 +6203,19 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const unionNode = state.nodes.find((n) => n.id === unionId && (n.data as UnionNodeData).kind === "union");
     if (!unionNode) return "Union not found.";
     const data = unionNode.data as UnionNodeData;
-    const partnerIds = data.partnerIds ?? [null, null];
-    const leftId = data.leftPartnerId ?? partnerIds[0];
-    const rightId = data.rightPartnerId ?? partnerIds[1];
-    const partners = [leftId, rightId].filter((id): id is string => id != null);
-    if (partners.length <= 1 && partners[0] === personId)
-      return "Cannot remove the last parent from a union.";
-    let slot: 0 | 1;
-    if (leftId === personId) slot = 0;
-    else if (rightId === personId) slot = 1;
-    else return "Person is not a partner of this union.";
-    const newPartnerIds: [string | null, string | null] = [...partnerIds];
-    newPartnerIds[slot] = null;
-    const newLeftId = newPartnerIds[0] ?? undefined;
-    const newRightId = newPartnerIds[1] ?? undefined;
+    const partners = getUnionPartners(data);
+    const partnerIndex = partners.findIndex((p) => p.personId === personId);
+    if (partnerIndex === -1) return "Person is not a partner of this union.";
+    if (partners.length <= 1) return "Cannot remove the last parent from a union.";
+    const newPartners = partners.filter((_, i) => i !== partnerIndex);
+    const newData = withUnionPartners(data, newPartners);
     const partnerEdge = state.edges.find(
       (e) => (e.data as { type?: string })?.type === "partner" && e.source === personId && e.target === unionId
     );
     if (!partnerEdge) return "Partner edge not found.";
     set((s) => ({
       nodes: s.nodes.map((n) =>
-        n.id === unionId
-          ? { ...n, data: { ...data, partnerIds: newPartnerIds, leftPartnerId: newLeftId, rightPartnerId: newRightId } }
-          : n
+        n.id === unionId ? { ...n, data: newData } : n
       ),
       edges: s.edges.filter((e) => e.id !== partnerEdge.id),
       hasUnsavedChanges: true,
@@ -6118,24 +6319,42 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   },
 
   updateUnionPartnerRole: (unionId, slot, role) => {
+    get().updateUnionPartnerRoleAt(unionId, slot === "left" ? 0 : 1, role);
+  },
+
+  updateUnionPartnerRoleAt: (unionId, partnerIndex, role) => {
     set((s) => {
       const union = s.nodes.find(
         (n) => n.id === unionId && (n.data as UnionNodeData).kind === "union"
       );
       if (!union) return {};
       const data = union.data as UnionNodeData;
-      const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
-      const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
-      const personId = slot === "left" ? leftId : rightId;
+      const partners = getUnionPartners(data);
+      if (partnerIndex < 0 || partnerIndex >= partners.length) return {};
+      const personId = partners[partnerIndex]!.personId;
+
+      const updatedPartners = partners.map((p, i) => {
+        if (i !== partnerIndex) return p;
+        if (role) return { personId: p.personId, role };
+        return { personId: p.personId };
+      });
 
       let nodes = s.nodes.map((n) => {
         if (n.id !== unionId) return n;
-        const nd = n.data as UnionNodeData;
-        if (slot === "left") {
-          return { ...n, data: { ...nd, leftPartnerRole: role ?? undefined } };
-        }
-        return { ...n, data: { ...nd, rightPartnerRole: role ?? undefined } };
+        return { ...n, data: withUnionPartners(data, updatedPartners) };
       });
+
+      if (role) {
+        const gender = genderForParentRole(role);
+        if (gender) {
+          nodes = nodes.map((n) => {
+            if (n.id === personId && isPersonData(n.data) && !(n.data as PersonNodeData).gender) {
+              return { ...n, data: { ...(n.data as PersonNodeData), gender } };
+            }
+            return n;
+          });
+        }
+      }
 
       if (role === "unknown") {
         nodes = applyUnknownRoleNameToPerson(nodes, personId);
@@ -6198,103 +6417,82 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   },
 
   swapUnionPartners: (unionId) => {
-    let didSwap = false;
+    const state = get();
+    const union = state.nodes.find(
+      (n) => n.id === unionId && (n.data as UnionNodeData).kind === "union"
+    );
+    if (!union) return false;
+    const partners = getUnionPartners(union.data as UnionNodeData);
+    if (partners.length !== 2) return false;
+    return get().moveUnionPartner(unionId, 0, 1);
+  },
+
+  moveUnionPartner: (unionId, fromIndex, toIndex) => {
+    let didMove = false;
     set((s) => {
       const union = s.nodes.find(
         (n) => n.id === unionId && (n.data as UnionNodeData).kind === "union"
       );
       if (!union) return {};
       const data = union.data as UnionNodeData;
-      const leftId = data.leftPartnerId;
-      const rightId = data.rightPartnerId;
-      if (!leftId || !rightId || !data.partnerIds || data.partnerIds.length !== 2) return {};
+      const partners = getUnionPartners(data);
+      if (fromIndex < 0 || fromIndex >= partners.length) return {};
+      if (toIndex < 0 || toIndex >= partners.length) return {};
+      if (fromIndex === toIndex) return {};
 
-      const leftNode = s.nodes.find(
-        (n) => n.id === leftId && (n.data as { kind?: string }).kind === "person"
-      );
-      const rightNode = s.nodes.find(
-        (n) => n.id === rightId && (n.data as { kind?: string }).kind === "person"
-      );
-      if (!leftNode || !rightNode) return {};
+      const reordered = [...partners];
+      const [moved] = reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, moved!);
 
-      if (import.meta.env.DEV) {
-        const dL = leftNode.data as { name?: string; entityId?: string; profileId?: string };
-        const dR = rightNode.data as { name?: string; entityId?: string; profileId?: string };
-        console.log("[Swap] BEFORE:", {
-          leftId,
-          leftName: dL.name,
-          leftEntityId: dL.entityId,
-          leftProfileId: dL.profileId,
-          rightId,
-          rightName: dR.name,
-          rightEntityId: dR.entityId,
-          rightProfileId: dR.profileId,
-        });
+      const personById = new Map(
+        s.nodes
+          .filter((n) => (n.data as { kind?: string }).kind === "person")
+          .map((n) => [n.id, n as Node<PersonNodeData>])
+      );
+      const partnerNodes = reordered
+        .map((p) => personById.get(p.personId))
+        .filter((n): n is Node<PersonNodeData> => n != null);
+      if (partnerNodes.length !== reordered.length) return {};
+
+      didMove = true;
+      const snap = (x: number, y: number) => snapPosition(x, y, s.snapToGrid);
+      const baseY = partnerNodes[0]!.position.y;
+      const baseX = Math.min(...partnerNodes.map((n) => n.position.x));
+
+      const newPositions = new Map<string, { x: number; y: number }>();
+      reordered.forEach((p, idx) => {
+        newPositions.set(p.personId, snap(baseX + idx * PARTNER_DX, baseY));
+      });
+
+      let unionPos = union.position;
+      if (reordered.length >= 2) {
+        const firstPos = newPositions.get(reordered[0]!.personId)!;
+        const lastPos = newPositions.get(reordered[reordered.length - 1]!.personId)!;
+        const wFirst = s.nodeSizesById[reordered[0]!.personId]?.width ?? DEFAULT_PERSON_W;
+        const wLast =
+          s.nodeSizesById[reordered[reordered.length - 1]!.personId]?.width ?? DEFAULT_PERSON_W;
+        const cFirst = firstPos.x + wFirst / 2;
+        const cLast = lastPos.x + wLast / 2;
+        const unionCenterX = (cFirst + cLast) / 2;
+        const wU = s.nodeSizesById[unionId]?.width ?? DEFAULT_UNION_W;
+        unionPos = snap(unionCenterX - wU / 2, baseY + UNION_DY);
       }
 
-      didSwap = true;
-      const snap = (x: number, y: number) =>
-        snapPosition(x, y, s.snapToGrid);
-      const baseX = Math.min(leftNode.position.x, rightNode.position.x);
-      const baseY = leftNode.position.y;
-
-      const newLeftPos = snap(baseX, baseY);
-      const newRightPos = snap(baseX + PARTNER_DX, baseY);
-
-      const wLeftNode = s.nodeSizesById[rightId]?.width ?? DEFAULT_PERSON_W;
-      const wRightNode = s.nodeSizesById[leftId]?.width ?? DEFAULT_PERSON_W;
-      const wU = s.nodeSizesById[unionId]?.width ?? DEFAULT_UNION_W;
-      const cL = newLeftPos.x + wLeftNode / 2;
-      const cR = newRightPos.x + wRightNode / 2;
-      const unionCenterX = (cL + cR) / 2;
-      const unionX = unionCenterX - wU / 2;
-      const unionY = baseY + UNION_DY;
-      const newUnionPos = snap(unionX, unionY);
-
+      const newData = withUnionPartners(data, reordered);
       const newNodes = s.nodes.map((n) => {
         if (n.id === unionId) {
-          return {
-            ...n,
-            position: newUnionPos,
-            data: {
-              ...data,
-              leftPartnerId: rightId,
-              rightPartnerId: leftId,
-              leftPartnerRole: data.rightPartnerRole,
-              rightPartnerRole: data.leftPartnerRole,
-              partnerIds: [rightId, leftId] as [string, string],
-            },
-          };
+          return { ...n, position: unionPos, data: newData };
         }
-        if (n.id === leftId) {
-          return { ...n, position: newRightPos };
-        }
-        if (n.id === rightId) {
-          return { ...n, position: newLeftPos };
+        const newPos = newPositions.get(n.id);
+        if (newPos) {
+          return { ...n, position: newPos };
         }
         return n;
       });
 
-      if (import.meta.env.DEV && didSwap) {
-        const newLeft = newNodes.find((n) => n.id === rightId);
-        const newRight = newNodes.find((n) => n.id === leftId);
-        const dL = (newLeft?.data ?? {}) as { name?: string; entityId?: string; profileId?: string };
-        const dR = (newRight?.data ?? {}) as { name?: string; entityId?: string; profileId?: string };
-        console.log("[Swap] AFTER (role swap: leftId=right, rightId=left):", {
-          newLeftId: rightId,
-          newLeftName: dL.name,
-          newLeftEntityId: dL.entityId,
-          newLeftProfileId: dL.profileId,
-          newRightId: leftId,
-          newRightName: dR.name,
-          newRightEntityId: dR.entityId,
-          newRightProfileId: dR.profileId,
-        });
-      }
-
       return { nodes: newNodes, hasUnsavedChanges: true, lastSaveError: null };
     });
-    return didSwap;
+    return didMove;
   },
 
   setDisplayMode: (mode) => {
@@ -6345,19 +6543,19 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       }
 
       const data = target.data as UnionNodeData;
-      const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
-      const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
+      const partners = getUnionPartners(data);
+      const partnerIds = partners
+        .map((p) => p.personId)
+        .filter((pid) => s.nodes.some((n) => n.id === pid));
       const childIds = s.edges
         .filter((e) => e.source === nodeId && isChildEdge(e))
         .map((e) => e.target);
       const updates = new Map<string, { x: number; y: number }>();
       updates.set(nodeId, pos);
-      if (leftId) {
-        updates.set(leftId, snap(pos.x - PARTNER_DX / 2, pos.y - UNION_DY));
-      }
-      if (rightId) {
-        updates.set(rightId, snap(pos.x + PARTNER_DX / 2, pos.y - UNION_DY));
-      }
+      const n = partnerIds.length;
+      partnerIds.forEach((pid, i) => {
+        updates.set(pid, snap(pos.x + (i - (n - 1) / 2) * PARTNER_DX, pos.y - UNION_DY));
+      });
       childIds.forEach((cid, idx) => {
         updates.set(cid, snap(pos.x + idx * DEFAULT_CHILD_ROW_SPACING, pos.y + CHILD_DY));
       });
@@ -6599,6 +6797,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       initialFamilies = migrated.map((r) => toFamilyGroup(r, nodes, edges));
     }
 
+    const savedFullUnion = (payload?.ui?.fullUnionSettings ?? {}) as Partial<FullUnionSettings>;
+
     set({
       activeProjectId: projectId,
       nodes,
@@ -6653,25 +6853,40 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           ? payload.ui.defaultUnionType
           : "forward",
       fullUnionSettings: {
+        ...DEFAULT_FULL_UNION_SETTINGS,
         includeFather:
-          payload?.ui?.fullUnionSettings?.includeFather ??
+          savedFullUnion.includeFather ??
           DEFAULT_FULL_UNION_SETTINGS.includeFather,
         includeMother:
-          payload?.ui?.fullUnionSettings?.includeMother ??
+          savedFullUnion.includeMother ??
           DEFAULT_FULL_UNION_SETTINGS.includeMother,
         includeChildren:
-          payload?.ui?.fullUnionSettings?.includeChildren ??
+          savedFullUnion.includeChildren ??
           DEFAULT_FULL_UNION_SETTINGS.includeChildren,
         childCount: Math.min(
           12,
           Math.max(
             0,
             Math.round(
-              payload?.ui?.fullUnionSettings?.childCount ??
+              savedFullUnion.childCount ??
                 DEFAULT_FULL_UNION_SETTINGS.childCount
             )
           )
         ),
+        advancedEnabled:
+          savedFullUnion.advancedEnabled ??
+          DEFAULT_FULL_UNION_SETTINGS.advancedEnabled,
+        parents: (savedFullUnion.parents ?? DEFAULT_FULL_UNION_SETTINGS.parents).slice(
+          0,
+          12
+        ),
+        children: (savedFullUnion.children ?? DEFAULT_FULL_UNION_SETTINGS.children).slice(
+          0,
+          12
+        ),
+        autoAssignMissingPartner:
+          savedFullUnion.autoAssignMissingPartner ??
+          DEFAULT_FULL_UNION_SETTINGS.autoAssignMissingPartner,
       },
       selectedNodeIds: [],
       primarySelectedNodeId: null,
@@ -6972,6 +7187,7 @@ useFamilyTreeStore.subscribe((state) => {
     state.documents !== prevDocumentsRef || documentsUpdatedAtSum !== prevDocumentsUpdatedAtSum;
 
   const lastDocumentIdJson = JSON.stringify(state.lastDocumentIdByFamilyId);
+  const fullUnionSettingsJson = JSON.stringify(state.fullUnionSettings);
 
   const uiPrefsChanged =
     state.showNodeInfoEnabled !== prevShowNodeInfoEnabled ||
@@ -6995,7 +7211,9 @@ useFamilyTreeStore.subscribe((state) => {
     state.displayMode !== prevDisplayMode ||
     state.legendMode !== prevLegendMode ||
     state.subEntitySelectionMode !== prevSubEntitySelectionMode ||
-    lastDocumentIdJson !== prevLastDocumentIdJson;
+    lastDocumentIdJson !== prevLastDocumentIdJson ||
+    fullUnionSettingsJson !== prevFullUnionSettingsJson ||
+    state.defaultUnionType !== prevDefaultUnionType;
   prevNodes = state.nodes;
   prevEdges = state.edges;
   prevShowNodeInfoEnabled = state.showNodeInfoEnabled;
@@ -7021,6 +7239,8 @@ useFamilyTreeStore.subscribe((state) => {
   prevLegendMode = state.legendMode;
   prevSubEntitySelectionMode = state.subEntitySelectionMode;
   prevLastDocumentIdJson = lastDocumentIdJson;
+  prevFullUnionSettingsJson = fullUnionSettingsJson;
+  prevDefaultUnionType = state.defaultUnionType;
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&
     state.activeProjectId &&
