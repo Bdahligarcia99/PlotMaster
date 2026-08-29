@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useFamilyTreeStore,
   DEFAULT_CONNECTION_STYLE,
@@ -89,6 +89,8 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   const setEdgeConnectionStyleId = useFamilyTreeStore((s) => s.setEdgeConnectionStyleId);
   const setEdgeConnectionStyleOverride = useFamilyTreeStore((s) => s.setEdgeConnectionStyleOverride);
   const clearEdgeConnectionStyle = useFamilyTreeStore((s) => s.clearEdgeConnectionStyle);
+  const connectionStyleEditorOffset = useFamilyTreeStore((s) => s.connectionStyleEditorOffset);
+  const setConnectionStyleEditorOffset = useFamilyTreeStore((s) => s.setConnectionStyleEditorOffset);
 
   const unionNode = nodes.find((n) => n.id === unionId && (n.data as UnionNodeData).kind === "union");
   const unionData = unionNode?.data as UnionNodeData | undefined;
@@ -104,7 +106,87 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   const [activePersonIds, setActivePersonIds] = useState<Set<string>>(new Set());
   const [activeStyleId, setActiveStyleId] = useState<string | null>(null);
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const iconPickerBoxRef = useRef<HTMLDivElement>(null);
+  const dragStateRef = useRef<{
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+    baseLeft: number;
+    baseTop: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>(
+    () => connectionStyleEditorOffset ?? { x: 0, y: 0 }
+  );
+
   const previewStyle = draft ?? effectiveStyle;
+
+  const handleDragPointerMove = useCallback((e: PointerEvent) => {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    const margin = 8;
+    const minX = margin - drag.baseLeft;
+    const maxX = Math.max(minX, window.innerWidth - margin - drag.width - drag.baseLeft);
+    const minY = margin - drag.baseTop;
+    const maxY = Math.max(minY, window.innerHeight - margin - drag.height - drag.baseTop);
+    const rawX = drag.baseX + (e.clientX - drag.startX);
+    const rawY = drag.baseY + (e.clientY - drag.startY);
+    setDragOffset({
+      x: Math.min(Math.max(rawX, minX), maxX),
+      y: Math.min(Math.max(rawY, minY), maxY),
+    });
+  }, []);
+
+  const handleDragPointerUp = useCallback(() => {
+    dragStateRef.current = null;
+    window.removeEventListener("pointermove", handleDragPointerMove);
+    window.removeEventListener("pointerup", handleDragPointerUp);
+    setDragOffset((current) => {
+      setConnectionStyleEditorOffset(current);
+      return current;
+    });
+  }, [handleDragPointerMove, setConnectionStyleEditorOffset]);
+
+  const handleDragHandlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      dragStateRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        baseX: dragOffset.x,
+        baseY: dragOffset.y,
+        baseLeft: rect.left - dragOffset.x,
+        baseTop: rect.top - dragOffset.y,
+        width: rect.width,
+        height: rect.height,
+      };
+      window.addEventListener("pointermove", handleDragPointerMove);
+      window.addEventListener("pointerup", handleDragPointerUp);
+    },
+    [dragOffset, handleDragPointerMove, handleDragPointerUp]
+  );
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", handleDragPointerMove);
+      window.removeEventListener("pointerup", handleDragPointerUp);
+    };
+  }, [handleDragPointerMove, handleDragPointerUp]);
+
+  const handleRootClick = useCallback((e: React.MouseEvent) => {
+    if (!iconPickerOpen) return;
+    const target = e.target as HTMLElement;
+    if (iconPickerBoxRef.current?.contains(target)) return;
+    if (target.closest("[data-keep-icon-picker]")) return;
+    setIconPickerOpen(false);
+  }, [iconPickerOpen]);
 
   const connectedMembers = useMemo(() => {
     if (!unionData) return [];
@@ -180,8 +262,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     });
   }, []);
 
-  const updateDraft = useCallback((patch: Partial<StyleDraft>, opts?: { keepIconPicker?: boolean }) => {
-    if (!opts?.keepIconPicker) setIconPickerOpen(false);
+  const updateDraft = useCallback((patch: Partial<StyleDraft>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
@@ -410,10 +491,8 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
               )}
               <button
                 type="button"
-                onClick={() => {
-                  setAdvancedOpen(true);
-                  setIconPickerOpen(true);
-                }}
+                data-keep-icon-picker
+                onClick={() => setIconPickerOpen(true)}
                 className="ml-auto px-2 py-1 text-xs rounded border border-dark-accent text-dark-muted hover:text-dark-text hover:border-dark-muted"
               >
                 Assign icon
@@ -540,97 +619,113 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   );
 
   const rightColumn = (
-    <div className="border-l border-dark-accent pl-3 min-w-0">
-      <div className="text-xs text-dark-muted mb-1.5">Union Connections</div>
-      {connectedMembers.length === 0 ? (
-        <div className="text-xs text-dark-muted px-1 py-2">No connected people</div>
-      ) : (
-        <div
-          className={`overflow-y-auto nowheel space-y-1 ${iconPickerOpen ? "max-h-40" : "max-h-64"}`}
-        >
-          {connectedMembers.map(({ personId, name, edgeId, styleName }) => (
+    <div className="border-l border-dark-accent pl-3 min-w-0 flex flex-col">
+      {advancedOpen && (
+        <>
+          <div className="text-xs text-dark-muted mb-1.5">Union Connections</div>
+          {connectedMembers.length === 0 ? (
+            <div className="text-xs text-dark-muted px-1 py-2">No connected people</div>
+          ) : (
             <div
-              key={personId}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded border min-w-0 ${
-                activePersonIds.has(personId)
-                  ? "border-blue-500 bg-blue-500/10"
-                  : "border-transparent hover:border-dark-accent hover:bg-dark-accent/20"
-              }`}
+              className={`overflow-y-auto nowheel space-y-1 ${iconPickerOpen ? "max-h-40" : "max-h-64"}`}
             >
-              <button
-                type="button"
-                onClick={() => togglePerson(personId)}
-                className="flex-1 min-w-0 text-left text-xs text-dark-text truncate"
-                title="Click to select, then click a library style to apply"
-              >
-                {name}
-              </button>
-              <span className="text-[10px] text-dark-muted flex-shrink-0">{styleName}</span>
-              {edgeId && (
-                <select
-                  value={
-                    (() => {
-                      const edge = edges.find((e) => e.id === edgeId);
-                      const edgeData = edge?.data as { connectionStyleId?: string } | undefined;
-                      return edgeData?.connectionStyleId ?? "";
-                    })()
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (!val) clearEdgeConnectionStyle(edgeId);
-                    else setEdgeConnectionStyleId(edgeId, val);
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-[10px] px-1 py-0.5 rounded bg-dark-bg border border-dark-accent text-dark-text max-w-[88px]"
+              {connectedMembers.map(({ personId, name, edgeId, styleName }) => (
+                <div
+                  key={personId}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded border min-w-0 ${
+                    activePersonIds.has(personId)
+                      ? "border-blue-500 bg-blue-500/10"
+                      : "border-transparent hover:border-dark-accent hover:bg-dark-accent/20"
+                  }`}
                 >
-                  <option value="">Default</option>
-                  {connectionStyles.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+                  <button
+                    type="button"
+                    onClick={() => togglePerson(personId)}
+                    className="flex-1 min-w-0 text-left text-xs text-dark-text truncate"
+                    title="Click to select, then click a library style to apply"
+                  >
+                    {name}
+                  </button>
+                  <span className="text-[10px] text-dark-muted flex-shrink-0">{styleName}</span>
+                  {edgeId && (
+                    <select
+                      value={
+                        (() => {
+                          const edge = edges.find((e) => e.id === edgeId);
+                          const edgeData = edge?.data as { connectionStyleId?: string } | undefined;
+                          return edgeData?.connectionStyleId ?? "";
+                        })()
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) clearEdgeConnectionStyle(edgeId);
+                        else setEdgeConnectionStyleId(edgeId, val);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] px-1 py-0.5 rounded bg-dark-bg border border-dark-accent text-dark-text max-w-[88px]"
+                    >
+                      <option value="">Default</option>
+                      {connectionStyles.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
-      {activePersonIds.size > 0 && (
-        <p className="text-[10px] text-dark-muted mt-2">
-          {activePersonIds.size} selected — click a library style to apply
-        </p>
-      )}
-      {activeStyleId && activePersonIds.size === 0 && (
-        <p className="text-[10px] text-dark-muted mt-2">
-          Style selected — click connection names to apply
-        </p>
+          )}
+          {activePersonIds.size > 0 && (
+            <p className="text-[10px] text-dark-muted mt-2">
+              {activePersonIds.size} selected — click a library style to apply
+            </p>
+          )}
+          {activeStyleId && activePersonIds.size === 0 && (
+            <p className="text-[10px] text-dark-muted mt-2">
+              Style selected — click connection names to apply
+            </p>
+          )}
+        </>
       )}
       {iconPickerOpen && (
-        <div className="mt-3 pt-3 border-t border-dark-accent">
+        <div
+          ref={iconPickerBoxRef}
+          className={advancedOpen ? "mt-3 pt-3 border-t border-dark-accent" : undefined}
+        >
           <ConnectionIconPicker
             value={draft?.icon}
             onSelect={(icon) => {
-              if (draft) updateDraft({ icon }, { keepIconPicker: true });
+              if (draft) updateDraft({ icon });
               else setDraft({ name: "", description: "", ...DEFAULT_CONNECTION_STYLE, icon });
             }}
-            onClear={() => updateDraft({ icon: undefined }, { keepIconPicker: true })}
-            onBack={() => setIconPickerOpen(false)}
+            onClear={() => updateDraft({ icon: undefined })}
           />
         </div>
       )}
     </div>
   );
 
+  const showSecondColumn = advancedOpen || iconPickerOpen;
+
   return (
     <div
-      className={`nowheel ${advancedOpen ? "w-[640px]" : "w-[320px]"} bg-dark-surface border border-dark-accent rounded-lg shadow-lg p-3 text-dark-text`}
+      ref={rootRef}
+      className={`nowheel ${showSecondColumn ? "w-[640px]" : "w-[320px]"} max-h-[90vh] overflow-y-auto bg-dark-surface border border-dark-accent rounded-lg shadow-lg p-3 text-dark-text`}
+      style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
       onPointerDown={(e) => e.stopPropagation()}
+      onClick={handleRootClick}
     >
-      <div className="flex items-center justify-between mb-3">
+      <div
+        className="flex items-center justify-between mb-3 cursor-move select-none"
+        onPointerDown={handleDragHandlePointerDown}
+        title="Drag to move"
+      >
         <h3 className="text-sm font-medium">Connection Style</h3>
         <button
           type="button"
           onClick={onClose}
+          onPointerDown={(e) => e.stopPropagation()}
           className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50 text-lg leading-none"
           aria-label="Close"
         >
@@ -646,14 +741,13 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
             setAdvancedOpen(e.target.checked);
             setActivePersonIds(new Set());
             setActiveStyleId(null);
-            if (!e.target.checked) setIconPickerOpen(false);
           }}
           className="themed-checkbox"
         />
         Advanced options
       </label>
 
-      {advancedOpen ? (
+      {showSecondColumn ? (
         <div className="grid grid-cols-2 gap-3">
           <div className="min-w-0">{leftColumn}</div>
           {rightColumn}

@@ -48,6 +48,8 @@ export interface FamilyTreeUIFlags {
   genAnchorBandOpacity?: number;
   genAnchorLineOpacity?: number;
   defaultUnionType?: "forward" | "backward" | "full";
+  /** Manual drag offset (px) applied to the Connection Style editor popover, shared across all unions/projects it's opened for. */
+  connectionStyleEditorOffset?: { x: number; y: number };
   fullUnionSettings?: {
     includeFather?: boolean;
     includeMother?: boolean;

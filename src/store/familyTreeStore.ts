@@ -2631,6 +2631,8 @@ interface FamilyTreeStore {
   persistUnionSelectionOnChildCreate: boolean;
   scriptCompactDeclarations: boolean;
   styleEditorOpenUnionId: string | null;
+  /** Manual drag offset (px) for the Connection Style editor popover; shared across all unions and persisted per-project. */
+  connectionStyleEditorOffset: { x: number; y: number } | null;
   showGenerationAnchors: boolean;
   showGenInheritIndicator: boolean;
   /** Opacity (0-100) of the generation anchor band tint on the canvas. */
@@ -2692,6 +2694,7 @@ interface FamilyTreeStore {
   setNodeInfoSpacing: (v: boolean) => void;
   setPersistUnionSelectionOnChildCreate: (v: boolean) => void;
   setStyleEditorOpenUnionId: (id: string | null) => void;
+  setConnectionStyleEditorOffset: (offset: { x: number; y: number } | null) => void;
   setScriptCompactDeclarations: (v: boolean) => void;
   setShowGenerationAnchors: (v: boolean) => void;
   setShowGenInheritIndicator: (v: boolean) => void;
@@ -2928,6 +2931,7 @@ let prevNodeInfoSpacing: boolean | null = null;
 let prevSingleChildAlignment: "left" | "center" | "right" | null = null;
 let prevChildrenRowAlignment3Plus: "left" | "center" | "right" | null = null;
 let prevPersistUnionSelectionOnChildCreate: boolean | null = null;
+let prevConnectionStyleEditorOffsetJson: string | null = null;
 let prevShowGenerationAnchors: boolean | null = null;
 let prevShowGenInheritIndicator: boolean | null = null;
 let prevGenAnchorBandOpacity: number | null = null;
@@ -4090,6 +4094,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
   persistUnionSelectionOnChildCreate: true,
   scriptCompactDeclarations: false,
   styleEditorOpenUnionId: null,
+  connectionStyleEditorOffset: null,
   showGenerationAnchors: true,
   showGenInheritIndicator: true,
   genAnchorBandOpacity: 6,
@@ -4889,6 +4894,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
   setPersistUnionSelectionOnChildCreate: (v) =>
     set({ persistUnionSelectionOnChildCreate: v, hasUnsavedChanges: true, lastSaveError: null }),
   setStyleEditorOpenUnionId: (id) => set({ styleEditorOpenUnionId: id }),
+  setConnectionStyleEditorOffset: (offset) =>
+    set({ connectionStyleEditorOffset: offset, hasUnsavedChanges: true, lastSaveError: null }),
   setScriptCompactDeclarations: (v) => set({ scriptCompactDeclarations: v }),
   setShowGenerationAnchors: (v) =>
     set({ showGenerationAnchors: v, hasUnsavedChanges: true, lastSaveError: null }),
@@ -6844,6 +6851,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
           ? payload.ui.childrenRowAlignment3Plus
           : "center"),
       persistUnionSelectionOnChildCreate: payload?.ui?.persistUnionSelectionOnChildCreate ?? true,
+      connectionStyleEditorOffset: payload?.ui?.connectionStyleEditorOffset ?? null,
       showGenerationAnchors: payload?.ui?.showGenerationAnchors ?? true,
       showGenInheritIndicator: payload?.ui?.showGenInheritIndicator ?? true,
       genAnchorBandOpacity: payload?.ui?.genAnchorBandOpacity ?? 6,
@@ -7029,6 +7037,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
           singleChildAlignment: s.singleChildAlignment,
           childrenRowAlignment3Plus: s.childrenRowAlignment3Plus,
           persistUnionSelectionOnChildCreate: s.persistUnionSelectionOnChildCreate,
+          connectionStyleEditorOffset: s.connectionStyleEditorOffset ?? undefined,
           defaultUnionType: s.defaultUnionType,
           fullUnionSettings: s.fullUnionSettings,
           legendMode: s.legendMode,
@@ -7190,6 +7199,7 @@ useFamilyTreeStore.subscribe((state) => {
 
   const lastDocumentIdJson = JSON.stringify(state.lastDocumentIdByFamilyId);
   const fullUnionSettingsJson = JSON.stringify(state.fullUnionSettings);
+  const connectionStyleEditorOffsetJson = JSON.stringify(state.connectionStyleEditorOffset);
 
   const uiPrefsChanged =
     state.showNodeInfoEnabled !== prevShowNodeInfoEnabled ||
@@ -7215,6 +7225,7 @@ useFamilyTreeStore.subscribe((state) => {
     state.subEntitySelectionMode !== prevSubEntitySelectionMode ||
     lastDocumentIdJson !== prevLastDocumentIdJson ||
     fullUnionSettingsJson !== prevFullUnionSettingsJson ||
+    connectionStyleEditorOffsetJson !== prevConnectionStyleEditorOffsetJson ||
     state.defaultUnionType !== prevDefaultUnionType;
   prevNodes = state.nodes;
   prevEdges = state.edges;
@@ -7242,6 +7253,7 @@ useFamilyTreeStore.subscribe((state) => {
   prevSubEntitySelectionMode = state.subEntitySelectionMode;
   prevLastDocumentIdJson = lastDocumentIdJson;
   prevFullUnionSettingsJson = fullUnionSettingsJson;
+  prevConnectionStyleEditorOffsetJson = connectionStyleEditorOffsetJson;
   prevDefaultUnionType = state.defaultUnionType;
   if (
     (nodesOrEdgesChanged || uiPrefsChanged) &&

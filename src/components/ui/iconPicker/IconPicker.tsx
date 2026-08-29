@@ -78,7 +78,7 @@ export default function IconPicker({
           {renderConnectionIcon(value, 18)}
         </div>
       )}
-      <div className="max-h-64 overflow-y-auto nowheel">
+      <div className="max-h-[65vh] overflow-y-auto nowheel">
         {tab === "emoji" ? (
           <div className="space-y-2">
             {EMOJI_CATEGORIES.map((cat) => (
