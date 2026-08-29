@@ -92,7 +92,6 @@ export default function FullUnionAdvancedDialog({
   };
 
   const handleDone = () => {
-    setFullUnionSettings({ advancedEnabled: true });
     onClose();
   };
 
