@@ -5828,7 +5828,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         target: childId,
         sourceHandle: "children",
         targetHandle: "parent",
-        data: { type: "child" },
+        data: { type: "child", childRole: "daughter" },
       });
     }
 

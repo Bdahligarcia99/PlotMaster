@@ -113,126 +113,133 @@ export default function FullUnionAdvancedDialog({
           <span>Use advanced options</span>
         </label>
 
-        <section>
-          <h3 className="text-sm font-medium text-dark-text mb-2">Parents</h3>
-          <div className="space-y-3">
-            {parents.map((parent, index) => (
-              <div
-                key={`parent-${index}`}
-                className="rounded-lg border border-dark-accent/50 p-3 space-y-2 bg-dark-bg/40"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-dark-muted uppercase">
-                    Parent {index + 1}
-                  </span>
-                  {parents.length > 1 && (
+        <fieldset
+          disabled={!fullUnionSettings.advancedEnabled}
+          className={`space-y-5 ${
+            fullUnionSettings.advancedEnabled ? "" : "opacity-40 pointer-events-none"
+          }`}
+        >
+          <section>
+            <h3 className="text-sm font-medium text-dark-text mb-2">Parents</h3>
+            <div className="space-y-3">
+              {parents.map((parent, index) => (
+                <div
+                  key={`parent-${index}`}
+                  className="rounded-lg border border-dark-accent/50 p-3 space-y-2 bg-dark-bg/40"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-dark-muted uppercase">
+                      Parent {index + 1}
+                    </span>
+                    {parents.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeParent(index)}
+                        className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-red-400 hover:bg-dark-accent/50 text-sm"
+                        title="Remove parent"
+                      >
+                        −
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs text-dark-muted mb-1">Role</label>
+                    <ParentRoleSelect
+                      value={parent.role ?? ""}
+                      onChange={(role) => updateParent(index, { role: role ?? undefined })}
+                      customParentRoles={customParentRoles}
+                      addCustomParentRole={addCustomParentRole}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-dark-muted mb-1">Gender</label>
+                    <GenderSelect
+                      value={parent.gender ?? ""}
+                      onChange={(gender) => updateParent(index, { gender: gender ?? undefined })}
+                      customGenders={customGenders}
+                      addCustomGender={addCustomGender}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={addParent}
+              className="mt-2 text-sm text-blue-400 hover:text-blue-300"
+            >
+              + Add New Parent
+            </button>
+          </section>
+
+          <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked={fullUnionSettings.autoAssignMissingPartner}
+              onChange={(e) =>
+                setFullUnionSettings({ autoAssignMissingPartner: e.target.checked })
+              }
+              className="themed-checkbox"
+            />
+            <span>Auto Assign Missing Partner</span>
+          </label>
+          <p className="text-xs text-dark-muted -mt-2">
+            When one seed person is selected, auto-fill the opposite biological role for a new partner.
+          </p>
+
+          <section>
+            <h3 className="text-sm font-medium text-dark-text mb-2">Children</h3>
+            <div className="space-y-3">
+              {children.map((child, index) => (
+                <div
+                  key={`child-${index}`}
+                  className="rounded-lg border border-dark-accent/50 p-3 space-y-2 bg-dark-bg/40"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-dark-muted uppercase">
+                      Child {index + 1}
+                    </span>
                     <button
                       type="button"
-                      onClick={() => removeParent(index)}
+                      onClick={() => removeChild(index)}
                       className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-red-400 hover:bg-dark-accent/50 text-sm"
-                      title="Remove parent"
+                      title="Remove child"
                     >
                       −
                     </button>
-                  )}
+                  </div>
+                  <div>
+                    <label className="block text-xs text-dark-muted mb-1">Child Role</label>
+                    <ChildRoleSelect
+                      value={child.childRole ?? ""}
+                      onChange={(childRole) =>
+                        updateChild(index, { childRole: childRole ?? undefined })
+                      }
+                      customChildRoles={customChildRoles}
+                      addCustomChildRole={addCustomChildRole}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-dark-muted mb-1">Gender</label>
+                    <GenderSelect
+                      value={child.gender ?? ""}
+                      onChange={(gender) => updateChild(index, { gender: gender ?? undefined })}
+                      customGenders={customGenders}
+                      addCustomGender={addCustomGender}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs text-dark-muted mb-1">Role</label>
-                  <ParentRoleSelect
-                    value={parent.role ?? ""}
-                    onChange={(role) => updateParent(index, { role: role ?? undefined })}
-                    customParentRoles={customParentRoles}
-                    addCustomParentRole={addCustomParentRole}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-dark-muted mb-1">Gender</label>
-                  <GenderSelect
-                    value={parent.gender ?? ""}
-                    onChange={(gender) => updateParent(index, { gender: gender ?? undefined })}
-                    customGenders={customGenders}
-                    addCustomGender={addCustomGender}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={addParent}
-            className="mt-2 text-sm text-blue-400 hover:text-blue-300"
-          >
-            + Add New Parent
-          </button>
-        </section>
-
-        <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer">
-          <input
-            type="checkbox"
-            checked={fullUnionSettings.autoAssignMissingPartner}
-            onChange={(e) =>
-              setFullUnionSettings({ autoAssignMissingPartner: e.target.checked })
-            }
-            className="themed-checkbox"
-          />
-          <span>Auto Assign Missing Partner</span>
-        </label>
-        <p className="text-xs text-dark-muted -mt-2">
-          When one seed person is selected, auto-fill the opposite biological role for a new partner.
-        </p>
-
-        <section>
-          <h3 className="text-sm font-medium text-dark-text mb-2">Children</h3>
-          <div className="space-y-3">
-            {children.map((child, index) => (
-              <div
-                key={`child-${index}`}
-                className="rounded-lg border border-dark-accent/50 p-3 space-y-2 bg-dark-bg/40"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-dark-muted uppercase">
-                    Child {index + 1}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeChild(index)}
-                    className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-red-400 hover:bg-dark-accent/50 text-sm"
-                    title="Remove child"
-                  >
-                    −
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-xs text-dark-muted mb-1">Child Role</label>
-                  <ChildRoleSelect
-                    value={child.childRole ?? ""}
-                    onChange={(childRole) =>
-                      updateChild(index, { childRole: childRole ?? undefined })
-                    }
-                    customChildRoles={customChildRoles}
-                    addCustomChildRole={addCustomChildRole}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-dark-muted mb-1">Gender</label>
-                  <GenderSelect
-                    value={child.gender ?? ""}
-                    onChange={(gender) => updateChild(index, { gender: gender ?? undefined })}
-                    customGenders={customGenders}
-                    addCustomGender={addCustomGender}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={addChild}
-            className="mt-2 text-sm text-blue-400 hover:text-blue-300"
-          >
-            + Add New Child
-          </button>
-        </section>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={addChild}
+              className="mt-2 text-sm text-blue-400 hover:text-blue-300"
+            >
+              + Add New Child
+            </button>
+          </section>
+        </fieldset>
 
         <div className="flex items-center justify-between gap-2 pt-2 border-t border-dark-accent/50">
           <Button variant="secondary" size="sm" onClick={handleReset}>
