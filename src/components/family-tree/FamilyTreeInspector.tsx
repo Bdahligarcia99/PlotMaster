@@ -705,17 +705,23 @@ function PersonUnionsSection({
   nodes,
   edges,
   onSelectNode,
+  updateUnionPartnerRole,
   swapPersonUnionSides,
   moveChildToUnion,
   requestRemoveConnection,
+  customParentRoles,
+  addCustomParentRole,
 }: {
   personId: string;
   nodes: { id: string; type?: string; data: unknown }[];
   edges: Edge[];
   onSelectNode: (id: string) => void;
+  updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
   swapPersonUnionSides: (personId: string) => boolean;
   moveChildToUnion: (childId: string, fromUnionId: string, toUnionId: string) => boolean;
   requestRemoveConnection: (target: import("../../store/familyTreeStore").RemoveConnectionTarget) => string | null;
+  customParentRoles: string[];
+  addCustomParentRole: (label: string) => void;
 }) {
   const parentUnions = getParentUnionsForPerson(personId, nodes, edges);
   if (parentUnions.length === 0) return null;
@@ -782,39 +788,53 @@ function PersonUnionsSection({
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="space-y-4">
         {parentUnions.map((union) => (
-          <div
-            key={union.unionId}
-            className="rounded-lg border border-dark-accent/40 bg-dark-bg/30 px-3 py-3"
-          >
-            <div className="space-y-2">
-              <div>
-                <label className="block text-dark-muted text-sm mb-1">Partners</label>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => onSelectNode(union.otherPartnerId)}
-                    className="flex-1 text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
-                  >
-                    {union.otherPartnerName}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => handleRemovePartner(union.unionId, union.otherPartnerId, union.otherPartnerName, e)}
-                    title="Remove from union"
-                    className="text-dark-muted hover:text-red-500 px-1 text-xs"
-                  >
-                    ×
-                  </button>
+          <div key={union.unionId}>
+            <div className="mb-2">
+              <label className="block text-dark-muted text-sm mb-2">
+                Role with {union.otherPartnerName}
+              </label>
+              <ParentRoleSelect
+                value={
+                  ((union.unionNode.data as UnionNodeData)[
+                    union.slot === "left" ? "leftPartnerRole" : "rightPartnerRole"
+                  ] ?? "") as string
+                }
+                onChange={(v) => updateUnionPartnerRole(union.unionId, union.slot, v)}
+                customParentRoles={customParentRoles}
+                addCustomParentRole={addCustomParentRole}
+              />
+            </div>
+            <div className="rounded-lg border border-dark-accent/40 bg-dark-bg/30 px-3 py-3">
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-dark-muted text-sm mb-1">Partners</label>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onSelectNode(union.otherPartnerId)}
+                      className="flex-1 text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
+                    >
+                      {union.otherPartnerName}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => handleRemovePartner(union.unionId, union.otherPartnerId, union.otherPartnerName, e)}
+                      title="Remove from union"
+                      className="text-dark-muted hover:text-red-500 px-1 text-xs"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-dark-muted text-sm mb-1">Children</label>
-                <DroppableChildrenList
-                  unionId={union.unionId}
-                  children={union.children}
-                  onSelect={onSelectNode}
-                  onRemove={(childId, displayName, e) => handleRemoveChild(union.unionId, childId, displayName, e)}
-                />
+                <div>
+                  <label className="block text-dark-muted text-sm mb-1">Children</label>
+                  <DroppableChildrenList
+                    unionId={union.unionId}
+                    children={union.children}
+                    onSelect={onSelectNode}
+                    onRemove={(childId, displayName, e) => handleRemoveChild(union.unionId, childId, displayName, e)}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1508,28 +1528,10 @@ export default function FamilyTreeInspector() {
             />
           </div>
           {(() => {
-            const partnerUnions = getParentUnionsForPerson(selectedNode.id, nodes, edges);
             const childUnions = getChildUnionsForPerson(selectedNode.id, nodes, edges);
-            if (partnerUnions.length === 0 && childUnions.length === 0) return null;
+            if (childUnions.length === 0) return null;
             return (
               <div className="mb-4 space-y-4">
-                {partnerUnions.map((union) => (
-                  <div key={`role-${union.unionId}`}>
-                    <label className="block text-dark-muted text-sm mb-2">
-                      Role with {union.otherPartnerName}
-                    </label>
-                    <ParentRoleSelect
-                      value={
-                        ((union.unionNode.data as UnionNodeData)[
-                          union.slot === "left" ? "leftPartnerRole" : "rightPartnerRole"
-                        ] ?? "") as string
-                      }
-                      onChange={(v) => updateUnionPartnerRole(union.unionId, union.slot, v)}
-                      customParentRoles={customParentRoles}
-                      addCustomParentRole={addCustomParentRole}
-                    />
-                  </div>
-                ))}
                 {childUnions.map((cu) => {
                   const childRoleLabel =
                     childUnions.length > 1
@@ -1561,9 +1563,12 @@ export default function FamilyTreeInspector() {
             nodes={nodes}
             edges={edges}
             onSelectNode={(id) => setSelectedNodeIds([id])}
+            updateUnionPartnerRole={updateUnionPartnerRole}
             swapPersonUnionSides={swapPersonUnionSides}
             moveChildToUnion={moveChildToUnion}
             requestRemoveConnection={requestRemoveConnection}
+            customParentRoles={customParentRoles}
+            addCustomParentRole={addCustomParentRole}
           />
           {(() => {
             const unknownLocked = hasUnknownParentRole(selectedNode.id, nodes);
