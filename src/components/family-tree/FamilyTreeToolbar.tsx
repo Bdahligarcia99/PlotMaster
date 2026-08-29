@@ -5,6 +5,7 @@ import NumberSlider from "../ui/NumberSlider";
 import { useFamilyTreeStore } from "../../store/familyTreeStore";
 import FamilyTreeExportDialog from "./FamilyTreeExportDialog";
 import FamilyTreeReviewSuggestionsModal from "./FamilyTreeReviewSuggestionsModal";
+import FamilyEradicationWarningModal from "./FamilyEradicationWarningModal";
 import {
   formatGenerationAnchorLabel,
   getPersonDisplayName,
@@ -38,16 +39,24 @@ export default function FamilyTreeToolbar() {
   const autosaveEnabled = useFamilyTreeStore((s) => s.autosaveEnabled);
   const setAutosaveEnabled = useFamilyTreeStore((s) => s.setAutosaveEnabled);
   const activeProjectId = useFamilyTreeStore((s) => s.activeProjectId);
-  const clearTree = useFamilyTreeStore((s) => s.clearTree);
+  const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
+  const families = useFamilyTreeStore((s) => s.families);
+  const requestClearFamily = useFamilyTreeStore((s) => s.requestClearFamily);
+  const pendingClearFamilyConfirm = useFamilyTreeStore((s) => s.pendingClearFamilyConfirm);
+  const confirmClearFamily = useFamilyTreeStore((s) => s.confirmClearFamily);
+  const cancelClearFamily = useFamilyTreeStore((s) => s.cancelClearFamily);
   const addPerson = useFamilyTreeStore((s) => s.addPerson);
   const createUnion = useFamilyTreeStore((s) => s.createUnion);
   const createBackwardUnion = useFamilyTreeStore((s) => s.createBackwardUnion);
+  const createFullUnion = useFamilyTreeStore((s) => s.createFullUnion);
   const addChild = useFamilyTreeStore((s) => s.addChild);
   const addParent = useFamilyTreeStore((s) => s.addParent);
   const linkPersonToUnion = useFamilyTreeStore((s) => s.linkPersonToUnion);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const defaultUnionType = useFamilyTreeStore((s) => s.defaultUnionType);
   const setDefaultUnionType = useFamilyTreeStore((s) => s.setDefaultUnionType);
+  const fullUnionSettings = useFamilyTreeStore((s) => s.fullUnionSettings);
+  const setFullUnionSettings = useFamilyTreeStore((s) => s.setFullUnionSettings);
   const persistUnionSelectionOnChildCreate = useFamilyTreeStore((s) => s.persistUnionSelectionOnChildCreate);
   const setPersistUnionSelectionOnChildCreate = useFamilyTreeStore((s) => s.setPersistUnionSelectionOnChildCreate);
   const addGenerationAnchor = useFamilyTreeStore((s) => s.addGenerationAnchor);
@@ -289,8 +298,12 @@ export default function FamilyTreeToolbar() {
     selectedPersons.length >= 1 &&
     selectedPersons.length <= 2 &&
     selectedNodeIds.length === selectedPersons.length;
-  const canCreateUnion =
-    defaultUnionType === "forward" ? canCreateForwardUnion : canCreateBackwardUnion;
+  const isFullMode = defaultUnionType === "full";
+  const canCreateUnion = isFullMode
+    ? true
+    : defaultUnionType === "forward"
+      ? canCreateForwardUnion
+      : canCreateBackwardUnion;
 
   const canLinkPerson =
     selectedNodeIds.length === 2 &&
@@ -328,7 +341,35 @@ export default function FamilyTreeToolbar() {
     selectedUnions.length === 1 &&
     (selectedUnionData?.partnerIds?.filter((id): id is string => id != null).length ?? 0) < 2;
 
+  function getFullUnionTooltip(): string {
+    const parts: string[] = [];
+    if (selectedPersons.length === 2) {
+      parts.push("2 parents");
+    } else if (selectedPersons.length === 1) {
+      parts.push("1 parent");
+      if (fullUnionSettings.includeFather && fullUnionSettings.includeMother) {
+        parts.push("+ partner");
+      } else if (fullUnionSettings.includeFather || fullUnionSettings.includeMother) {
+        parts.push(`+ ${fullUnionSettings.includeFather ? "father" : "mother"}`);
+      }
+    } else {
+      if (fullUnionSettings.includeFather) parts.push("father");
+      if (fullUnionSettings.includeMother) parts.push("mother");
+      if (parts.length === 0) parts.push("no parents");
+    }
+    if (fullUnionSettings.includeChildren && fullUnionSettings.childCount > 0) {
+      parts.push(
+        `${fullUnionSettings.childCount} ${fullUnionSettings.childCount === 1 ? "child" : "children"}`
+      );
+    }
+    return `Create full union (${parts.join(" + ")})`;
+  }
+
   function getCreateUnionTooltip(): string {
+    if (isFullMode) {
+      if (selectedPersons.length > 2) return "Select at most 2 people for a full union.";
+      return getFullUnionTooltip();
+    }
     if (canLinkPerson && linkPerson) {
       const name = getPersonDisplayName(linkPerson.data as import("../../store/familyTreeStore").PersonNodeData, linkPerson.id, nodes) || "person";
       return defaultUnionType === "forward"
@@ -360,8 +401,19 @@ export default function FamilyTreeToolbar() {
   }
 
   const handleCreateUnion = () => {
+    if (isFullMode) {
+      const seedPersonIds = selectedPersons.map((n) => n.id);
+      if (seedPersonIds.length > 2) {
+        setMessage("Select at most 2 people for a full union.");
+        return;
+      }
+      createFullUnion({ seedPersonIds });
+      setMessage(null);
+      return;
+    }
     if (canLinkPerson && linkUnion && linkPerson) {
-      const err = linkPersonToUnion(linkUnion.id, linkPerson.id, defaultUnionType);
+      const linkMode = defaultUnionType === "backward" ? "backward" : "forward";
+      const err = linkPersonToUnion(linkUnion.id, linkPerson.id, linkMode);
       if (err) {
         setMessage(err);
       } else {
@@ -425,8 +477,8 @@ export default function FamilyTreeToolbar() {
           middleName: parts.middle,
           lastName: parts.last,
         });
-      } else if (s.field === "role" && s.unionId && s.slot && (resolved === "father" || resolved === "mother")) {
-        updateUnionPartnerRole(s.unionId, s.slot, resolved as import("../../store/familyTreeStore").ParentRole);
+      } else if (s.field === "role" && s.unionId && s.slot && resolved) {
+        updateUnionPartnerRole(s.unionId, s.slot, resolved);
       }
     }
     runNameRoleAnalysis();
@@ -528,7 +580,7 @@ export default function FamilyTreeToolbar() {
           title={canUnionAction ? getCreateUnionTooltip() : undefined}
           className="rounded-none border-0 rounded-l-lg"
         >
-          Union
+          +Union
         </Button>
         <button
           type="button"
@@ -541,8 +593,7 @@ export default function FamilyTreeToolbar() {
             e.preventDefault();
             e.stopPropagation();
           }}
-          disabled={!canUnionAction}
-          className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center disabled:opacity-50"
+          className="px-1.5 rounded-r-lg border-l border-dark-accent/50 bg-dark-accent hover:bg-dark-bg text-dark-text text-sm flex items-center justify-center"
           title="Union type options"
           aria-expanded={unionMenuOpen}
           aria-haspopup="true"
@@ -560,7 +611,7 @@ export default function FamilyTreeToolbar() {
           createPortal(
             <div
               ref={unionDropdownRef}
-              className="fixed py-1 min-w-[180px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
+              className="fixed py-1 min-w-[220px] rounded-lg border border-dark-accent bg-dark-surface shadow-lg z-[9999]"
               style={{
                 top: unionContainerRef.current
                   ? unionContainerRef.current.getBoundingClientRect().bottom + 4
@@ -592,6 +643,90 @@ export default function FamilyTreeToolbar() {
                 <span className="w-4">{defaultUnionType === "backward" ? "✓" : ""}</span>
                 Backward union
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDefaultUnionType("full");
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dark-accent/50 text-dark-text"
+              >
+                <span className="w-4">{defaultUnionType === "full" ? "✓" : ""}</span>
+                Full union
+              </button>
+              {defaultUnionType === "full" && (
+                <div className="border-t border-dark-accent/50 pl-4 pr-3 py-2 space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer hover:bg-dark-accent/50 rounded px-1 -mx-1">
+                    <input
+                      type="checkbox"
+                      checked={fullUnionSettings.includeFather}
+                      onChange={(e) =>
+                        setFullUnionSettings({ includeFather: e.target.checked })
+                      }
+                      className="themed-checkbox"
+                    />
+                    <span>Father</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer hover:bg-dark-accent/50 rounded px-1 -mx-1">
+                    <input
+                      type="checkbox"
+                      checked={fullUnionSettings.includeMother}
+                      onChange={(e) =>
+                        setFullUnionSettings({ includeMother: e.target.checked })
+                      }
+                      className="themed-checkbox"
+                    />
+                    <span>Mother</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-dark-text cursor-pointer hover:bg-dark-accent/50 rounded px-1 -mx-1">
+                    <input
+                      type="checkbox"
+                      checked={fullUnionSettings.includeChildren}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setFullUnionSettings({
+                          includeChildren: checked,
+                          ...(checked && fullUnionSettings.childCount === 0
+                            ? { childCount: 1 }
+                            : {}),
+                        });
+                      }}
+                      className="themed-checkbox"
+                    />
+                    <span>Children</span>
+                  </label>
+                  <div className="flex items-center gap-1 pl-1">
+                    <button
+                      type="button"
+                      disabled={!fullUnionSettings.includeChildren}
+                      onClick={() =>
+                        setFullUnionSettings({
+                          childCount: fullUnionSettings.childCount - 1,
+                        })
+                      }
+                      className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50 text-sm font-medium disabled:opacity-40 disabled:pointer-events-none"
+                      title="Fewer children"
+                    >
+                      −
+                    </button>
+                    <span className="text-dark-text text-sm min-w-[1.25rem] text-center tabular-nums">
+                      {fullUnionSettings.childCount}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={!fullUnionSettings.includeChildren}
+                      onClick={() =>
+                        setFullUnionSettings({
+                          childCount: fullUnionSettings.childCount + 1,
+                        })
+                      }
+                      className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50 text-sm font-medium disabled:opacity-40 disabled:pointer-events-none"
+                      title="More children"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>,
             document.body
           )}
@@ -647,7 +782,7 @@ export default function FamilyTreeToolbar() {
                   type="checkbox"
                   checked={persistUnionSelectionOnChildCreate}
                   onChange={(e) => setPersistUnionSelectionOnChildCreate(e.target.checked)}
-                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                  className="themed-checkbox"
                 />
                 <span>Persist union selection</span>
               </label>
@@ -792,7 +927,7 @@ export default function FamilyTreeToolbar() {
                   type="checkbox"
                   checked={showGenerationAnchors}
                   onChange={(e) => setShowGenerationAnchors(e.target.checked)}
-                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                  className="themed-checkbox"
                 />
                 <span>Show generation anchors</span>
               </label>
@@ -801,7 +936,7 @@ export default function FamilyTreeToolbar() {
                   type="checkbox"
                   checked={showGenInheritIndicator}
                   onChange={(e) => setShowGenInheritIndicator(e.target.checked)}
-                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                  className="themed-checkbox"
                 />
                 <span>Show inherit indicator</span>
               </label>
@@ -1009,9 +1144,15 @@ export default function FamilyTreeToolbar() {
       <Button
         variant="secondary"
         size="sm"
-        onClick={() => clearTree()}
-        disabled={!activeProjectId}
-        title={activeProjectId ? "Clear tree and storage" : "No project loaded"}
+        onClick={() => activeFamilyTabId && requestClearFamily(activeFamilyTabId)}
+        disabled={!activeProjectId || activeFamilyTabId == null}
+        title={
+          !activeProjectId
+            ? "No project loaded"
+            : activeFamilyTabId == null
+              ? "Select a family tab to clear its nodes"
+              : "Clear all nodes in the active family tab"
+        }
       >
         Clear
       </Button>
@@ -1022,7 +1163,7 @@ export default function FamilyTreeToolbar() {
           type="checkbox"
           checked={snapToGrid}
           onChange={(e) => setSnapToGrid(e.target.checked)}
-          className="rounded"
+          className="themed-checkbox"
         />
         Snap to Grid
       </label>
@@ -1032,7 +1173,7 @@ export default function FamilyTreeToolbar() {
             type="checkbox"
             checked={showNodeInfoEnabled}
             onChange={(e) => setShowNodeInfoEnabled(e.target.checked)}
-            className="rounded"
+            className="themed-checkbox"
           />
           Show Node Info
         </label>
@@ -1130,7 +1271,7 @@ export default function FamilyTreeToolbar() {
           type="checkbox"
           checked={autosaveEnabled}
           onChange={(e) => handleAutosaveChange(e.target.checked)}
-          className="rounded"
+          className="themed-checkbox"
         />
         {autosaveLabelOverride ?? "Autosave"}
       </label>
@@ -1144,6 +1285,16 @@ export default function FamilyTreeToolbar() {
         nodes={nodes}
         onApply={handleApplySuggestions}
         onOpen={runNameRoleAnalysis}
+      />
+      <FamilyEradicationWarningModal
+        isOpen={pendingClearFamilyConfirm != null}
+        familyName={
+          pendingClearFamilyConfirm
+            ? families.find((f) => f.id === pendingClearFamilyConfirm)?.name || "this family"
+            : ""
+        }
+        onConfirm={confirmClearFamily}
+        onClose={cancelClearFamily}
       />
     </div>
   );

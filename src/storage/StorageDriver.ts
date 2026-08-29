@@ -47,7 +47,13 @@ export interface FamilyTreeUIFlags {
   showGenInheritIndicator?: boolean;
   genAnchorBandOpacity?: number;
   genAnchorLineOpacity?: number;
-  defaultUnionType?: "forward" | "backward";
+  defaultUnionType?: "forward" | "backward" | "full";
+  fullUnionSettings?: {
+    includeFather?: boolean;
+    includeMother?: boolean;
+    includeChildren?: boolean;
+    childCount?: number;
+  };
 }
 
 /** Generation anchor for family tree. */
@@ -110,6 +116,9 @@ export interface ProjectPayload {
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
   connectionStyles?: ConnectionStyleDef[];
+  customParentRoles?: string[];
+  customGenders?: string[];
+  customChildRoles?: string[];
   /** Persisted family tabs with frozen union membership. */
   families?: PersistedFamilyRecord[];
   /** Persisted branches (hidden groups and branch tabs). */

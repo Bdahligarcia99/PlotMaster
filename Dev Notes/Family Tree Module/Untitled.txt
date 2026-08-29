@@ -1,0 +1,42 @@
+Family Module Completed Feature Sets:
+
+1
+The sub entries panel has 
+The click canvas feature allow you to click unassigned unions in the sub entities panel. 
+We should change how it works. 
+Right now clicking on the unassigned union once turns on the click canvas feature, clicking it again switches to regular selection. Make it so that these functions swap roles. Clicking the first time selects the union, clicking the second time activates the click canvas feature on the union. 
+2
+Click canvas feature should also work across family tabs
+The app should be able to remember which unassigned union or union cluster was selected for the “click canvas” move feature and then the user can go to a different family tab and then click into its canvas to transfer the unions there. 
+3
+We just added a feature where, in the sub entities panel, if you double click on the name of a node it will allow you to edit its name, if you click anywhere else, it opens the node directly in the inspector. We need to fix it a little though. 
+Make it so that the length of the name label is the “hit box” of the renaming double click function. In other words, you can only click where the text is. If there is empty space on the right, that space makes the inspector open upon double clicking. 
+4
+Double clicking a union in sub entities panel does not open it in the inspector, it opens one of the unions partner nodes. It should be displaying the union info.
+Preserve selecting of all union members when double clicking unions in sub entities panel. 
+
+1
+The “Moving 1 union to a new family will break connections between selected and unselected unions in this tab. Continue?” warning should be slightly modified so it asks the user to specify if they want to make a new empty family tab or move the currently selected unions to a new tab. Like this:
+ “Moving 1 union to a new family will break connections between selected and unselected unions in this tab. Continue?”
+
+“Do not move selected unions; create new empty family tab” checkbox
+
+(If check box not selected use the same options): “Cancel” “Move to new family”
+
+(If check box is selected change the buttons): “Cancel” “Create new family”
+
+Let’s expand the functionality of the union button: 1 change “Union” to “+Union”
+2a
+Right now there are two options in the union drop down
+“Backward Union”
+“Forward Union”
+Add a third option called “Full Union”
+This option will have its own options: Check box Father
+Check box Mother
+Check box Children
++ 0 - control to choose how many children to add. 
+This feature allows a user to quickly create a union with all its members. 
+2b
+If Full Union is selected the union button in tool bar is not greyed out when two person nodes are not selected.
+If Backward or Forward Union is selected the button remains greyed out as usual until two person nodes are selected.
+

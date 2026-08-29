@@ -56,6 +56,7 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
 
   const handleRootPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      if (outOfActiveFamily) return;
       if (e.metaKey || e.ctrlKey) {
         e.preventDefault();
         e.stopPropagation();
@@ -65,7 +66,7 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
         });
       }
     },
-    [id, setSelectedNodeIds]
+    [id, setSelectedNodeIds, outOfActiveFamily]
   );
 
   const coordsOverlayClass =
@@ -114,6 +115,8 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
         >
           {tooltipText}
         </span>
+        {!outOfActiveFamily && (
+          <>
         <button
           type="button"
           title="Edit connection style"
@@ -159,6 +162,8 @@ function UnionNode({ id, data, selected, xPos, yPos }: NodeProps<UnionNodeData>)
             </svg>
           )}
         </button>
+          </>
+        )}
         <Handle type="target" position={Position.Top} id="leftPartner" style={{ left: "25%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="target" position={Position.Top} id="rightPartner" style={{ left: "75%", transform: "translateX(-50%)" }} className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />
         <Handle type="source" position={Position.Bottom} id="children" className="!w-2 !h-2 !bg-dark-muted !border-dark-accent" />

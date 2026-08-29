@@ -134,7 +134,7 @@ export default function FamilyTreeSaveControls({
                 type="checkbox"
                 checked={exportGuidesVisible}
                 onChange={(e) => setExportGuidesVisible(e.target.checked)}
-                className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                className="themed-checkbox"
               />
               <span>Show export guides</span>
             </label>

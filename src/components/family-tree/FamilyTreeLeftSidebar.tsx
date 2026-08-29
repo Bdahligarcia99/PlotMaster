@@ -87,6 +87,25 @@ function EntityFamilyWarnings({
   );
 }
 
+function PersonReviewWarnings({
+  personId,
+  suggestions,
+}: {
+  personId: string;
+  suggestions: import("../../store/familyTreeStore").NameRoleSuggestion[];
+}) {
+  const unassigned = suggestions.find(
+    (s) => s.nodeId === personId && s.field === "unassignedRole"
+  );
+  const noGender = suggestions.find((s) => s.nodeId === personId && s.field === "noGender");
+  return (
+    <>
+      {unassigned && <HazardTriangleIcon title={unassigned.reason} />}
+      {noGender && <HazardTriangleIcon title={noGender.reason} />}
+    </>
+  );
+}
+
 export interface FamilyUnit {
   unionId: string;
   parents: [string, string];
@@ -1240,6 +1259,17 @@ export default function FamilyTreeLeftSidebar({
                               }
                             />
                           )}
+                          {nameRoleSuggestions.some(
+                            (s) => s.field === "unassignedRole" && s.unionId === unit.unionId
+                          ) && (
+                            <HazardTriangleIcon
+                              title={
+                                nameRoleSuggestions.find(
+                                  (s) => s.field === "unassignedRole" && s.unionId === unit.unionId
+                                )?.reason ?? "Parent role unassigned"
+                              }
+                            />
+                          )}
                           {(() => {
                             const ownerFamily = findFamilyForNode(unit.unionId, families);
                             return ownerFamily
@@ -1280,6 +1310,7 @@ export default function FamilyTreeLeftSidebar({
                                 <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={leftId} nodes={nodes} />
                                 <EntityFamilyWarnings nodeId={leftId} family={activeFamily} nodes={nodes} edges={edges} />
+                                <PersonReviewWarnings personId={leftId} suggestions={nameRoleSuggestions} />
                               </div>
                             ) : (
                               <button
@@ -1301,6 +1332,7 @@ export default function FamilyTreeLeftSidebar({
                                 <PersonGenBadge personId={leftId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={leftId} nodes={nodes} />
                                 <EntityFamilyWarnings nodeId={leftId} family={activeFamily} nodes={nodes} edges={edges} />
+                                <PersonReviewWarnings personId={leftId} suggestions={nameRoleSuggestions} />
                               </button>
                             )}
                             {editingPersonId === rightId ? (
@@ -1324,6 +1356,7 @@ export default function FamilyTreeLeftSidebar({
                                 <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={rightId} nodes={nodes} />
                                 <EntityFamilyWarnings nodeId={rightId} family={activeFamily} nodes={nodes} edges={edges} />
+                                <PersonReviewWarnings personId={rightId} suggestions={nameRoleSuggestions} />
                               </div>
                             ) : (
                               <button
@@ -1345,6 +1378,7 @@ export default function FamilyTreeLeftSidebar({
                                 <PersonGenBadge personId={rightId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                 <AnchorDot personId={rightId} nodes={nodes} />
                                 <EntityFamilyWarnings nodeId={rightId} family={activeFamily} nodes={nodes} edges={edges} />
+                                <PersonReviewWarnings personId={rightId} suggestions={nameRoleSuggestions} />
                               </button>
                             )}
                             {unit.children.length > 0 && (
@@ -1377,6 +1411,7 @@ export default function FamilyTreeLeftSidebar({
                                           <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                           <AnchorDot personId={childId} nodes={nodes} />
                                           <EntityFamilyWarnings nodeId={childId} family={activeFamily} nodes={nodes} edges={edges} />
+                                          <PersonReviewWarnings personId={childId} suggestions={nameRoleSuggestions} />
                                         </div>
                                       ) : (
                                         <button
@@ -1398,6 +1433,7 @@ export default function FamilyTreeLeftSidebar({
                                           <PersonGenBadge personId={childId} nodes={nodes} getPersonGenLabel={getPersonGenLabel} />
                                           <AnchorDot personId={childId} nodes={nodes} />
                                           <EntityFamilyWarnings nodeId={childId} family={activeFamily} nodes={nodes} edges={edges} />
+                                          <PersonReviewWarnings personId={childId} suggestions={nameRoleSuggestions} />
                                         </button>
                                       )}
                                     </div>
@@ -1593,7 +1629,7 @@ export default function FamilyTreeLeftSidebar({
                   type="checkbox"
                   checked={createEmptyInstead}
                   onChange={(e) => setCreateEmptyInstead(e.target.checked)}
-                  className="mt-0.5"
+                  className="themed-checkbox mt-0.5"
                 />
                 <span>Do not move selected unions; create new empty family tab</span>
               </label>

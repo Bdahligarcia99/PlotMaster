@@ -38,6 +38,7 @@ import {
   getFamilyVisibleNodeIds,
   getEffectiveFamilyColor,
   findFamilyForNode,
+  computeOutOfActiveFamilyIds,
   computeBranchMemberIds,
   getBranchExcludedNodeIds,
 } from "../../store/familyTreeStore";
@@ -273,6 +274,13 @@ function MarqueeOverlay({ isSpacePanning }: { isSpacePanning: boolean }) {
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const setSelectedNodeIds = useFamilyTreeStore((s) => s.setSelectedNodeIds);
   const placementTargetId = useFamilyTreeStore((s) => s.placementTargetId);
+  const families = useFamilyTreeStore((s) => s.families);
+  const activeFamilyTabId = useFamilyTreeStore((s) => s.activeFamilyTabId);
+
+  const foreignNodeIds = useMemo(
+    () => computeOutOfActiveFamilyIds(nodes, families, activeFamilyTabId),
+    [nodes, families, activeFamilyTabId]
+  );
 
   const [drag, setDrag] = useState<{
     startFlow: { x: number; y: number };
@@ -320,6 +328,7 @@ function MarqueeOverlay({ isSpacePanning }: { isSpacePanning: boolean }) {
 
         const intersectingIds: string[] = [];
         for (const n of nodes) {
+          if (foreignNodeIds.has(n.id)) continue;
           const w =
             n.type === "person"
               ? nodeSizesById[n.id]?.width ?? DEFAULT_PERSON_W
@@ -550,6 +559,11 @@ export default function FamilyTreeCanvas({
     return placedOnly.filter((n) => visibleNodeIds.has(n.id));
   }, [nodes, visibleNodeIds]);
 
+  const foreignNodeIds = useMemo(
+    () => computeOutOfActiveFamilyIds(nodes, families, activeFamilyTabId),
+    [nodes, families, activeFamilyTabId]
+  );
+
   const canvasEdges = useMemo(() => {
     if (!visibleNodeIds) return edges;
     return edges.filter((e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target));
@@ -575,6 +589,7 @@ export default function FamilyTreeCanvas({
 
   const onNodeDragStart = useCallback(
     (evt: React.MouseEvent, node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean } }) => {
+      if (foreignNodeIds.has(node.id)) return;
       dragStartRef.current.set(node.id, { x: node.position.x, y: node.position.y });
       const state = useFamilyTreeStore.getState();
       let groupIds: string[] | null = null;
@@ -600,6 +615,7 @@ export default function FamilyTreeCanvas({
         }
       }
       if (groupIds) {
+        groupIds = groupIds.filter((id) => !foreignNodeIds.has(id));
         const familyLocked =
           node.data?.kind === "union"
             ? (state.nodes.find((n) => n.id === node.id)?.data as UnionNodeData)?.familyLocked ===
@@ -630,7 +646,7 @@ export default function FamilyTreeCanvas({
         setSelectedNodeIds([node.id]);
       }
     },
-    [setNodeGenArmed, filterAnchoredMembers, setSelectedNodeIds]
+    [setNodeGenArmed, filterAnchoredMembers, setSelectedNodeIds, foreignNodeIds]
   );
 
   const onNodeDrag = useCallback(
@@ -643,6 +659,7 @@ export default function FamilyTreeCanvas({
       const dy = node.position.y - anchorStart.y;
       setNodes((prev) =>
         prev.map((n) => {
+          if (foreignNodeIds.has(n.id)) return n;
           if (n.id === group.anchorId) return n;
           const start = group.startPositions[n.id];
           if (!start) return n;
@@ -650,7 +667,7 @@ export default function FamilyTreeCanvas({
         })
       );
     },
-    [setNodes]
+    [setNodes, foreignNodeIds]
   );
 
   const onNodeDragStop = useCallback(
@@ -659,6 +676,7 @@ export default function FamilyTreeCanvas({
       node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean; genAnchorId?: string | null; name?: string } }
     ) => {
       unionDragGroupRef.current = null;
+      if (foreignNodeIds.has(node.id)) return;
       if (node.data?.kind !== "person") return;
       const prevPos = dragStartRef.current.get(node.id);
       dragStartRef.current.delete(node.id);
@@ -668,6 +686,7 @@ export default function FamilyTreeCanvas({
       const rawArmed = (storeNode?.data ?? node.data) as { isGenArmed?: boolean };
       const isGenArmed = rawArmed.isGenArmed ?? true;
       if (!isGenArmed) return;
+      if ((storeNode?.data as PersonNodeData)?.genAnchorLocked) return;
 
       const height = nodeSizesById[node.id]?.height ?? DEFAULT_PERSON_H;
       const centerY = node.position.y + height / 2;
@@ -719,6 +738,7 @@ export default function FamilyTreeCanvas({
       updateNodeGenAnchor,
       setGenInheritFlash,
       setPendingGenChangePrompt,
+      foreignNodeIds,
     ]
   );
 
@@ -761,6 +781,9 @@ export default function FamilyTreeCanvas({
         return {
           ...n,
           selected: isSelected,
+          draggable: outOfActiveFamily ? false : undefined,
+          selectable: outOfActiveFamily ? false : undefined,
+          focusable: outOfActiveFamily ? false : undefined,
           data: {
             ...n.data,
             isFamilyLocked: familyLockedMemberIds.has(n.id),
@@ -844,8 +867,14 @@ export default function FamilyTreeCanvas({
   }, [setHoveredConnectionInfo]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    [setNodes]
+    (changes) =>
+      setNodes((nds) =>
+        applyNodeChanges(
+          changes.filter((c) => c.type !== "position" || !("id" in c) || !foreignNodeIds.has(c.id)),
+          nds
+        )
+      ),
+    [setNodes, foreignNodeIds]
   );
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -865,6 +894,7 @@ export default function FamilyTreeCanvas({
         paneClickRef.current?.(evt as unknown as React.MouseEvent);
         return;
       }
+      if (foreignNodeIds.has(node.id)) return;
       if (node.data?.kind === "person" && (node.data as { isGenArmed?: boolean }).isGenArmed === false) setNodeGenArmed(node.id);
       if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
         evt.preventDefault();
@@ -879,11 +909,12 @@ export default function FamilyTreeCanvas({
         setSelectedNodeIds([node.id]);
       }
     },
-    [setSelectedNodeIds, setNodeGenArmed, placementTargetId]
+    [setSelectedNodeIds, setNodeGenArmed, placementTargetId, foreignNodeIds]
   );
 
   const onNodeDoubleClick: NodeMouseHandler = useCallback(
     (evt, node) => {
+      if (foreignNodeIds.has(node.id)) return;
       evt.preventDefault();
       evt.stopPropagation();
       doubleClickIgnoreClearRef.current = true;
@@ -905,7 +936,7 @@ export default function FamilyTreeCanvas({
         doubleClickIgnoreClearRef.current = false;
       }, 100);
     },
-    [setSelectedNodeIds, setSelectionWithPrimary, onNodeSelectForEdit]
+    [setSelectedNodeIds, setSelectionWithPrimary, onNodeSelectForEdit, foreignNodeIds]
   );
   const onPaneClick = useCallback((e: React.MouseEvent) => {
     paneClickRef.current?.(e);

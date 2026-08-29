@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import type { Edge } from "reactflow";
 import {
   DndContext,
@@ -22,115 +22,369 @@ import {
   isChildEdge,
   findFamilyForNode,
   getEffectiveFamilyColor,
+  BUILT_IN_PARENT_ROLES,
+  BUILT_IN_GENDERS,
+  BUILT_IN_CHILD_ROLES,
+  hasUnknownParentRole,
+  getAnchorAtY,
+  DEFAULT_PERSON_H,
 } from "../../store/familyTreeStore";
 import type { PersonNodeData, UnionNodeData, ParentRole } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
 
-function ParentsSection({
-  personId,
-  nodes,
-  edges,
-  onSelectParent,
+const CUSTOM_SENTINEL = "__custom__";
+
+const PARENT_ROLE_LABELS: Record<string, string> = {
+  father: "Father",
+  mother: "Mother",
+  unknown: "Unknown",
+  guardian: "Guardian",
+  stepmother: "Stepmother",
+  stepfather: "Stepfather",
+};
+
+const GENDER_LABELS: Record<string, string> = {
+  male: "Male",
+  female: "Female",
+  other: "Other",
+};
+
+const CHILD_ROLE_LABELS: Record<string, string> = {
+  son: "Son",
+  daughter: "Daughter",
+  child: "Child",
+  adoptive_son: "Adoptive Son",
+  adoptive_daughter: "Adoptive Daughter",
+  adoptive_child: "Adoptive Child",
+};
+
+const selectClassName =
+  "w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500";
+
+function ChildRoleSelect({
+  value,
+  onChange,
+  customChildRoles,
+  addCustomChildRole,
 }: {
-  personId: string;
-  nodes: { id: string; type?: string; data: unknown }[];
-  edges: Edge[];
-  onSelectParent: (id: string) => void;
+  value: string;
+  onChange: (v: string | null) => void;
+  customChildRoles: string[];
+  addCustomChildRole: (label: string) => void;
 }) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [customLabel, setCustomLabel] = useState("");
+
+  const handleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    if (v === CUSTOM_SENTINEL) {
+      setShowCustom(true);
+      return;
+    }
+    onChange(v || null);
+  };
+
+  const handleAddCustom = () => {
+    const label = customLabel.trim();
+    if (!label) return;
+    addCustomChildRole(label);
+    onChange(label);
+    setCustomLabel("");
+    setShowCustom(false);
+  };
+
+  return (
+    <div>
+      <select value={value} onChange={handleSelect} className={selectClassName}>
+        <option value="">Unassigned</option>
+        {BUILT_IN_CHILD_ROLES.map((r) => (
+          <option key={r} value={r}>
+            {CHILD_ROLE_LABELS[r] ?? r}
+          </option>
+        ))}
+        {customChildRoles.map((r) => (
+          <option key={r} value={r}>
+            {r}
+          </option>
+        ))}
+        <option value={CUSTOM_SENTINEL}>Custom...</option>
+      </select>
+      {showCustom && (
+        <div className="flex gap-2 mt-2">
+          <input
+            type="text"
+            value={customLabel}
+            onChange={(e) => setCustomLabel(e.target.value)}
+            placeholder="Custom role label"
+            className="flex-1 px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded-lg text-dark-text"
+          />
+          <button
+            type="button"
+            onClick={handleAddCustom}
+            className="px-2 py-1 text-sm rounded border border-dark-accent/50 hover:bg-dark-accent/30 text-dark-text"
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ParentRoleSelect({
+  value,
+  onChange,
+  customParentRoles,
+  addCustomParentRole,
+}: {
+  value: string;
+  onChange: (v: string | null) => void;
+  customParentRoles: string[];
+  addCustomParentRole: (label: string) => void;
+}) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [customLabel, setCustomLabel] = useState("");
+
+  const handleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    if (v === CUSTOM_SENTINEL) {
+      setShowCustom(true);
+      return;
+    }
+    onChange(v || null);
+  };
+
+  const handleAddCustom = () => {
+    const label = customLabel.trim();
+    if (!label) return;
+    addCustomParentRole(label);
+    onChange(label);
+    setCustomLabel("");
+    setShowCustom(false);
+  };
+
+  return (
+    <div>
+      <select value={value} onChange={handleSelect} className={selectClassName}>
+        <option value="">Unassigned</option>
+        {BUILT_IN_PARENT_ROLES.map((r) => (
+          <option key={r} value={r}>
+            {PARENT_ROLE_LABELS[r] ?? r}
+          </option>
+        ))}
+        {customParentRoles.map((r) => (
+          <option key={r} value={r}>
+            {r}
+          </option>
+        ))}
+        <option value={CUSTOM_SENTINEL}>Custom...</option>
+      </select>
+      {showCustom && (
+        <div className="flex gap-2 mt-2">
+          <input
+            type="text"
+            value={customLabel}
+            onChange={(e) => setCustomLabel(e.target.value)}
+            placeholder="Custom role label"
+            className="flex-1 px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded-lg text-dark-text"
+          />
+          <button
+            type="button"
+            onClick={handleAddCustom}
+            className="px-2 py-1 text-sm rounded border border-dark-accent/50 hover:bg-dark-accent/30 text-dark-text"
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GenderSelect({
+  value,
+  onChange,
+  customGenders,
+  addCustomGender,
+}: {
+  value: string;
+  onChange: (v: string | null) => void;
+  customGenders: string[];
+  addCustomGender: (label: string) => void;
+}) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [customLabel, setCustomLabel] = useState("");
+
+  const handleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    if (v === CUSTOM_SENTINEL) {
+      setShowCustom(true);
+      return;
+    }
+    onChange(v || null);
+  };
+
+  const handleAddCustom = () => {
+    const label = customLabel.trim();
+    if (!label) return;
+    addCustomGender(label);
+    onChange(label);
+    setCustomLabel("");
+    setShowCustom(false);
+  };
+
+  return (
+    <div>
+      <select value={value} onChange={handleSelect} className={selectClassName}>
+        <option value="">Unassigned</option>
+        {BUILT_IN_GENDERS.map((g) => (
+          <option key={g} value={g}>
+            {GENDER_LABELS[g] ?? g}
+          </option>
+        ))}
+        {customGenders.map((g) => (
+          <option key={g} value={g}>
+            {g}
+          </option>
+        ))}
+        <option value={CUSTOM_SENTINEL}>Custom...</option>
+      </select>
+      {showCustom && (
+        <div className="flex gap-2 mt-2">
+          <input
+            type="text"
+            value={customLabel}
+            onChange={(e) => setCustomLabel(e.target.value)}
+            placeholder="Custom gender label"
+            className="flex-1 px-2 py-1 text-sm bg-dark-bg border border-dark-accent rounded-lg text-dark-text"
+          />
+          <button
+            type="button"
+            onClick={handleAddCustom}
+            className="px-2 py-1 text-sm rounded border border-dark-accent/50 hover:bg-dark-accent/30 text-dark-text"
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ChildUnionInfo = {
+  unionId: string;
+  unionNode: { id: string; data: unknown };
+  parents: { id: string; displayName: string }[];
+  siblings: { id: string; displayName: string }[];
+};
+
+function getChildUnionsForPerson(
+  personId: string,
+  nodes: { id: string; type?: string; data: unknown }[],
+  edges: Edge[]
+): ChildUnionInfo[] {
   const parentUnionIds = edges
     .filter((e) => isChildEdge(e) && e.target === personId)
     .map((e) => e.source);
 
-  const parentIds = new Set<string>();
+  const result: ChildUnionInfo[] = [];
   for (const unionId of parentUnionIds) {
     const unionNode = nodes.find((n) => n.id === unionId && n.type === "union");
     if (!unionNode) continue;
     const data = unionNode.data as UnionNodeData;
     const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
     const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
-    [leftId, rightId].forEach((id) => { if (id) parentIds.add(id); });
-  }
-
-  if (parentIds.size === 0) return null;
-
-  return (
-    <div className="mb-4">
-      <label className="block text-dark-muted text-sm mb-2">Parents</label>
-      <div className="space-y-1">
-        {Array.from(parentIds).map((id) => {
-          const node = nodes.find((n) => n.id === id && n.type === "person");
-          const name = node?.data ? getPersonDisplayName(node.data as PersonNodeData, id, nodes) : id;
-          return (
-            <button
-              key={id}
-              type="button"
-              onClick={() => onSelectParent(id)}
-              className="block w-full text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
-            >
-              {name}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function getSiblingsForPerson(
-  personId: string,
-  nodes: { id: string; type?: string; data: unknown }[],
-  edges: Edge[]
-): { id: string; displayName: string }[] {
-  const parentUnionIds = edges
-    .filter((e) => isChildEdge(e) && e.target === personId)
-    .map((e) => e.source);
-
-  const siblingIds = new Set<string>();
-  for (const unionId of parentUnionIds) {
-    const childIds = edges
+    const parents = [leftId, rightId]
+      .filter((id): id is string => !!id)
+      .map((id) => {
+        const node = nodes.find((n) => n.id === id && n.type === "person");
+        const displayName = node?.data
+          ? getPersonDisplayName(node.data as PersonNodeData, id, nodes)
+          : id;
+        return { id, displayName };
+      });
+    const siblingIds = edges
       .filter((e) => isChildEdge(e) && e.source === unionId)
-      .map((e) => e.target);
-    childIds.forEach((id) => {
-      if (id !== personId) siblingIds.add(id);
+      .map((e) => e.target)
+      .filter((id) => id !== personId);
+    const siblings = siblingIds.map((id) => {
+      const node = nodes.find((n) => n.id === id && n.type === "person");
+      const displayName = node?.data
+        ? getPersonDisplayName(node.data as PersonNodeData, id, nodes)
+        : id;
+      return { id, displayName };
     });
+    result.push({ unionId, unionNode, parents, siblings });
   }
-
-  return Array.from(siblingIds).map((id) => {
-    const node = nodes.find((n) => n.id === id && n.type === "person") as { data?: unknown } | undefined;
-    const displayName = node?.data ? getPersonDisplayName(node.data as PersonNodeData, id, nodes) : id;
-    return { id, displayName };
-  });
+  return result;
 }
 
-function SiblingsSection({
+function getChildRoleForPerson(unionId: string, personId: string, edges: Edge[]): string {
+  const edge = edges.find(
+    (e) => isChildEdge(e) && e.source === unionId && e.target === personId
+  );
+  return (edge?.data as { childRole?: string } | undefined)?.childRole ?? "";
+}
+
+function PersonParentUnionsSection({
   personId,
   nodes,
   edges,
-  onSelectSibling,
+  onSelectNode,
 }: {
   personId: string;
   nodes: { id: string; type?: string; data: unknown }[];
   edges: Edge[];
-  onSelectSibling: (id: string) => void;
+  onSelectNode: (id: string) => void;
 }) {
-  const siblings = getSiblingsForPerson(personId, nodes, edges);
-  if (siblings.length === 0) return null;
+  const childUnions = getChildUnionsForPerson(personId, nodes, edges);
+  if (childUnions.length === 0) return null;
 
   return (
-    <div className="mb-4">
-      <label className="block text-dark-muted text-sm mb-2">Siblings</label>
-      <div className="space-y-1">
-        {siblings.map(({ id, displayName }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onSelectSibling(id)}
-            className="block w-full text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
-          >
-            {displayName}
-          </button>
-        ))}
-      </div>
+    <div className="space-y-4 mb-4">
+      {childUnions.map((cu) => (
+        <div
+          key={cu.unionId}
+          className="rounded-lg border border-dark-accent/40 bg-dark-bg/30 px-3 py-3"
+        >
+          <div className="space-y-2">
+            {cu.parents.length > 0 && (
+              <div>
+                <label className="block text-dark-muted text-sm mb-1">Parents</label>
+                <div className="space-y-1">
+                  {cu.parents.map(({ id, displayName }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => onSelectNode(id)}
+                      className="block w-full text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
+                    >
+                      {displayName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {cu.siblings.length > 0 && (
+              <div>
+                <label className="block text-dark-muted text-sm mb-1">Siblings</label>
+                <div className="space-y-1">
+                  {cu.siblings.map(({ id, displayName }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => onSelectNode(id)}
+                      className="block w-full text-left text-dark-text text-sm hover:text-blue-400 hover:underline"
+                    >
+                      {displayName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -176,11 +430,15 @@ function UnionRoleControls({
   unionData,
   nodes,
   updateUnionPartnerRole,
+  customParentRoles,
+  addCustomParentRole,
 }: {
   unionId: string;
   unionData: UnionNodeData;
   nodes: { id: string; type?: string; data: unknown }[];
   updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
+  customParentRoles: string[];
+  addCustomParentRole: (label: string) => void;
 }) {
   const leftId = unionData.leftPartnerId ?? unionData.partnerIds?.[0];
   const rightId = unionData.rightPartnerId ?? unionData.partnerIds?.[1];
@@ -191,42 +449,27 @@ function UnionRoleControls({
   const rightName = nodes.find((n) => n.id === rightId && n.type === "person")?.data
     ? getPersonDisplayName(nodes.find((n) => n.id === rightId)!.data as PersonNodeData, rightId, nodes)
     : "Right";
-  const roleOpts: { value: string; label: string }[] = [
-    { value: "", label: "Not set" },
-    { value: "father", label: "Father" },
-    { value: "mother", label: "Mother" },
-  ];
   return (
     <div className="mb-4 space-y-2">
       <label className="block text-dark-muted text-sm mb-2">Parent roles</label>
       <div className="space-y-2">
         <div>
           <span className="block text-dark-muted text-xs mb-1">{leftName}</span>
-          <select
+          <ParentRoleSelect
             value={unionData.leftPartnerRole ?? ""}
-            onChange={(e) =>
-              updateUnionPartnerRole(unionId, "left", (e.target.value || null) as ParentRole | null)
-            }
-            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
-          >
-            {roleOpts.map((o) => (
-              <option key={o.value || "_"} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+            onChange={(v) => updateUnionPartnerRole(unionId, "left", v)}
+            customParentRoles={customParentRoles}
+            addCustomParentRole={addCustomParentRole}
+          />
         </div>
         <div>
           <span className="block text-dark-muted text-xs mb-1">{rightName}</span>
-          <select
+          <ParentRoleSelect
             value={unionData.rightPartnerRole ?? ""}
-            onChange={(e) =>
-              updateUnionPartnerRole(unionId, "right", (e.target.value || null) as ParentRole | null)
-            }
-            className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
-          >
-            {roleOpts.map((o) => (
-              <option key={o.value || "_"} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+            onChange={(v) => updateUnionPartnerRole(unionId, "right", v)}
+            customParentRoles={customParentRoles}
+            addCustomParentRole={addCustomParentRole}
+          />
         </div>
       </div>
     </div>
@@ -462,7 +705,6 @@ function PersonUnionsSection({
   nodes,
   edges,
   onSelectNode,
-  updateUnionPartnerRole,
   swapPersonUnionSides,
   moveChildToUnion,
   requestRemoveConnection,
@@ -471,7 +713,6 @@ function PersonUnionsSection({
   nodes: { id: string; type?: string; data: unknown }[];
   edges: Edge[];
   onSelectNode: (id: string) => void;
-  updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
   swapPersonUnionSides: (personId: string) => boolean;
   moveChildToUnion: (childId: string, fromUnionId: string, toUnionId: string) => boolean;
   requestRemoveConnection: (target: import("../../store/familyTreeStore").RemoveConnectionTarget) => string | null;
@@ -565,21 +806,6 @@ function PersonUnionsSection({
                     ×
                   </button>
                 </div>
-              </div>
-              <div>
-                <label className="block text-dark-muted text-sm mb-1">Role</label>
-                <span className="text-dark-muted text-xs block mb-0.5">With {union.otherPartnerName}</span>
-                <select
-                  value={((union.unionNode.data as UnionNodeData)[union.slot === "left" ? "leftPartnerRole" : "rightPartnerRole"] ?? "")}
-                  onChange={(e) =>
-                    updateUnionPartnerRole(union.unionId, union.slot, (e.target.value || null) as ParentRole | null)
-                  }
-                  className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">Unassigned</option>
-                  <option value="father">Father</option>
-                  <option value="mother">Mother</option>
-                </select>
               </div>
               <div>
                 <label className="block text-dark-muted text-sm mb-1">Children</label>
@@ -693,6 +919,8 @@ export default function FamilyTreeInspector() {
     edges,
     primarySelectedNodeId,
     setPersonAnchored,
+    setPersonGender,
+    setPersonGenAnchorLocked,
     setSelectedNodeIds,
     updatePersonNameParts,
     updatePersonNicknames,
@@ -701,11 +929,11 @@ export default function FamilyTreeInspector() {
     swapUnionHandleSides,
     swapPersonUnionSides,
     updateUnionPartnerRole,
+    updateChildRole,
     moveChildToUnion,
     requestRemoveConnection,
     generationAnchors,
     genLabelMode,
-    updateNodeGenAnchor,
     nameRoleSuggestions,
     setReviewNodesModalOpen,
   } = useFamilyTreeStore();
@@ -724,6 +952,13 @@ export default function FamilyTreeInspector() {
   const setBranchCustomName = useFamilyTreeStore((s) => s.setBranchCustomName);
   const setBranchDescription = useFamilyTreeStore((s) => s.setBranchDescription);
   const deleteBranch = useFamilyTreeStore((s) => s.deleteBranch);
+  const customParentRoles = useFamilyTreeStore((s) => s.customParentRoles);
+  const customGenders = useFamilyTreeStore((s) => s.customGenders);
+  const customChildRoles = useFamilyTreeStore((s) => s.customChildRoles);
+  const addCustomParentRole = useFamilyTreeStore((s) => s.addCustomParentRole);
+  const addCustomGender = useFamilyTreeStore((s) => s.addCustomGender);
+  const addCustomChildRole = useFamilyTreeStore((s) => s.addCustomChildRole);
+  const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
 
   const inspectorFamily = inspectorFamilyId
     ? families.find((f) => f.id === inspectorFamilyId)
@@ -783,20 +1018,40 @@ export default function FamilyTreeInspector() {
   const middleRef = useRef<HTMLInputElement>(null);
   const lastRef = useRef<HTMLInputElement>(null);
   const nicknamesRef = useRef<HTMLInputElement>(null);
+  const draftPersonIdRef = useRef<string | null>(null);
+  const autoSelectArmedRef = useRef(false);
+  const autoSelectElRef = useRef<HTMLInputElement | null>(null);
+  const autoSelectMouseUpCountRef = useRef(0);
 
   const refs = [firstRef, middleRef, lastRef, nicknamesRef];
+
+  const disarmAutoSelect = () => {
+    autoSelectArmedRef.current = false;
+    autoSelectElRef.current = null;
+    autoSelectMouseUpCountRef.current = 0;
+  };
 
   useEffect(() => {
     if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
       const d = selectedNode.data as PersonNodeData;
       const parts = getPersonNameParts(d);
+      draftPersonIdRef.current = selectedNode.id;
       setFirstName(parts.first);
       setMiddleName(parts.middle);
       setLastName(parts.last);
       const nicks = d.nicknames ?? [];
       setNicknamesInput(nicks.join(", "));
+      disarmAutoSelect();
     }
   }, [selectedNode?.id, (selectedNode?.data as PersonNodeData)?.firstName, (selectedNode?.data as PersonNodeData)?.middleName, (selectedNode?.data as PersonNodeData)?.lastName, (selectedNode?.data as PersonNodeData)?.name, (selectedNode?.data as PersonNodeData)?.nicknames]);
+
+  useLayoutEffect(() => {
+    if (!autoSelectArmedRef.current || !autoSelectElRef.current) return;
+    const el = autoSelectElRef.current;
+    if (document.activeElement === el) {
+      el.select();
+    }
+  });
 
   useEffect(() => {
     if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
@@ -811,20 +1066,62 @@ export default function FamilyTreeInspector() {
   }, [selectedNode?.id, (selectedNode?.data as UnionNodeData)?.name]);
 
   const saveNameParts = () => {
-    if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
-      updatePersonNameParts(selectedNode.id, { firstName, middleName, lastName });
+    if (!selectedNode || (selectedNode.data as { kind?: string }).kind !== "person") return;
+    if (draftPersonIdRef.current !== selectedNode.id) return;
+    const stored = getPersonNameParts(selectedNode.data as PersonNodeData);
+    const norm = (s: string) => (s.trim() === "?" ? "" : s.trim());
+    if (
+      norm(stored.first) === norm(firstName) &&
+      norm(stored.middle) === norm(middleName) &&
+      norm(stored.last) === norm(lastName)
+    ) {
+      return;
     }
+    updatePersonNameParts(selectedNode.id, { firstName, middleName, lastName });
   };
 
   const saveNicknames = () => {
-    if (selectedNode && (selectedNode.data as { kind?: string }).kind === "person") {
-      const parsed = nicknamesInput
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      updatePersonNicknames(selectedNode.id, parsed);
-    }
+    if (!selectedNode || (selectedNode.data as { kind?: string }).kind !== "person") return;
+    if (draftPersonIdRef.current !== selectedNode.id) return;
+    const parsed = nicknamesInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const stored = (selectedNode.data as PersonNodeData).nicknames ?? [];
+    if (parsed.join(",") === stored.join(",")) return;
+    updatePersonNicknames(selectedNode.id, parsed);
   };
+
+  const autoSelectNames =
+    /^Person \d+$/.test(firstName.trim()) ||
+    [firstName, middleName, lastName].some((v) => v.includes("?"));
+
+  const handleNameFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (!autoSelectNames) return;
+    autoSelectElRef.current = e.currentTarget;
+    autoSelectArmedRef.current = true;
+    autoSelectMouseUpCountRef.current = 0;
+    e.currentTarget.select();
+    requestAnimationFrame(() => {
+      if (autoSelectArmedRef.current && autoSelectElRef.current === e.currentTarget) {
+        e.currentTarget.select();
+      }
+    });
+  };
+
+  const handleNameMouseUp = (e: React.MouseEvent<HTMLInputElement>) => {
+    if (!autoSelectArmedRef.current) return;
+    if (autoSelectMouseUpCountRef.current === 0) {
+      autoSelectMouseUpCountRef.current += 1;
+      e.preventDefault();
+      return;
+    }
+    disarmAutoSelect();
+  };
+
+  const nameFocusProps = autoSelectNames
+    ? { onFocus: handleNameFocus, onMouseUp: handleNameMouseUp }
+    : {};
 
   const makeTabHandler = (index: number, shift: boolean) => (e: React.KeyboardEvent) => {
     if (e.key !== "Tab") return;
@@ -1062,12 +1359,17 @@ export default function FamilyTreeInspector() {
   }
 
   const nodeData = selectedNode.data;
+  const headerName =
+    nodeData.kind === "person"
+      ? getPersonNameParts(nodeData as PersonNodeData).first || "?"
+      : (nodeData as UnionNodeData).name || "?";
+  const headerType = nodeData.kind === "person" ? "Person" : "Union";
 
   return (
     <div className="w-64 flex-shrink-0 border-l border-dark-accent bg-dark-surface p-4 overflow-y-auto">
       <div className="flex items-center gap-2 mb-3">
         <h3 className="text-sm font-medium text-dark-muted uppercase tracking-wide flex-1">
-          Inspector — {nodeData.kind === "person" ? "Person" : "Union"}
+          Inspector — {headerName} ({headerType})
         </h3>
         {nodeData.kind === "union" && (
           <SwapPartnersIconButton
@@ -1113,7 +1415,7 @@ export default function FamilyTreeInspector() {
             return (
               <div className="mb-4 p-3 rounded-lg border border-amber-500/50 bg-amber-500/10 space-y-2">
                 {hasUnresolvedRole && (
-                  <p className="text-amber-600 text-sm">Role not set – please select Father or Mother.</p>
+                  <p className="text-amber-600 text-sm">Parent role unassigned in one or more unions.</p>
                 )}
                 {suggestionsForNode.length > 0 && (
                   <div>
@@ -1152,88 +1454,207 @@ export default function FamilyTreeInspector() {
             )}
           </div>
           <div className="mb-4">
-            <label className="block text-dark-muted text-sm mb-2">Generation anchor</label>
-            <select
-              value={(nodeData as PersonNodeData).genAnchorId ?? ""}
-              onChange={(e) => updateNodeGenAnchor(selectedNode.id, e.target.value || null)}
-              className="w-full px-3 py-2 bg-dark-bg border border-dark-accent rounded-lg text-dark-text text-sm focus:outline-none focus:border-blue-500"
-            >
-              <option value="">None</option>
-              {generationAnchors.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {formatGenerationAnchorLabel(a, genLabelMode)}
-                  {a.customLabel ? ` — ${a.customLabel}` : ""}
-                </option>
-              ))}
-            </select>
+            {(() => {
+              const pd = nodeData as PersonNodeData;
+              const h = nodeSizesById[selectedNode.id]?.height ?? DEFAULT_PERSON_H;
+              const centerY = selectedNode.position.y + h / 2;
+              const inherited = getAnchorAtY(generationAnchors, centerY);
+              const effectiveId = pd.genAnchorId ?? inherited?.id ?? null;
+              const effectiveAnchor = effectiveId
+                ? generationAnchors.find((a) => a.id === effectiveId)
+                : null;
+              const label = effectiveAnchor
+                ? formatGenerationAnchorLabel(effectiveAnchor, genLabelMode)
+                : "None";
+              return (
+                <>
+                  <label className="block text-dark-muted text-sm mb-2">Generation anchor</label>
+                  <div className="text-dark-text text-sm">
+                    {label}
+                    {pd.genAnchorLocked && effectiveAnchor ? " (locked)" : ""}
+                  </div>
+                  {!effectiveAnchor && (
+                    <p className="text-dark-muted text-xs mt-1">
+                      Move the node to inherit a generation anchor.
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
-          <ParentsSection
+          <div className="mb-4">
+            <label className="block text-dark-muted text-sm mb-2">Gender</label>
+            <GenderSelect
+              value={(nodeData as PersonNodeData).gender ?? ""}
+              onChange={(v) => setPersonGender(selectedNode.id, v)}
+              customGenders={customGenders}
+              addCustomGender={addCustomGender}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-dark-muted text-sm cursor-pointer mb-4">
+            <input
+              type="checkbox"
+              checked={!!(nodeData as PersonNodeData).genAnchorLocked}
+              disabled={(() => {
+                const pd = nodeData as PersonNodeData;
+                const h = nodeSizesById[selectedNode.id]?.height ?? DEFAULT_PERSON_H;
+                const centerY = selectedNode.position.y + h / 2;
+                const inherited = getAnchorAtY(generationAnchors, centerY);
+                return !(pd.genAnchorId ?? inherited?.id);
+              })()}
+              onChange={(e) => setPersonGenAnchorLocked(selectedNode.id, e.target.checked)}
+              className="themed-checkbox"
+            />
+            Lock Gen Anchor
+          </label>
+          {(() => {
+            const partnerUnions = getParentUnionsForPerson(selectedNode.id, nodes, edges);
+            const childUnions = getChildUnionsForPerson(selectedNode.id, nodes, edges);
+            if (partnerUnions.length === 0 && childUnions.length === 0) return null;
+            return (
+              <div className="mb-4 space-y-4">
+                {partnerUnions.map((union) => (
+                  <div key={`role-${union.unionId}`}>
+                    <label className="block text-dark-muted text-sm mb-2">
+                      Role with {union.otherPartnerName}
+                    </label>
+                    <ParentRoleSelect
+                      value={
+                        ((union.unionNode.data as UnionNodeData)[
+                          union.slot === "left" ? "leftPartnerRole" : "rightPartnerRole"
+                        ] ?? "") as string
+                      }
+                      onChange={(v) => updateUnionPartnerRole(union.unionId, union.slot, v)}
+                      customParentRoles={customParentRoles}
+                      addCustomParentRole={addCustomParentRole}
+                    />
+                  </div>
+                ))}
+                {childUnions.map((cu) => {
+                  const childRoleLabel =
+                    childUnions.length > 1
+                      ? `Child Role (${cu.parents.map((p) => p.displayName).join(" & ")})`
+                      : "Child Role";
+                  return (
+                    <div key={`child-role-${cu.unionId}`}>
+                      <label className="block text-dark-muted text-sm mb-2">{childRoleLabel}</label>
+                      <ChildRoleSelect
+                        value={getChildRoleForPerson(cu.unionId, selectedNode.id, edges)}
+                        onChange={(v) => updateChildRole(cu.unionId, selectedNode.id, v)}
+                        customChildRoles={customChildRoles}
+                        addCustomChildRole={addCustomChildRole}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          <PersonParentUnionsSection
             personId={selectedNode.id}
             nodes={nodes}
             edges={edges}
-            onSelectParent={(id) => setSelectedNodeIds([id])}
-          />
-          <SiblingsSection
-            personId={selectedNode.id}
-            nodes={nodes}
-            edges={edges}
-            onSelectSibling={(id) => setSelectedNodeIds([id])}
+            onSelectNode={(id) => setSelectedNodeIds([id])}
           />
           <PersonUnionsSection
             personId={selectedNode.id}
             nodes={nodes}
             edges={edges}
             onSelectNode={(id) => setSelectedNodeIds([id])}
-            updateUnionPartnerRole={updateUnionPartnerRole}
             swapPersonUnionSides={swapPersonUnionSides}
             moveChildToUnion={moveChildToUnion}
             requestRemoveConnection={requestRemoveConnection}
           />
+          {(() => {
+            const unknownLocked = hasUnknownParentRole(selectedNode.id, nodes);
+            return (
           <div className="mb-4">
+            {unknownLocked && (
+              <p className="text-dark-muted text-xs mb-2">
+                Name and nickname fields are locked because this person has the Unknown parent role.
+              </p>
+            )}
             <div className="space-y-2">
               <Input
                 ref={firstRef}
                 label="First name"
                 value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                onBlur={saveNameParts}
+                onChange={(e) => {
+                  disarmAutoSelect();
+                  setFirstName(e.target.value);
+                }}
+                onBlur={() => {
+                  disarmAutoSelect();
+                  saveNameParts();
+                }}
+                disabled={unknownLocked}
                 onKeyDown={(e) => {
+                  disarmAutoSelect();
                   if (e.key === "Tab") makeTabHandler(0, e.shiftKey)(e);
                 }}
+                {...nameFocusProps}
               />
               <Input
                 ref={middleRef}
                 label="Middle name"
                 value={middleName}
-                onChange={(e) => setMiddleName(e.target.value)}
-                onBlur={saveNameParts}
+                onChange={(e) => {
+                  disarmAutoSelect();
+                  setMiddleName(e.target.value);
+                }}
+                onBlur={() => {
+                  disarmAutoSelect();
+                  saveNameParts();
+                }}
+                disabled={unknownLocked}
                 onKeyDown={(e) => {
+                  disarmAutoSelect();
                   if (e.key === "Tab") makeTabHandler(1, e.shiftKey)(e);
                 }}
+                {...nameFocusProps}
               />
               <Input
                 ref={lastRef}
                 label="Last name"
                 value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                onBlur={saveNameParts}
+                onChange={(e) => {
+                  disarmAutoSelect();
+                  setLastName(e.target.value);
+                }}
+                onBlur={() => {
+                  disarmAutoSelect();
+                  saveNameParts();
+                }}
+                disabled={unknownLocked}
                 onKeyDown={(e) => {
+                  disarmAutoSelect();
                   if (e.key === "Tab") makeTabHandler(2, e.shiftKey)(e);
                 }}
+                {...nameFocusProps}
               />
               <Input
                 ref={nicknamesRef}
                 label="Nicknames"
                 value={nicknamesInput}
-                onChange={(e) => setNicknamesInput(e.target.value)}
-                onBlur={saveNicknames}
+                onChange={(e) => {
+                  disarmAutoSelect();
+                  setNicknamesInput(e.target.value);
+                }}
+                onBlur={() => {
+                  disarmAutoSelect();
+                  saveNicknames();
+                }}
+                disabled={unknownLocked}
                 onKeyDown={(e) => {
+                  disarmAutoSelect();
                   if (e.key === "Tab") makeTabHandler(3, e.shiftKey)(e);
                 }}
                 placeholder="Bob, Bobby, Robert"
               />
             </div>
           </div>
+            );
+          })()}
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Notes</label>
             <textarea
@@ -1291,6 +1712,8 @@ export default function FamilyTreeInspector() {
             unionData={nodeData as UnionNodeData}
             nodes={nodes}
             updateUnionPartnerRole={updateUnionPartnerRole}
+            customParentRoles={customParentRoles}
+            addCustomParentRole={addCustomParentRole}
           />
           <div className="mb-4 flex flex-wrap gap-2">
             <SwapPartnersButton

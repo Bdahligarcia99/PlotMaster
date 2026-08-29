@@ -100,7 +100,8 @@ interface ParsedPersonDeclaration {
 
 interface ParsedUnionMember {
   personId: string;
-  type: "father" | "mother" | "parent" | "child";
+  type: string;
+  role?: string;
   dx?: number;
   dy?: number;
   rx?: number;
@@ -141,6 +142,8 @@ function personDataFromFields(
     ? nickRaw.split(",").map((n) => parseQuotedValue(n.trim())).filter(Boolean)
     : [];
   const anchored = fields.anchored === "true";
+  const gender = fields.gender ? parseQuotedValue(fields.gender) : undefined;
+  const genAnchorLocked = fields.genLock === "true";
   return {
     kind: "person",
     name,
@@ -152,6 +155,8 @@ function personDataFromFields(
     genAnchorId: genAnchorId ?? null,
     isGenArmed: false,
     ...(anchored ? { anchored: true } : {}),
+    ...(gender ? { gender } : {}),
+    ...(genAnchorLocked ? { genAnchorLocked: true } : {}),
   };
 }
 
@@ -215,29 +220,48 @@ function parsePersonBlockFields(bodyLines: string[]): {
 
 function parsePersonMemberLine(line: string): ParsedUnionMember | null {
   const trimmed = line.trim();
-  const personMatch = /^Person\s+(\S+)\s+type:\s*(father|mother|parent|child)/i.exec(trimmed);
-  if (!personMatch) return null;
-  const personId = personMatch[1]!;
+  const headerMatch = /^Person\s+(\S+)\s+type:\s*(.+?)(?:\s*\{|\s*$)/i.exec(trimmed);
+  if (!headerMatch) return null;
+  const personId = headerMatch[1]!;
   if (personId === "?") return null;
-  const type = personMatch[2]!.toLowerCase() as ParsedUnionMember["type"];
+  let typeToken = headerMatch[2]!.trim();
+  if (typeToken.startsWith('"')) {
+    typeToken = parseQuotedValue(typeToken);
+  } else {
+    typeToken = typeToken.split(/\s/)[0]!;
+  }
+  const type = typeToken.toLowerCase() === "child" ? "child" : typeToken;
 
   let dx: number | undefined;
   let dy: number | undefined;
+  let role: string | undefined;
   const braceIdx = trimmed.indexOf("{");
   if (braceIdx >= 0) {
     const inner = trimmed.slice(braceIdx + 1).replace(/}\s*$/, "");
-    for (const part of inner.split(/\s+/)) {
-      const m = /^dx:\s*(-?\d+(?:\.\d+)?)/.exec(part);
+    for (const part of inner.split(",")) {
+      const token = part.trim();
+      if (!token) continue;
+      const m = /^dx:\s*(-?\d+(?:\.\d+)?)/.exec(token);
       if (m) dx = Math.round(parseFloat(m[1]!));
-      const m2 = /^dy:\s*(-?\d+(?:\.\d+)?)/.exec(part);
+      const m2 = /^dy:\s*(-?\d+(?:\.\d+)?)/.exec(token);
       if (m2) dy = Math.round(parseFloat(m2[1]!));
-      const mx = /^x':\s*(-?\d+(?:\.\d+)?)/.exec(part);
+      const mx = /^x':\s*(-?\d+(?:\.\d+)?)/.exec(token);
       if (mx) dx = Math.round(parseFloat(mx[1]!));
-      const my = /^y':\s*(-?\d+(?:\.\d+)?)/.exec(part);
+      const my = /^y':\s*(-?\d+(?:\.\d+)?)/.exec(token);
       if (my) dy = Math.round(parseFloat(my[1]!));
+      const roleMatch = /^role:\s*(.+)$/.exec(token);
+      if (roleMatch) {
+        let roleToken = roleMatch[1]!.trim();
+        if (roleToken.startsWith('"')) {
+          roleToken = parseQuotedValue(roleToken);
+        } else {
+          roleToken = roleToken.split(/\s/)[0]!;
+        }
+        role = roleToken;
+      }
     }
   }
-  return { personId, type, dx, dy };
+  return { personId, type, role, dx, dy };
 }
 
 function parseUnionBlock(header: string, bodyLines: string[]): ParsedUnionBlock | null {
@@ -486,12 +510,11 @@ export function parseFamilyTreeScript(
     const childMembers: ParsedUnionMember[] = [];
 
     for (const m of block.members) {
-      if (m.type === "child") {
+      if (m.type.toLowerCase() === "child") {
         childMembers.push(m);
         continue;
       }
-      const role: ParentRole | undefined =
-        m.type === "father" ? "father" : m.type === "mother" ? "mother" : undefined;
+      const role: ParentRole | undefined = m.type === "parent" ? undefined : m.type;
       if (!leftId) {
         leftId = m.personId;
         leftRole = role;
@@ -651,7 +674,10 @@ export function parseFamilyTreeScript(
         target: child.personId,
         sourceHandle: "children",
         targetHandle: "parent",
-        data: { type: "child" },
+        data: {
+          type: "child",
+          ...(child.role ? { childRole: child.role } : {}),
+        },
       });
     }
   }

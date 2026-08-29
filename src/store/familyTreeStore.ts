@@ -85,6 +85,10 @@ export interface PersonNodeData {
   positionUnset?: boolean;
   /** When true, this person stays fixed during union group drag and keeps custody on family transfer. */
   anchored?: boolean;
+  /** Built-in gender id or a label from customGenders. */
+  gender?: string;
+  /** When true, the assigned gen anchor survives moves into other generation bands. */
+  genAnchorLocked?: boolean;
 }
 
 /** True if a name part is "filled" (non-empty and not unknown placeholder like ? or ???). */
@@ -122,23 +126,6 @@ export function getPersonDisplayName(
     return filled(l) ? `${primary} ${l}` : primary;
   }
 
-  // All parts unknown: derive "Unknown N" from nodes if available, else show "?"
-  if (_nodeId && _nodes?.length) {
-    const personNodes = _nodes
-      .filter((n): n is NodeLike & { data: PersonNodeData } => (n.data as PersonNodeData)?.kind === "person")
-      .sort((a, b) => a.id.localeCompare(b.id));
-    const allUnknown = (d: PersonNodeData) => {
-      const x = (s: string | undefined) => !(s ?? "").trim() || /^\?+$/.test((s ?? "").trim());
-      return x(d.firstName) && x(d.middleName) && x(d.lastName);
-    };
-    let idx = 0;
-    for (const n of personNodes) {
-      if (allUnknown(n.data as PersonNodeData)) {
-        if (n.id === _nodeId) return `Unknown ${idx + 1}`;
-        idx++;
-      }
-    }
-  }
   if (filled(data.name)) return data.name;
   if (filled(data.firstName)) return data.firstName!;
   if (filled(data.middleName)) return data.middleName!;
@@ -228,6 +215,8 @@ function formatPersonBlockLines(
     ];
     if (opts.genIndex !== null) parts.push(`gen: ${opts.genIndex}`);
     if (n.data.anchored) parts.push("anchored: true");
+    if (n.data.gender) parts.push(`gender: "${escapeScriptQuoted(n.data.gender)}"`);
+    if (n.data.genAnchorLocked) parts.push("genLock: true");
     const xy = unset
       ? "x: ? y: ?"
       : `x: ${Math.round(n.position.x)} y: ${Math.round(n.position.y)}`;
@@ -243,6 +232,8 @@ function formatPersonBlockLines(
   lines.push(`${indent}notes: "${escapeScriptQuoted(n.data.notes ?? "")}"`);
   if (opts.genIndex !== null) lines.push(`${indent}gen: ${opts.genIndex}`);
   if (n.data.anchored) lines.push(`${indent}anchored: true`);
+  if (n.data.gender) lines.push(`${indent}gender: "${escapeScriptQuoted(n.data.gender)}"`);
+  if (n.data.genAnchorLocked) lines.push(`${indent}genLock: true`);
   const xLine = formatCoordField("x", n.position.x, unset, indent);
   const yLine = formatCoordField("y", n.position.y, unset, indent);
   if (xLine) lines.push(xLine);
@@ -266,8 +257,46 @@ function formatPersonBlockLines(
 /** "forward" = parents above, children below (current). "backward" = children first, add parents above. */
 export type UnionType = "forward" | "backward";
 
-/** Parent role in a union; at most one father and one mother per union. */
-export type ParentRole = "father" | "mother";
+/** Toolbar-level union creation mode. "full" builds parents + children in one action. */
+export type UnionCreateMode = UnionType | "full";
+
+export interface FullUnionSettings {
+  includeFather: boolean;
+  includeMother: boolean;
+  includeChildren: boolean;
+  childCount: number;
+}
+
+const DEFAULT_FULL_UNION_SETTINGS: FullUnionSettings = {
+  includeFather: true,
+  includeMother: true,
+  includeChildren: false,
+  childCount: 0,
+};
+
+export const BUILT_IN_PARENT_ROLES = [
+  "father",
+  "mother",
+  "unknown",
+  "guardian",
+  "stepmother",
+  "stepfather",
+] as const;
+/** Built-in role id or a label from customParentRoles. Undefined means unassigned. */
+export type ParentRole = string;
+
+export const BUILT_IN_GENDERS = ["male", "female", "other"] as const;
+
+export const BUILT_IN_CHILD_ROLES = [
+  "son",
+  "daughter",
+  "child",
+  "adoptive_son",
+  "adoptive_daughter",
+  "adoptive_child",
+] as const;
+/** Built-in role id or a label from customChildRoles. Undefined means unassigned. */
+export type ChildRole = string;
 
 export interface ConnectionIconRef {
   kind: "emoji" | "icon";
@@ -339,6 +368,8 @@ export function getConnectionStyleName(
 
 export interface FamilyTreeEdgeData {
   type: "partner" | "child";
+  /** Per union-child edge role (son, daughter, adoptive_son, custom label, etc.). */
+  childRole?: string;
   connectionStyleId?: string;
   connectionStyleOverride?: ConnectionVisualStyle;
 }
@@ -401,9 +432,7 @@ export interface UnionNodeData {
   partnerIds: [string | null, string | null]; // Parent IDs; null = slot not yet filled (backward union in progress)
   leftPartnerId?: string;
   rightPartnerId?: string;
-  /** Role of left partner; at most one father and one mother per union. */
   leftPartnerRole?: ParentRole;
-  /** Role of right partner; at most one father and one mother per union. */
   rightPartnerRole?: ParentRole;
   /** When true, swap which handle each partner connects to (left↔right) to reduce edge crossings. */
   partnerHandleSwap?: boolean;
@@ -521,63 +550,18 @@ function isUnknownPlaceholder(s: string | undefined | null): boolean {
   return !t || /^\?+$/.test(t);
 }
 
-/** Max N from "Unknown N" in person nodes, or 0 if none. */
-function getMaxUnknownNumber(nodes: Node<FamilyTreeNodeData>[]): number {
-  let max = 0;
-  for (const n of nodes) {
-    if (n.data?.kind !== "person") continue;
-    const d = n.data as PersonNodeData;
-    const check = (val: string | undefined) => {
-      const m = val?.match(/^Unknown (\d+)$/);
-      if (m) max = Math.max(max, parseInt(m[1]!, 10));
-    };
-    check(d.name);
-    check(d.firstName);
-    check(d.middleName);
-    check(d.lastName);
-    d.nicknames?.forEach(check);
-  }
-  return max;
-}
-
-/** Replace ??? in person node fields. When all three name fields (first, middle, last) are ?, use "Unknown N" in first only. */
+/** Replace legacy Unknown / Unknown N / ??? in person node fields with "?". */
 function normalizeUnknownNames(nodes: Node<FamilyTreeNodeData>[]): Node<FamilyTreeNodeData>[] {
   const isUnknownOrUnknownN = (s: string | undefined | null) =>
     isUnknownPlaceholder(s) || /^Unknown \d+$/.test((s ?? "").trim());
-  const personNodes = nodes
-    .filter((n): n is Node<PersonNodeData> => n.data?.kind === "person")
-    .sort((a, b) => a.id.localeCompare(b.id));
-  let nextNum = 1;
-  const allUnknownByNodeId = new Map<string, string>();
-  for (const n of personNodes) {
-    const d = n.data;
-    const f = (d.firstName ?? "").trim();
-    const m = (d.middleName ?? "").trim();
-    const l = (d.lastName ?? "").trim();
-    const allThreeUnknown = isUnknownOrUnknownN(f) && isUnknownOrUnknownN(m) && isUnknownOrUnknownN(l);
-    if (allThreeUnknown) {
-      allUnknownByNodeId.set(n.id, `Unknown ${nextNum}`);
-      nextNum++;
-    }
-  }
   const result = nodes.map((n) => {
     if (n.data?.kind !== "person") return n;
     const d = n.data as PersonNodeData;
-    const repl = allUnknownByNodeId.get(n.id);
-    if (repl) {
-      return {
-        ...n,
-        data: {
-          ...d,
-          name: repl,
-          firstName: repl,
-          middleName: "",
-          lastName: "",
-        },
-      };
-    }
-    const hasRepl = isUnknownOrUnknownN(d.name) || isUnknownOrUnknownN(d.firstName) ||
-      isUnknownOrUnknownN(d.middleName) || isUnknownOrUnknownN(d.lastName) ||
+    const hasRepl =
+      isUnknownOrUnknownN(d.name) ||
+      isUnknownOrUnknownN(d.firstName) ||
+      isUnknownOrUnknownN(d.middleName) ||
+      isUnknownOrUnknownN(d.lastName) ||
       (d.nicknames ?? []).some((v) => isUnknownOrUnknownN(v));
     if (!hasRepl) return n;
     const newData: PersonNodeData = {
@@ -1052,6 +1036,23 @@ export function findFamilyForNode(
     if (f.memberPersonIds.includes(nodeId)) return f;
   }
   return null;
+}
+
+/** Node ids owned by a family other than the active family tab. Empty when no tab is active. */
+export function computeOutOfActiveFamilyIds(
+  nodes: Node<FamilyTreeNodeData>[],
+  families: FamilyGroup[],
+  activeFamilyTabId: string | null
+): Set<string> {
+  if (activeFamilyTabId == null) return new Set();
+  const ids = new Set<string>();
+  for (const n of nodes) {
+    const owner = findFamilyForNode(n.id, families);
+    if (owner != null && owner.id !== activeFamilyTabId) {
+      ids.add(n.id);
+    }
+  }
+  return ids;
 }
 
 export function getUnionCreatedAt(unionId: string, nodes: Node<FamilyTreeNodeData>[]): number {
@@ -1600,7 +1601,16 @@ function showFamilyConnectionNotice(
 /** Suggestion from the name/role analysis engine. Exposed for consent UI. */
 export interface NameRoleSuggestion {
   nodeId: string;
-  field: "firstName" | "role" | "unionHealth" | "genConflict" | "unassigned" | "noGen" | "mainGraph";
+  field:
+    | "firstName"
+    | "role"
+    | "unionHealth"
+    | "genConflict"
+    | "unassigned"
+    | "noGen"
+    | "mainGraph"
+    | "unassignedRole"
+    | "noGender";
   currentValue: string;
   proposedValue: string;
   reason: string;
@@ -1618,7 +1628,7 @@ export interface NameRoleSuggestion {
  */
 export function analyzeNameAndRoleSuggestions(
   nodes: Node<FamilyTreeNodeData>[],
-  edges: Edge[]
+  _edges: Edge[]
 ): NameRoleSuggestion[] {
   const suggestions: NameRoleSuggestion[] = [];
   const personById = new Map(
@@ -1631,10 +1641,7 @@ export function analyzeNameAndRoleSuggestions(
       n.type === "union" && (n.data as UnionNodeData).kind === "union"
   );
 
-  const getPersonLastName = (personId: string): string =>
-    (getPersonNameParts((personById.get(personId)?.data as PersonNodeData) ?? { kind: "person", name: "", notes: "" }).last ?? "").trim();
-
-  /** Get person's role from any union they're in. Father/Mother or null if unknown. */
+  /** Get person's role from any union they're in. */
   const getPersonRole = (personId: string): ParentRole | null => {
     for (const u of unionNodes) {
       const d = u.data as UnionNodeData;
@@ -1646,46 +1653,6 @@ export function analyzeNameAndRoleSuggestions(
     return null;
   };
 
-  /** Get union and slot where this person is a parent without a role. */
-  const getUnionSlotWithoutRole = (
-    personId: string
-  ): { unionId: string; slot: "left" | "right" }[] => {
-    const out: { unionId: string; slot: "left" | "right" }[] = [];
-    for (const u of unionNodes) {
-      const d = u.data as UnionNodeData;
-      const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
-      const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
-      if (leftId === personId && !d.leftPartnerRole) out.push({ unionId: u.id, slot: "left" });
-      if (rightId === personId && !d.rightPartnerRole) out.push({ unionId: u.id, slot: "right" });
-    }
-    return out;
-  };
-
-  const getChildIds = (unionId: string): string[] =>
-    edges
-      .filter((e) => e.source === unionId && isChildEdge(e))
-      .map((e) => e.target)
-      .filter((id) => personById.has(id));
-
-  /** Get other partner's role and id in a union, given one slot. */
-  const getOtherPartnerInUnion = (
-    unionNode: Node<UnionNodeData>,
-    slot: "left" | "right"
-  ): { otherId: string | null; otherRole: ParentRole | null } => {
-    const d = unionNode.data as UnionNodeData;
-    const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
-    const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
-    if (slot === "left") return { otherId: rightId ?? null, otherRole: d.rightPartnerRole ?? null };
-    return { otherId: leftId ?? null, otherRole: d.leftPartnerRole ?? null };
-  };
-
-  const getPersonDisplayNameShort = (personId: string): string =>
-    getPersonDisplayName(
-      (personById.get(personId)?.data as PersonNodeData) ?? { kind: "person", name: "", notes: "" },
-      personId,
-      nodes
-    );
-
   for (const n of personById.values()) {
     const d = n.data as PersonNodeData;
     const firstName = (d.firstName ?? "").trim();
@@ -1696,7 +1663,7 @@ export function analyzeNameAndRoleSuggestions(
     // Mr./Mrs. suggestion: last name filled, first name empty or ?
     if (lastNameFilled && firstNameEmptyOrUnknown) {
       const role = getPersonRole(n.id);
-      if (role === "father") {
+      if (role === "father" || role === "stepfather") {
         suggestions.push({
           nodeId: n.id,
           field: "firstName",
@@ -1704,7 +1671,7 @@ export function analyzeNameAndRoleSuggestions(
           proposedValue: "Mr.",
           reason: "Father → Mr.",
         });
-      } else if (role === "mother") {
+      } else if (role === "mother" || role === "stepmother") {
         suggestions.push({
           nodeId: n.id,
           field: "firstName",
@@ -1722,62 +1689,70 @@ export function analyzeNameAndRoleSuggestions(
         });
       }
     }
+  }
 
-    // Role inference: parents without role
-    const slotsWithoutRole = getUnionSlotWithoutRole(n.id);
-    for (const { unionId, slot } of slotsWithoutRole) {
-      const unionNode = unionNodes.find((u) => u.id === unionId);
-      if (!unionNode) continue;
-      const { otherId, otherRole } = getOtherPartnerInUnion(unionNode, slot);
-      // Partner inference: if other parent has role, suggest opposite
-      if (otherRole && otherId) {
-        const inferredRole: ParentRole = otherRole === "father" ? "mother" : "father";
-        const partnerName = getPersonDisplayNameShort(otherId);
-        suggestions.push({
-          nodeId: n.id,
-          field: "role",
-          currentValue: "",
-          proposedValue: inferredRole,
-          reason: `Set ${getPersonDisplayNameShort(n.id)} as ${inferredRole === "father" ? "Father" : "Mother"} – partner (${partnerName}) is ${otherRole === "father" ? "Father" : "Mother"}`,
-          unionId,
-          slot,
-        });
-        continue;
-      }
-      // Fallback: children share last name or manual selection
-      const childIds = getChildIds(unionId);
-      const parentLastName = getPersonLastName(n.id);
-      const childrenShareLastName =
-        parentLastName &&
-        childIds.some((cid) => {
-          const childLast = getPersonLastName(cid);
-          return childLast && childLast.toLowerCase() === parentLastName.toLowerCase();
-        });
+  return suggestions;
+}
 
-      if (childrenShareLastName) {
-        suggestions.push({
-          nodeId: n.id,
-          field: "role",
-          currentValue: "",
-          proposedValue: "father",
-          reason: "Children share last name",
-          unionId,
-          slot,
-        });
-      } else {
-        suggestions.push({
-          nodeId: n.id,
-          field: "role",
-          currentValue: "",
-          proposedValue: "father/mother",
-          reason: "Select Father or Mother",
-          unionId,
-          slot,
-        });
-      }
+/** Flag union partner slots with no role assigned. */
+export function analyzeUnassignedRoleSuggestions(
+  nodes: Node<FamilyTreeNodeData>[]
+): NameRoleSuggestion[] {
+  const suggestions: NameRoleSuggestion[] = [];
+  const unionNodes = nodes.filter(
+    (n): n is Node<UnionNodeData> =>
+      n.type === "union" && (n.data as UnionNodeData).kind === "union"
+  );
+
+  for (const u of unionNodes) {
+    const d = u.data as UnionNodeData;
+    const unionName = d.name ?? u.id;
+    const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
+    const rightId = d.rightPartnerId ?? d.partnerIds?.[1];
+    if (leftId && !d.leftPartnerRole) {
+      suggestions.push({
+        nodeId: leftId,
+        field: "unassignedRole",
+        currentValue: "",
+        proposedValue: "—",
+        reason: `Parent role unassigned in ${unionName}`,
+        unionId: u.id,
+        slot: "left",
+      });
+    }
+    if (rightId && !d.rightPartnerRole) {
+      suggestions.push({
+        nodeId: rightId,
+        field: "unassignedRole",
+        currentValue: "",
+        proposedValue: "—",
+        reason: `Parent role unassigned in ${unionName}`,
+        unionId: u.id,
+        slot: "right",
+      });
     }
   }
 
+  return suggestions;
+}
+
+/** Flag persons with no gender assigned. */
+export function analyzeNoGenderSuggestions(
+  nodes: Node<FamilyTreeNodeData>[]
+): NameRoleSuggestion[] {
+  const suggestions: NameRoleSuggestion[] = [];
+  for (const n of nodes) {
+    if (n.data.kind !== "person") continue;
+    const d = n.data as PersonNodeData;
+    if (d.gender) continue;
+    suggestions.push({
+      nodeId: n.id,
+      field: "noGender",
+      currentValue: "No gender",
+      proposedValue: "—",
+      reason: "No gender assigned",
+    });
+  }
   return suggestions;
 }
 
@@ -2207,19 +2182,30 @@ export function generateFamilyTreeScript(
       lines.push(`${indent}arrange: ${arrangeParts.join(", ")}`);
     }
 
+    const formatMemberType = (memberType: string): string => {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(memberType)) return memberType;
+      return `"${escapeScriptQuoted(memberType)}"`;
+    };
+
     const emitMember = (
       personId: string | null | undefined,
-      memberType: "father" | "mother" | "parent" | "child"
+      memberType: string,
+      extraBraceFields?: Record<string, string>
     ) => {
       if (!personId || !personById.has(personId)) return;
       const person = personById.get(personId)!;
+      const typeToken = formatMemberType(memberType);
       if (unionUnset || person.data.positionUnset) {
-        lines.push(`${indent}Person ${personId} type: ${memberType}`);
+        lines.push(`${indent}Person ${personId} type: ${typeToken}`);
         return;
       }
       const dx = Math.round(person.position.x - union.position.x);
       const dy = Math.round(person.position.y - union.position.y);
-      lines.push(`${indent}Person ${personId} type: ${memberType} { x': ${dx}, y': ${dy} }`);
+      const extraParts = extraBraceFields
+        ? Object.entries(extraBraceFields).map(([k, v]) => `${k}: ${formatMemberType(v)}`)
+        : [];
+      const braceInner = [`x': ${dx}`, `y': ${dy}`, ...extraParts].join(", ");
+      lines.push(`${indent}Person ${personId} type: ${typeToken} { ${braceInner} }`);
     };
 
     if (leftId) {
@@ -2240,7 +2226,15 @@ export function generateFamilyTreeScript(
       .sort((a, b) => a.position.x - b.position.x || a.id.localeCompare(b.id));
 
     childNodes.forEach((child) => {
-      emitMember(child.id, "child");
+      const childEdge = edges.find(
+        (e) => e.source === union.id && e.target === child.id && isChildEdge(e)
+      );
+      const childRole = (childEdge?.data as FamilyTreeEdgeData | undefined)?.childRole;
+      emitMember(
+        child.id,
+        "child",
+        childRole ? { role: childRole } : undefined
+      );
     });
 
     lines.push(`${indent}notes: "${escapeScriptQuoted(data.notes ?? "")}"`);
@@ -2470,6 +2464,85 @@ function nextUnionNumber(nodes: Node<FamilyTreeNodeData>[]): number {
   return max + 1;
 }
 
+/** First known father/mother role for a person across any union, or null. */
+function getPersonParentRole(
+  personId: string,
+  nodes: Node<FamilyTreeNodeData>[]
+): ParentRole | null {
+  for (const n of nodes) {
+    if ((n.data as UnionNodeData).kind !== "union") continue;
+    const data = n.data as UnionNodeData;
+    const leftId = data.leftPartnerId ?? data.partnerIds?.[0] ?? null;
+    const rightId = data.rightPartnerId ?? data.partnerIds?.[1] ?? null;
+    if (leftId === personId && data.leftPartnerRole) return data.leftPartnerRole;
+    if (rightId === personId && data.rightPartnerRole) return data.rightPartnerRole;
+  }
+  return null;
+}
+
+/** True when this person holds the "unknown" role in any union. */
+export function hasUnknownParentRole(
+  personId: string,
+  nodes: Node<FamilyTreeNodeData>[]
+): boolean {
+  for (const n of nodes) {
+    if ((n.data as UnionNodeData).kind !== "union") continue;
+    const data = n.data as UnionNodeData;
+    const leftId = data.leftPartnerId ?? data.partnerIds?.[0] ?? null;
+    const rightId = data.rightPartnerId ?? data.partnerIds?.[1] ?? null;
+    if (leftId === personId && data.leftPartnerRole === "unknown") return true;
+    if (rightId === personId && data.rightPartnerRole === "unknown") return true;
+  }
+  return false;
+}
+
+function applyUnknownRoleNameToPerson(
+  nodes: Node<FamilyTreeNodeData>[],
+  personId: string | null | undefined
+): Node<FamilyTreeNodeData>[] {
+  if (!personId) return nodes;
+  return nodes.map((n) =>
+    n.id === personId && isPersonData(n.data)
+      ? {
+          ...n,
+          data: {
+            ...(n.data as PersonNodeData),
+            firstName: "Unknown",
+            middleName: "",
+            lastName: "",
+            name: "Unknown",
+          },
+        }
+      : n
+  );
+}
+
+function oppositeParentRole(role: ParentRole): ParentRole {
+  return role === "father" ? "mother" : "father";
+}
+
+function makeNewPersonNode(
+  id: string,
+  name: string,
+  position: { x: number; y: number }
+): Node<PersonNodeData> {
+  return {
+    id,
+    type: "person",
+    position,
+    data: {
+      kind: "person",
+      name,
+      firstName: name,
+      middleName: "",
+      lastName: "",
+      notes: "",
+      nicknames: [],
+      isGenArmed: false,
+    },
+  };
+}
+
 
 const PLACEMENT_NODE_WIDTH = 200;
 const PLACEMENT_NODE_HEIGHT = 72;
@@ -2535,6 +2608,12 @@ interface FamilyTreeStore {
   genAnchorLineOpacity: number;
   generationAnchors: GenerationAnchor[];
   connectionStyles: ConnectionStyleDef[];
+  /** Project-level custom parent role labels. */
+  customParentRoles: string[];
+  /** Project-level custom gender labels. */
+  customGenders: string[];
+  /** Project-level custom child role labels. */
+  customChildRoles: string[];
   /** Anchor ids in edit mode (draggable, capture input). Confirmed anchors pass input through. */
   editingAnchorIds: string[];
   genLabelMode: "letters" | "numbers" | "both";
@@ -2623,18 +2702,22 @@ interface FamilyTreeStore {
   addPerson: (options?: { genAnchorId?: string }) => string;
   createUnion: (partnerNodeIds: [string, string]) => string | null;
   createBackwardUnion: (childNodeIds: [string] | [string, string]) => string | null;
+  createFullUnion: (options?: { seedPersonIds?: string[] }) => string | null;
   addChild: (unionNodeId: string) => string | null;
   addParent: (unionNodeId: string) => string | null;
   /** Link existing person to union. Forward = add as parent, Backward = add as child. Returns error message on failure. */
   linkPersonToUnion: (unionId: string, personId: string, mode: UnionType) => string | null;
-  defaultUnionType: UnionType;
-  setDefaultUnionType: (t: UnionType) => void;
+  defaultUnionType: UnionCreateMode;
+  setDefaultUnionType: (t: UnionCreateMode) => void;
+  fullUnionSettings: FullUnionSettings;
+  setFullUnionSettings: (patch: Partial<FullUnionSettings>) => void;
   updateNodeName: (nodeId: string, name: string) => void;
   updatePersonNameParts: (nodeId: string, parts: { firstName: string; middleName: string; lastName: string }) => void;
   updatePersonNicknames: (nodeId: string, nicknames: string[]) => void;
   updateNodeNotes: (nodeId: string, notes: string) => void;
   setUnionName: (unionId: string, name: string) => void;
   updateUnionPartnerRole: (unionId: string, slot: "left" | "right", role: ParentRole | null) => void;
+  updateChildRole: (unionId: string, personId: string, role: ChildRole | null) => void;
   swapUnionPartners: (unionId: string) => boolean;
   /** Swap which union handle each partner's edge uses (reduces crossings). Does not change partner roles. */
   swapUnionHandleSides: (unionId: string) => boolean;
@@ -2676,6 +2759,8 @@ interface FamilyTreeStore {
   pendingBloodlineWarning: PendingBloodlineWarning | null;
   /** Pending delete confirmation (family tab or multi-node selection). */
   pendingDeleteConfirm: PendingDeleteConfirm | null;
+  /** Family id awaiting scoped Clear confirmation. */
+  pendingClearFamilyConfirm: string | null;
   /** Anchor blocking warning during click-canvas cross-family transfer. */
   pendingAnchorTransferWarning: PendingAnchorTransferWarning | null;
   /** Brief toast when a redundant connecting union is deleted. */
@@ -2721,6 +2806,11 @@ interface FamilyTreeStore {
     restrictPersonIds?: string[] | null
   ) => void;
   setPersonAnchored: (personId: string, anchored: boolean) => void;
+  setPersonGender: (personId: string, gender: string | null) => void;
+  setPersonGenAnchorLocked: (personId: string, locked: boolean) => void;
+  addCustomParentRole: (label: string) => void;
+  addCustomGender: (label: string) => void;
+  addCustomChildRole: (label: string) => void;
   setIsolationModeActive: (v: boolean) => void;
   setPendingFocusFamilyId: (id: string | null) => void;
   setInspectorFamilyId: (id: string | null) => void;
@@ -2740,6 +2830,10 @@ interface FamilyTreeStore {
   applyFamilyTreeScriptEdits: (content: string) => { ok: boolean; errors: string[] };
   flushSaveAndSave: () => Promise<boolean>;
   clearTree: (projectId?: string) => void;
+  requestClearFamily: (familyId: string) => void;
+  confirmClearFamily: () => void;
+  cancelClearFamily: () => void;
+  clearFamilyNodes: (familyId: string) => void;
   removeNodes: (nodeIds: string[]) => void;
   /** For PDF export: viewport element to capture. Canvas registers on mount. */
   exportViewportEl: HTMLElement | null;
@@ -3972,6 +4066,9 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   genAnchorLineOpacity: 35,
   generationAnchors: [],
   connectionStyles: [],
+  customParentRoles: [] as string[],
+  customGenders: [] as string[],
+  customChildRoles: [] as string[],
   editingAnchorIds: [] as string[],
   genLabelMode: "letters",
   genInheritFlashByNodeId: {},
@@ -3995,7 +4092,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   lastSavedAt: null,
   lastSaveError: null,
   autosaveEnabled: true,
-  defaultUnionType: "forward" as UnionType,
+  defaultUnionType: "forward" as UnionCreateMode,
+  fullUnionSettings: { ...DEFAULT_FULL_UNION_SETTINGS },
   exportViewportEl: null as HTMLElement | null,
   fitViewForExport: null as (() => void) | null,
   exportCaptureFlags: null as { includeNotes: boolean } | null,
@@ -4010,6 +4108,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   deleteFocus: "nodes" as "family" | "nodes",
   pendingBloodlineWarning: null as PendingBloodlineWarning | null,
   pendingDeleteConfirm: null as PendingDeleteConfirm | null,
+  pendingClearFamilyConfirm: null as string | null,
   pendingAnchorTransferWarning: null as PendingAnchorTransferWarning | null,
   familyConnectionNotice: null as string | null,
   inspectorFamilyId: null as string | null,
@@ -4038,6 +4137,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         ...analyzeGenConflictSuggestions(s.nodes, s.edges),
         ...analyzeUnassignedSuggestions(s.nodes, s.edges, s.families),
         ...analyzeNoGenSuggestions(s.nodes),
+        ...analyzeUnassignedRoleSuggestions(s.nodes),
+        ...analyzeNoGenderSuggestions(s.nodes),
         ...analyzeMainGraphSuggestions(s.nodes, s.families),
       ],
     });
@@ -4250,6 +4351,108 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       hasUnsavedChanges: true,
       lastSaveError: null,
     })),
+  setPersonGender: (personId, gender) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === personId && (n.data as PersonNodeData).kind === "person"
+          ? {
+              ...n,
+              data: {
+                ...(n.data as PersonNodeData),
+                gender: gender ?? undefined,
+              },
+            }
+          : n
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setPersonGenAnchorLocked: (personId, locked) =>
+    set((s) => {
+      const node = s.nodes.find(
+        (n) => n.id === personId && (n.data as PersonNodeData).kind === "person"
+      );
+      if (!node) return {};
+      const d = node.data as PersonNodeData;
+      if (!locked) {
+        return {
+          nodes: s.nodes.map((n) =>
+            n.id === personId && (n.data as PersonNodeData).kind === "person"
+              ? {
+                  ...n,
+                  data: { ...(n.data as PersonNodeData), genAnchorLocked: undefined },
+                }
+              : n
+          ),
+          hasUnsavedChanges: true,
+          lastSaveError: null,
+        };
+      }
+      const h = s.nodeSizesById[personId]?.height ?? DEFAULT_PERSON_H;
+      const centerY = node.position.y + h / 2;
+      const effectiveId =
+        d.genAnchorId ?? getAnchorAtY(s.generationAnchors, centerY)?.id ?? null;
+      if (!effectiveId) return {};
+      return {
+        nodes: s.nodes.map((n) =>
+          n.id === personId && (n.data as PersonNodeData).kind === "person"
+            ? {
+                ...n,
+                data: {
+                  ...(n.data as PersonNodeData),
+                  genAnchorId: effectiveId,
+                  genAnchorLocked: true,
+                },
+              }
+            : n
+        ),
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    }),
+  addCustomParentRole: (label) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    if (lower === "child") return;
+    if ((BUILT_IN_PARENT_ROLES as readonly string[]).includes(lower)) return;
+    set((s) => {
+      if (s.customParentRoles.some((r) => r.toLowerCase() === lower)) return {};
+      return {
+        customParentRoles: [...s.customParentRoles, trimmed],
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    });
+  },
+  addCustomGender: (label) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    if ((BUILT_IN_GENDERS as readonly string[]).includes(lower)) return;
+    set((s) => {
+      if (s.customGenders.some((g) => g.toLowerCase() === lower)) return {};
+      return {
+        customGenders: [...s.customGenders, trimmed],
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    });
+  },
+  addCustomChildRole: (label) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    if ((BUILT_IN_CHILD_ROLES as readonly string[]).includes(lower)) return;
+    set((s) => {
+      if (s.customChildRoles.some((r) => r.toLowerCase() === lower)) return {};
+      return {
+        customChildRoles: [...s.customChildRoles, trimmed],
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    });
+  },
   setIsolationModeActive: (v) => set({ isolationModeActive: v }),
   setPendingFocusFamilyId: (id) => set({ pendingFocusFamilyId: id }),
   setInspectorFamilyId: (id) => set({ inspectorFamilyId: id, inspectorBranchId: id != null ? null : get().inspectorBranchId }),
@@ -4578,6 +4781,42 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     get().performDeleteNodes(pending.nodeIds);
   },
   cancelPendingDelete: () => set({ pendingDeleteConfirm: null }),
+
+  requestClearFamily: (familyId) => set({ pendingClearFamilyConfirm: familyId }),
+  confirmClearFamily: () => {
+    const familyId = get().pendingClearFamilyConfirm;
+    if (!familyId) return;
+    set({ pendingClearFamilyConfirm: null });
+    get().clearFamilyNodes(familyId);
+  },
+  cancelClearFamily: () => set({ pendingClearFamilyConfirm: null }),
+  clearFamilyNodes: (familyId) => {
+    const s = get();
+    const family = s.families.find((f) => f.id === familyId);
+    if (!family) return;
+    const ids = getFamilyVisibleNodeIds(family, s.nodes, s.edges);
+    stripNodeDeclarationsImpl(get, set, ids);
+    get().removeNodes(ids);
+    const record: PersistedFamilyRecord = {
+      id: family.id,
+      unionIds: [],
+      personIds: [],
+      explicit: true,
+      name: family.name,
+      isCustomName: family.isCustomName,
+      description: family.description,
+      parentFamilyIds: family.parentFamilyIds,
+    };
+    set({
+      families: s.families.map((f) =>
+        f.id === familyId ? toFamilyGroup(record, get().nodes, get().edges) : f
+      ),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    });
+    reconcileFamiliesImpl(get, set);
+    ensureDefaultDocumentsImpl(get, set);
+  },
 
   resolveAnchorTransferWarning: (choice) => {
     const pending = get().pendingAnchorTransferWarning;
@@ -5147,8 +5386,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         partnerIds: [idA, idB],
         leftPartnerId: leftId,
         rightPartnerId: rightId,
-        leftPartnerRole: leftId === idA ? "father" : "mother",
-        rightPartnerRole: rightId === idA ? "father" : "mother",
         notes: "",
         unionType: "forward",
         createdAt: Date.now(),
@@ -5193,6 +5430,215 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     );
     set({ families: updatedFamilies });
     appendNodeDeclarationToDocumentImpl(get, set, familyIdAfter, unionId);
+    return unionId;
+  },
+
+  createFullUnion: (options) => {
+    const state = get();
+    const settings = state.fullUnionSettings;
+    const seedPersonIds = options?.seedPersonIds ?? [];
+    const { nodes, snapToGrid, viewportBounds } = state;
+
+    const seedNodes = seedPersonIds
+      .map((id) => nodes.find((n) => n.id === id))
+      .filter((n): n is Node<PersonNodeData> => n != null && n.type === "person");
+    if (seedNodes.length !== seedPersonIds.length) return null;
+    if (seedPersonIds.length > 2) return null;
+
+    const snap = (x: number, y: number) => snapPosition(x, y, snapToGrid);
+
+    const newNodes: Node<FamilyTreeNodeData>[] = [];
+    const newEdges: Edge[] = [];
+    let personNumOffset = nextPersonNumber(nodes);
+
+    const makeNewPerson = (x: number, y: number): string => {
+      const id = generateId();
+      const name = `Person ${personNumOffset}`;
+      personNumOffset += 1;
+      newNodes.push(makeNewPersonNode(id, name, snap(x, y)));
+      return id;
+    };
+
+    let leftId: string | null = null;
+    let rightId: string | null = null;
+    let leftRole: ParentRole | undefined;
+    let rightRole: ParentRole | undefined;
+
+    const unionId = generateId();
+    const unionNum = nextUnionNumber(nodes);
+
+    let unionX: number;
+    let unionY: number;
+
+    if (seedNodes.length === 2) {
+      const [nodeA, nodeB] = seedNodes;
+      const [leftNode, rightNode] =
+        nodeA.position.x <= nodeB.position.x ? [nodeA, nodeB] : [nodeB, nodeA];
+      leftId = leftNode.id;
+      rightId = rightNode.id;
+      const midX = (leftNode.position.x + rightNode.position.x) / 2;
+      unionX = midX - DEFAULT_UNION_W / 2;
+      unionY = Math.max(leftNode.position.y, rightNode.position.y) + UNION_DY;
+    } else if (seedNodes.length === 1) {
+      const seed = seedNodes[0]!;
+      leftId = seed.id;
+      const seedRole = getPersonParentRole(seed.id, nodes);
+      const { includeFather, includeMother } = settings;
+
+      if (!includeFather && !includeMother) {
+        if (seedRole) leftRole = seedRole;
+      } else if (includeFather && includeMother) {
+        rightId = makeNewPerson(seed.position.x + PARTNER_DX, seed.position.y);
+        leftRole = undefined;
+        rightRole = seedRole ? oppositeParentRole(seedRole) : undefined;
+      } else {
+        const checkedRole: ParentRole = includeFather ? "father" : "mother";
+        rightId = makeNewPerson(seed.position.x + PARTNER_DX, seed.position.y);
+        leftRole = seedRole ?? undefined;
+        rightRole = checkedRole;
+      }
+
+      unionX = rightId != null ? seed.position.x + PARTNER_DX / 2 : seed.position.x;
+      unionY = seed.position.y + UNION_DY;
+    } else {
+      if (viewportBounds) {
+        unionX =
+          (viewportBounds.minX + viewportBounds.maxX) / 2 - DEFAULT_UNION_W / 2;
+        unionY = (viewportBounds.minY + viewportBounds.maxY) / 2;
+      } else {
+        const maxY = nodes.reduce((max, n) => Math.max(max, n.position.y), 0);
+        unionX = 100;
+        unionY = maxY + 80;
+      }
+
+      const { includeFather, includeMother } = settings;
+      if (includeFather && includeMother) {
+        leftId = makeNewPerson(unionX - PARTNER_DX / 2, unionY - UNION_DY);
+        rightId = makeNewPerson(unionX + PARTNER_DX / 2, unionY - UNION_DY);
+        leftRole = "father";
+        rightRole = "mother";
+      } else if (includeFather) {
+        leftId = makeNewPerson(unionX - PARTNER_DX / 2, unionY - UNION_DY);
+        leftRole = "father";
+      } else if (includeMother) {
+        leftId = makeNewPerson(unionX - PARTNER_DX / 2, unionY - UNION_DY);
+        leftRole = "mother";
+      }
+    }
+
+    const childIds: string[] = [];
+    if (settings.includeChildren && settings.childCount > 0) {
+      for (let i = 0; i < settings.childCount; i += 1) {
+        const childId = makeNewPerson(
+          unionX + i * DEFAULT_CHILD_ROW_SPACING,
+          unionY + CHILD_DY
+        );
+        childIds.push(childId);
+      }
+    }
+
+    const partnerIds: [string | null, string | null] = [leftId, rightId];
+    const parents = [leftId, rightId].filter((id): id is string => id != null);
+
+    const familyId = ensureActiveFamilyTarget(get, set);
+    const family = get().families.find((f) => f.id === familyId);
+    const hasMainGraph =
+      family?.unionIds.some(
+        (uid) =>
+          (get().nodes.find((n) => n.id === uid)?.data as UnionNodeData)?.isMainGraph
+      ) ?? false;
+
+    const unionNode: Node<UnionNodeData> = {
+      id: unionId,
+      type: "union",
+      position: snap(unionX, unionY),
+      data: {
+        kind: "union",
+        name: `Union ${unionNum}`,
+        partnerIds,
+        leftPartnerId: leftId ?? undefined,
+        rightPartnerId: rightId ?? undefined,
+        leftPartnerRole: leftRole,
+        rightPartnerRole: rightRole,
+        notes: "",
+        unionType: parents.length > 0 ? "forward" : "backward",
+        createdAt: Date.now(),
+        ...(!hasMainGraph ? { isMainGraph: true } : {}),
+      },
+    };
+    newNodes.push(unionNode);
+
+    if (leftId) {
+      newEdges.push({
+        id: `e-${leftId}-${unionId}`,
+        source: leftId,
+        target: unionId,
+        sourceHandle: "partner",
+        targetHandle: "partners",
+        data: { type: "partner" },
+      });
+    }
+    if (rightId) {
+      newEdges.push({
+        id: `e-${rightId}-${unionId}`,
+        source: rightId,
+        target: unionId,
+        sourceHandle: "partner",
+        targetHandle: "partners",
+        data: { type: "partner" },
+      });
+    }
+    for (const childId of childIds) {
+      newEdges.push({
+        id: `e-${unionId}-${childId}`,
+        source: unionId,
+        target: childId,
+        sourceHandle: "children",
+        targetHandle: "parent",
+        data: { type: "child" },
+      });
+    }
+
+    set((s) => ({
+      nodes: [...s.nodes, ...newNodes],
+      edges: [...s.edges, ...newEdges],
+      selectedNodeIds: [unionId],
+      primarySelectedNodeId: unionId,
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    }));
+
+    const familyIdAfter = ensureActiveFamilyTarget(get, set);
+    const after = get();
+    let updatedFamilies = after.families;
+    const allNewPersonIds = newNodes
+      .filter((n) => n.type === "person")
+      .map((n) => n.id);
+
+    updatedFamilies = appendNodeToFamilyRecord(
+      updatedFamilies,
+      familyIdAfter,
+      unionId,
+      "union",
+      after.nodes,
+      after.edges
+    );
+    for (const pid of allNewPersonIds) {
+      updatedFamilies = appendNodeToFamilyRecord(
+        updatedFamilies,
+        familyIdAfter,
+        pid,
+        "person",
+        after.nodes,
+        after.edges
+      );
+    }
+    set({ families: updatedFamilies });
+
+    appendNodeDeclarationToDocumentImpl(get, set, familyIdAfter, [
+      unionId,
+      ...allNewPersonIds,
+    ]);
     return unionId;
   },
 
@@ -5248,6 +5694,15 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
   },
 
   setDefaultUnionType: (t) => set({ defaultUnionType: t }),
+
+  setFullUnionSettings: (patch) =>
+    set((s) => {
+      const next = { ...s.fullUnionSettings, ...patch };
+      if (typeof next.childCount === "number") {
+        next.childCount = Math.min(12, Math.max(0, Math.round(next.childCount)));
+      }
+      return { fullUnionSettings: next };
+    }),
 
   createBackwardUnion: (childNodeIds) => {
     const state = get();
@@ -5324,7 +5779,6 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     };
 
     const idx = partnerIds[0] == null ? 0 : 1;
-    const role: ParentRole = idx === 0 ? "father" : "mother";
     const newPartnerIds: [string | null, string | null] = [...partnerIds];
     newPartnerIds[idx] = parentId;
 
@@ -5341,8 +5795,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const rightId = newPartnerIds[1];
     const leftPartnerId = leftId ?? undefined;
     const rightPartnerId = rightId ?? undefined;
-    const newLeftPartnerRole = idx === 0 ? role : unionData.leftPartnerRole;
-    const newRightPartnerRole = idx === 1 ? role : unionData.rightPartnerRole;
+    const newLeftPartnerRole = idx === 0 ? undefined : unionData.leftPartnerRole;
+    const newRightPartnerRole = idx === 1 ? undefined : unionData.rightPartnerRole;
 
     set((s) => ({
       nodes: s.nodes.map((n) =>
@@ -5399,13 +5853,12 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       if (filled >= 2) return "Union already has 2 parents.";
       if (partnerEdgeExists) return "Person is already a parent of this union.";
       const idx = partnerIds[0] == null ? 0 : 1;
-      const role: ParentRole = idx === 0 ? "father" : "mother";
       const newPartnerIds: [string | null, string | null] = [...partnerIds];
       newPartnerIds[idx] = personId;
       const leftId = newPartnerIds[0];
       const rightId = newPartnerIds[1];
-      const newLeftPartnerRole = idx === 0 ? role : unionData.leftPartnerRole;
-      const newRightPartnerRole = idx === 1 ? role : unionData.rightPartnerRole;
+      const newLeftPartnerRole = idx === 0 ? undefined : unionData.leftPartnerRole;
+      const newRightPartnerRole = idx === 1 ? undefined : unionData.rightPartnerRole;
       const partnerEdge: Edge = {
         id: `e-${personId}-${unionId}`,
         source: personId,
@@ -5512,13 +5965,17 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       (e) => (e.data as { type?: string })?.type === "child" && e.source === fromUnionId && e.target === childId
     );
     if (!childEdge) return false;
+    const childEdgeData = childEdge.data as FamilyTreeEdgeData | undefined;
     const newChildEdge: Edge = {
       id: `e-${toUnionId}-${childId}`,
       source: toUnionId,
       target: childId,
       sourceHandle: "children",
       targetHandle: "parent",
-      data: { type: "child" },
+      data: {
+        type: "child",
+        ...(childEdgeData?.childRole ? { childRole: childEdgeData.childRole } : {}),
+      },
     };
     set((s) => ({
       edges: s.edges
@@ -5582,13 +6039,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
 
   updateNodeName: (nodeId, name) => {
     set((s) => {
-      const unknownLabel = isUnknownPlaceholder(name)
-        ? `Unknown ${getMaxUnknownNumber(s.nodes) + 1}`
-        : null;
-      const resolved = unknownLabel ?? (isUnknownPlaceholder(name) ? "?" : name);
-      const firstName = unknownLabel ?? (isUnknownPlaceholder(name) ? "?" : name);
-      const middleName = unknownLabel ? "" : "";
-      const lastName = "";
+      const resolved = isUnknownPlaceholder(name) ? "?" : name;
+      const firstName = isUnknownPlaceholder(name) ? "?" : name;
       return {
         nodes: s.nodes.map((n) =>
           n.id === nodeId && isPersonData(n.data)
@@ -5596,10 +6048,10 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
                 ...n,
                 data: {
                   ...(n.data as PersonNodeData),
-                  name: unknownLabel ?? resolved,
+                  name: resolved,
                   firstName,
-                  middleName,
-                  lastName,
+                  middleName: "",
+                  lastName: "",
                 },
               }
             : n
@@ -5615,17 +6067,13 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
     const f = resolve(firstName.trim());
     const m = resolve(middleName.trim());
     const l = resolve(lastName.trim());
-    const allThreeUnknown = f === "?" && m === "?" && l === "?";
     set((s) => {
-      const finalFirst = allThreeUnknown ? `Unknown ${getMaxUnknownNumber(s.nodes) + 1}` : f;
-      const finalMiddle = allThreeUnknown ? "" : m;
-      const finalLast = allThreeUnknown ? "" : l;
-      const parts = [finalFirst, finalMiddle, finalLast].filter(Boolean);
-      const name = parts.join(" ") || "New Person";
+      const parts = [f, m, l].filter((p) => p && p !== "?");
+      const name = parts.join(" ") || "?";
       return {
         nodes: s.nodes.map((n) =>
           n.id === nodeId && isPersonData(n.data)
-            ? { ...n, data: { ...(n.data as PersonNodeData), firstName: finalFirst, middleName: finalMiddle, lastName: finalLast, name } }
+            ? { ...n, data: { ...(n.data as PersonNodeData), firstName: f, middleName: m, lastName: l, name } }
             : n
         ),
         hasUnsavedChanges: true,
@@ -5679,50 +6127,41 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       const leftId = data.leftPartnerId ?? data.partnerIds?.[0];
       const rightId = data.rightPartnerId ?? data.partnerIds?.[1];
       const personId = slot === "left" ? leftId : rightId;
-      const otherRole = slot === "left" ? data.rightPartnerRole : data.leftPartnerRole;
 
-      let leftRole: ParentRole | undefined;
-      let rightRole: ParentRole | undefined;
-      if (role == null) {
-        // "Not set" → clear both partners in this union so the role stays unset
-        leftRole = undefined;
-        rightRole = undefined;
-      } else {
-        // Assigning: clear the same role from the other slot
-        const newOther = otherRole === role ? undefined : otherRole;
-        leftRole = slot === "left" ? role : newOther;
-        rightRole = slot === "right" ? role : newOther;
-      }
-
-      // Propagate: only when setting a non-null role; unsetting does not propagate
-      const updates = new Map<string, { leftRole?: ParentRole; rightRole?: ParentRole }>();
-      updates.set(unionId, { leftRole, rightRole });
-      if (role != null && personId) {
-        for (const n of s.nodes) {
-          if (n.id === unionId || (n.data as UnionNodeData).kind !== "union") continue;
-          const d = n.data as UnionNodeData;
-          const uLeftId = d.leftPartnerId ?? d.partnerIds?.[0];
-          const uRightId = d.rightPartnerId ?? d.partnerIds?.[1];
-          if (uLeftId === personId)
-            updates.set(n.id, { ...(updates.get(n.id) ?? {}), leftRole: role });
-          if (uRightId === personId)
-            updates.set(n.id, { ...(updates.get(n.id) ?? {}), rightRole: role });
+      let nodes = s.nodes.map((n) => {
+        if (n.id !== unionId) return n;
+        const nd = n.data as UnionNodeData;
+        if (slot === "left") {
+          return { ...n, data: { ...nd, leftPartnerRole: role ?? undefined } };
         }
+        return { ...n, data: { ...nd, rightPartnerRole: role ?? undefined } };
+      });
+
+      if (role === "unknown") {
+        nodes = applyUnknownRoleNameToPerson(nodes, personId);
       }
 
       return {
-        nodes: s.nodes.map((n) => {
-          const patch = updates.get(n.id);
-          if (!patch) return n;
-          const nd = n.data as UnionNodeData;
-          return {
-            ...n,
-            data: {
-              ...nd,
-              leftPartnerRole: "leftRole" in patch ? (patch.leftRole ?? undefined) : nd.leftPartnerRole,
-              rightPartnerRole: "rightRole" in patch ? (patch.rightRole ?? undefined) : nd.rightPartnerRole,
-            },
-          };
+        nodes,
+        hasUnsavedChanges: true,
+        lastSaveError: null,
+      };
+    });
+  },
+
+  updateChildRole: (unionId, personId, role) => {
+    set((s) => {
+      const edgeIndex = s.edges.findIndex(
+        (e) => isChildEdge(e) && e.source === unionId && e.target === personId
+      );
+      if (edgeIndex === -1) return {};
+      return {
+        edges: s.edges.map((e, i) => {
+          if (i !== edgeIndex) return e;
+          const d = { ...(e.data as FamilyTreeEdgeData) };
+          if (role) d.childRole = role;
+          else delete d.childRole;
+          return { ...e, data: d };
         }),
         hasUnsavedChanges: true,
         lastSaveError: null,
@@ -6166,6 +6605,15 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       edges,
       generationAnchors: (payload as { generationAnchors?: GenerationAnchor[] })?.generationAnchors ?? [],
       connectionStyles: payload?.connectionStyles ?? [],
+      customParentRoles: Array.isArray(payload?.customParentRoles)
+        ? payload!.customParentRoles.filter((r): r is string => typeof r === "string")
+        : [],
+      customGenders: Array.isArray(payload?.customGenders)
+        ? payload!.customGenders.filter((g): g is string => typeof g === "string")
+        : [],
+      customChildRoles: Array.isArray(payload?.customChildRoles)
+        ? payload!.customChildRoles.filter((r): r is string => typeof r === "string")
+        : [],
       families: initialFamilies,
       branches: (payload?.branches ?? []) as BranchRecord[],
       documents: (payload?.documents ?? []) as FamilyTreeDocumentRecord[],
@@ -6199,9 +6647,32 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       genAnchorBandOpacity: payload?.ui?.genAnchorBandOpacity ?? 6,
       genAnchorLineOpacity: payload?.ui?.genAnchorLineOpacity ?? 35,
       defaultUnionType:
-        (payload?.ui?.defaultUnionType === "forward" || payload?.ui?.defaultUnionType === "backward")
+        payload?.ui?.defaultUnionType === "forward" ||
+        payload?.ui?.defaultUnionType === "backward" ||
+        payload?.ui?.defaultUnionType === "full"
           ? payload.ui.defaultUnionType
           : "forward",
+      fullUnionSettings: {
+        includeFather:
+          payload?.ui?.fullUnionSettings?.includeFather ??
+          DEFAULT_FULL_UNION_SETTINGS.includeFather,
+        includeMother:
+          payload?.ui?.fullUnionSettings?.includeMother ??
+          DEFAULT_FULL_UNION_SETTINGS.includeMother,
+        includeChildren:
+          payload?.ui?.fullUnionSettings?.includeChildren ??
+          DEFAULT_FULL_UNION_SETTINGS.includeChildren,
+        childCount: Math.min(
+          12,
+          Math.max(
+            0,
+            Math.round(
+              payload?.ui?.fullUnionSettings?.childCount ??
+                DEFAULT_FULL_UNION_SETTINGS.childCount
+            )
+          )
+        ),
+      },
       selectedNodeIds: [],
       primarySelectedNodeId: null,
       primarySelectionPinnedId: null,
@@ -6219,6 +6690,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       pendingFocusFamilyId: null,
       pendingBloodlineWarning: null,
       pendingDeleteConfirm: null,
+      pendingClearFamilyConfirm: null,
       pendingAnchorTransferWarning: null,
       familyConnectionNotice: null,
       inspectorFamilyId: null,
@@ -6319,6 +6791,9 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
         anchorNodeId: null,
         generationAnchors: s.generationAnchors,
         connectionStyles: s.connectionStyles,
+        customParentRoles: s.customParentRoles,
+        customGenders: s.customGenders,
+        customChildRoles: s.customChildRoles,
         families: familiesToPersisted(s.families),
         branches: branchesToPersisted(s.branches),
         documents: s.documents.map((d) => ({ ...d })),
@@ -6338,6 +6813,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
           childrenRowAlignment3Plus: s.childrenRowAlignment3Plus,
           persistUnionSelectionOnChildCreate: s.persistUnionSelectionOnChildCreate,
           defaultUnionType: s.defaultUnionType,
+          fullUnionSettings: s.fullUnionSettings,
           legendMode: s.legendMode,
           subEntitySelectionMode: s.subEntitySelectionMode,
           lastDocumentIdByFamilyId: s.lastDocumentIdByFamilyId,
@@ -6408,6 +6884,9 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       edges: [],
       generationAnchors: [],
       connectionStyles: [],
+      customParentRoles: [],
+      customGenders: [],
+      customChildRoles: [],
       families: [],
       branches: [],
       editingAnchorIds: [],
@@ -6426,6 +6905,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       pendingFocusFamilyId: null,
       pendingBloodlineWarning: null,
       pendingDeleteConfirm: null,
+      pendingClearFamilyConfirm: null,
       pendingAnchorTransferWarning: null,
       familyConnectionNotice: null,
       inspectorFamilyId: null,

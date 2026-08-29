@@ -69,6 +69,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
 
   const handleRootPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      if (outOfActiveFamily) return;
       if (e.metaKey || e.ctrlKey) {
         e.preventDefault();
         e.stopPropagation();
@@ -78,14 +79,14 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
         });
       }
     },
-    [id, setSelectedNodeIds]
+    [id, setSelectedNodeIds, outOfActiveFamily]
   );
 
   const displayName = getPersonDisplayName(nodeData, id, nodes);
   const firstNickname = nodeData.nicknames?.map((n) => (n || "").trim()).find((t) => t.length > 0);
 
   const hasSuggestions = nameRoleSuggestions.some((s) => s.nodeId === id);
-  const hasUnknownRole = nodes.some((n) => {
+  const hasUnassignedRole = nodes.some((n) => {
     if ((n.data as { kind?: string })?.kind !== "union") return false;
     const d = n.data as { leftPartnerId?: string; rightPartnerId?: string; partnerIds?: (string | null)[]; leftPartnerRole?: string; rightPartnerRole?: string };
     const leftId = d.leftPartnerId ?? d.partnerIds?.[0];
@@ -94,7 +95,14 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
     if (rightId === id) return !d.rightPartnerRole;
     return false;
   });
-  const showAttentionBadge = hasSuggestions || hasUnknownRole;
+  const personData = nodeData as PersonNodeData;
+  const hasNoGender = !personData.gender;
+  const attentionReasons: string[] = [];
+  if (hasUnassignedRole) attentionReasons.push("Parent role unassigned");
+  if (hasNoGender) attentionReasons.push("No gender assigned");
+  if (hasSuggestions) attentionReasons.push("Has pending suggestions");
+  const showAttentionBadge = attentionReasons.length > 0;
+  const badgeTitle = attentionReasons.join("; ");
 
   const coordsOverlayClass =
     "absolute -top-1 right-0 translate-x-full px-1.5 py-1 text-xs font-mono text-dark-muted bg-dark-bg border border-dark-accent rounded shadow pointer-events-none z-40 whitespace-nowrap leading-tight";
@@ -105,7 +113,10 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
   const previewLabel = previewAnchor
     ? formatGenerationAnchorLabel(previewAnchor, genLabelMode)
     : "none";
-  const genInheritTitle = isGenImmune ? `Click to inherit anchor: ${previewLabel}` : undefined;
+  const genLockNote = nodeData.genAnchorLocked ? "Gen anchor locked" : null;
+  const genInheritTitle = isGenImmune
+    ? [genLockNote, `Click to inherit anchor: ${previewLabel}`].filter(Boolean).join("; ")
+    : genLockNote ?? undefined;
 
   const parentUnionEdges = edges.filter(
     (e) => e.target === id && (e.data as { type?: string })?.type === "child"
@@ -255,7 +266,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
 
   return (
     <div className="relative group" onPointerDown={handleRootPointerDown}>
-      {branchToolActive ? (
+      {!outOfActiveFamily && branchToolActive ? (
         <>
           <button
             type="button"
@@ -306,7 +317,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
             </svg>
           </button>
         </>
-      ) : (
+      ) : !outOfActiveFamily ? (
         <>
       <button
         type="button"
@@ -361,7 +372,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
         </svg>
       </button>
         </>
-      )}
+      ) : null}
 
       {/* Node info overlay: only when enabled */}
       {showNodeInfoEnabled && (nodeInfoTopLeft || nodeInfoCenter || nodeInfoSize) && (
@@ -408,7 +419,7 @@ function PersonNode({ id, data, selected, xPos, yPos }: NodeProps<PersonNodeData
         {showAttentionBadge && (
           <div
             className="absolute -top-0.5 -right-0.5 w-4 h-4 flex items-center justify-center rounded-full bg-amber-500/90 text-amber-950 text-[10px] font-bold border border-amber-400 shadow-sm pointer-events-none"
-            title={hasSuggestions ? "Has pending suggestions" : "Role not set"}
+            title={badgeTitle}
           >
             !
           </div>

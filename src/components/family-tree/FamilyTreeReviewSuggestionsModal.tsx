@@ -37,7 +37,9 @@ export default function FamilyTreeReviewSuggestionsModal({
           s.field === "genConflict" ||
           s.field === "unassigned" ||
           s.field === "noGen" ||
-          s.field === "mainGraph"
+          s.field === "mainGraph" ||
+          s.field === "unassignedRole" ||
+          s.field === "noGender"
             ? -1
             : i
         )
@@ -76,7 +78,9 @@ export default function FamilyTreeReviewSuggestionsModal({
     s.field === "genConflict" ||
     s.field === "unassigned" ||
     s.field === "noGen" ||
-    s.field === "mainGraph";
+    s.field === "mainGraph" ||
+    s.field === "unassignedRole" ||
+    s.field === "noGender";
 
   const getEffectiveProposed = (s: NameRoleSuggestion, idx: number): string => {
     const r = resolvedValues.get(idx);
@@ -154,7 +158,7 @@ export default function FamilyTreeReviewSuggestionsModal({
                         type="checkbox"
                         checked={checked.has(idx)}
                         onChange={() => toggle(idx)}
-                        className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50 mt-0.5"
+                        className="themed-checkbox mt-0.5"
                       />
                     )}
                   </td>

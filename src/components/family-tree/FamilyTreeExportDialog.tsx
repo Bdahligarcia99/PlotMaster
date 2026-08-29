@@ -145,7 +145,7 @@ export default function FamilyTreeExportDialog({
                 name="layoutMode"
                 checked={exportOptions.layoutMode === "currentView"}
                 onChange={() => setExportOptions({ layoutMode: "currentView" })}
-                className="border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                className="themed-radio"
               />
               <span className="text-sm text-dark-text">Current view</span>
             </label>
@@ -155,7 +155,7 @@ export default function FamilyTreeExportDialog({
                 name="layoutMode"
                 checked={exportOptions.layoutMode === "cleanLayout"}
                 onChange={() => setExportOptions({ layoutMode: "cleanLayout" })}
-                className="border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                className="themed-radio"
               />
               <span className="text-sm text-dark-text">Clean layout</span>
             </label>
@@ -170,7 +170,7 @@ export default function FamilyTreeExportDialog({
               onChange={(e) =>
                 setExportOptions({ includeNotes: e.target.checked })
               }
-              className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+              className="themed-checkbox"
             />
             <span className="text-sm text-dark-text">Include notes</span>
           </label>
@@ -180,7 +180,7 @@ export default function FamilyTreeExportDialog({
               checked={false}
               disabled
               readOnly
-              className="rounded border-dark-accent bg-dark-bg text-blue-500"
+              className="themed-checkbox"
             />
             <span className="text-sm text-dark-muted">
               Include legend
@@ -194,7 +194,7 @@ export default function FamilyTreeExportDialog({
               onChange={(e) =>
                 setExportOptions({ showGenerationBands: e.target.checked })
               }
-              className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+              className="themed-checkbox"
             />
             <span className="text-sm text-dark-text">Show generation bands</span>
           </label>

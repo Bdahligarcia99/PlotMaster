@@ -128,6 +128,8 @@ Person _abc123 {
   last: "Doe"
   nicknames: "Bud, Buddy"
   notes: ""
+  gender: "female"
+  genLock: true
   gen: 0
   x: 1424
   y: 512
@@ -182,6 +184,8 @@ Person <nodeId> {
   notes: "<escaped>"
   gen: <N>              # optional; 0-based index into generation-anchor list
   anchored: true       # optional; person stays fixed during union group drag
+  gender: "<label>"    # optional; built-in (male/female/other) or custom
+  genLock: true        # optional; locks gen anchor against position-driven changes
   x: <number | ?>       # `?` = unset / click-to-place pending
   y: <number | ?>
   cx: <number>           # optional node-info overlay when enabled
@@ -206,13 +210,18 @@ Union <unionId> {
   Person <id> type: father
   Person <id> type: mother
   Person <id> type: parent             # partner slot with role not yet known
+  Person <id> type: guardian           # built-in or custom partner role
+  Person <id> type: "Step Mother"       # quoted when label is not a bare identifier
   Person <id> type: child { dx: <n>, dy: <n> }
+  Person <id> type: child { x': <n>, y': <n>, role: son }
+  Person <id> type: child { x': <n>, y': <n>, role: "Custom Role" }
   notes: "<escaped>"
 }
 ```
 
-- Partner slots come from the first `father` / `mother` / `parent` members in order; remaining `parent` members beyond two and all `child` members become child edges.
-- `type:` is one of `father | mother | parent | child`.
+- Partner slots come from the first non-`child` members in order; `type: parent` means unassigned role. All `child` members become child edges.
+- `type:` is `parent` (unassigned), `child` (structural child edge), a built-in role id (`father`, `mother`, `unknown`, `guardian`, `stepmother`, `stepfather`), a custom role label, or a quoted string for labels with spaces.
+- Child members may include an optional `role:` inside the `{ ... }` block (e.g. `son`, `daughter`, `adoptive_son`, or a custom label). This is stored on the child edge, separate from the structural `type: child`.
 - Union `x`/`y` are absolute canvas coordinates. Member `dx`/`dy` are relative to the union origin (union position = `0,0`). Parser also accepts `x'`/`y'` as aliases for `dx`/`dy`.
 - Member `dx`/`dy` are only emitted when a person's absolute position differs from the default layout slot for that role.
 - A union with `x: ?` forces every member person to unset coordinates too.
