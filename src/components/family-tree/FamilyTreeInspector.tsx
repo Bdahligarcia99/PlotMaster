@@ -1481,6 +1481,22 @@ export default function FamilyTreeInspector() {
                 </>
               );
             })()}
+            <label className="flex items-center gap-2 text-dark-muted text-sm cursor-pointer mt-2">
+              <input
+                type="checkbox"
+                checked={!!(nodeData as PersonNodeData).genAnchorLocked}
+                disabled={(() => {
+                  const pd = nodeData as PersonNodeData;
+                  const h = nodeSizesById[selectedNode.id]?.height ?? DEFAULT_PERSON_H;
+                  const centerY = selectedNode.position.y + h / 2;
+                  const inherited = getAnchorAtY(generationAnchors, centerY);
+                  return !(pd.genAnchorId ?? inherited?.id);
+                })()}
+                onChange={(e) => setPersonGenAnchorLocked(selectedNode.id, e.target.checked)}
+                className="themed-checkbox"
+              />
+              Lock Gen Anchor
+            </label>
           </div>
           <div className="mb-4">
             <label className="block text-dark-muted text-sm mb-2">Gender</label>
@@ -1491,22 +1507,6 @@ export default function FamilyTreeInspector() {
               addCustomGender={addCustomGender}
             />
           </div>
-          <label className="flex items-center gap-2 text-dark-muted text-sm cursor-pointer mb-4">
-            <input
-              type="checkbox"
-              checked={!!(nodeData as PersonNodeData).genAnchorLocked}
-              disabled={(() => {
-                const pd = nodeData as PersonNodeData;
-                const h = nodeSizesById[selectedNode.id]?.height ?? DEFAULT_PERSON_H;
-                const centerY = selectedNode.position.y + h / 2;
-                const inherited = getAnchorAtY(generationAnchors, centerY);
-                return !(pd.genAnchorId ?? inherited?.id);
-              })()}
-              onChange={(e) => setPersonGenAnchorLocked(selectedNode.id, e.target.checked)}
-              className="themed-checkbox"
-            />
-            Lock Gen Anchor
-          </label>
           {(() => {
             const partnerUnions = getParentUnionsForPerson(selectedNode.id, nodes, edges);
             const childUnions = getChildUnionsForPerson(selectedNode.id, nodes, edges);
