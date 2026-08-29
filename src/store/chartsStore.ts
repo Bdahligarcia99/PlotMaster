@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { instrument } from "../logging/instrumentStore";
 import {
   isFileBackedProject,
   loadModulePayloadFromFile,
@@ -1074,7 +1075,7 @@ export function generateChartsScript(
 }
 
 export const useChartsStore = create<ChartsStore>(
-  (set, get) => ({
+  instrument("charts", (set, get) => ({
     activeProjectId: null,
     characters: [],
     selectedCharacterId: null,
@@ -2359,5 +2360,5 @@ export const useChartsStore = create<ChartsStore>(
         ...(s.activeProjectId !== projectId ? { activeProjectId: projectId } : {}),
       });
     },
-  })
+  }))
 );

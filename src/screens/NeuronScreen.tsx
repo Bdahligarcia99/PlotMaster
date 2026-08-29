@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import TopBar from "../components/ui/TopBar";
@@ -21,9 +21,13 @@ import NeuronEditorWorkspace, {
 } from "../components/neuron/NeuronEditorWorkspace";
 import NeuronInspector, { type NeuronSelectionTarget } from "../components/neuron/NeuronInspector";
 import NeuronSaveControls from "../components/neuron/NeuronSaveControls";
+import NeuronLogPane from "../components/neuron/NeuronLogPane";
 import { DEFAULT_BEAT_TEXT_SCALE_PERCENT } from "../store/timelineTypes";
+import { bindLogPersistence } from "../logging/logPersistence";
 
 const UNIFORM_PANE_WIDTH_DEFAULT_PX = 420;
+const LOG_MIN_H = 160;
+const LOG_MAX_H = 520;
 
 export default function NeuronScreen() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -60,6 +64,10 @@ export default function NeuronScreen() {
   const [unifiedTextScalePercent, setUnifiedTextScalePercent] = useState(
     DEFAULT_BEAT_TEXT_SCALE_PERCENT
   );
+  const [logPaneOpen, setLogPaneOpen] = useState(true);
+  const [logHeight, setLogHeight] = useState(240);
+  const logDragStart = useRef<number | null>(null);
+  const logStartHeight = useRef(240);
 
   const ownerContext = useMemo(() => {
     if (!projectId) return null;
@@ -103,11 +111,46 @@ export default function NeuronScreen() {
   }, [projectId, loadProject, findOwnerProjectId, updateLastOpened]);
 
   useEffect(() => {
+    bindLogPersistence(projectId ?? null);
+    return () => bindLogPersistence(null);
+  }, [projectId]);
+
+  useEffect(() => {
     void loadMirrors();
     const onFocus = () => void loadMirrors();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [loadMirrors]);
+
+  const handleLogPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    logDragStart.current = e.clientY;
+    logStartHeight.current = logHeight;
+    document.body.style.userSelect = "none";
+  }, [logHeight]);
+
+  useEffect(() => {
+    const handlePointerMove = (e: PointerEvent) => {
+      if (logDragStart.current === null) return;
+      const deltaY = e.clientY - logDragStart.current;
+      const maxH = Math.min(LOG_MAX_H, window.innerHeight * 0.45);
+      const next = Math.max(LOG_MIN_H, Math.min(maxH, logStartHeight.current - deltaY));
+      setLogHeight(next);
+    };
+    const handlePointerUp = () => {
+      logDragStart.current = null;
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+      document.body.style.userSelect = "";
+    };
+  }, []);
 
   const openPane = useCallback(
     (ref: NeuronPaneRef) => {
@@ -282,6 +325,17 @@ export default function NeuronScreen() {
             <NeuronSaveControls />
             <div className="h-4 w-px bg-dark-accent" />
             <button
+              onClick={() => setLogPaneOpen((v) => !v)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                logPaneOpen
+                  ? "bg-dark-accent border-dark-accent text-dark-text"
+                  : "border-dark-accent text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
+              }`}
+              title={logPaneOpen ? "Hide Log" : "Show Log"}
+            >
+              Log
+            </button>
+            <button
               onClick={() => setLeftSidebarOpen((v) => !v)}
               className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
                 leftSidebarOpen
@@ -313,6 +367,7 @@ export default function NeuronScreen() {
         }
       />
 
+      <div className="flex flex-1 min-h-0 flex-col">
       <div className="flex flex-1 min-h-0">
         {leftSidebarOpen && (
           <div style={{ width: entitiesWidth }} className="shrink-0 min-h-0 flex flex-col">
@@ -359,6 +414,35 @@ export default function NeuronScreen() {
             <NeuronInspector selection={inspectorSelection} />
           </div>
         )}
+      </div>
+
+      {logPaneOpen && (
+        <div
+          className="flex-shrink-0 flex flex-col overflow-hidden"
+          style={{ height: logHeight }}
+        >
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            onPointerDown={handleLogPointerDown}
+            className="h-2 flex-shrink-0 cursor-row-resize flex items-center justify-center group border-t border-dark-accent/50 hover:border-dark-accent/80 transition-colors select-none"
+          >
+            <div className="h-0.5 w-full min-w-[80px] bg-dark-accent/50 group-hover:bg-dark-accent transition-colors" />
+          </div>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <NeuronLogPane />
+          </div>
+        </div>
+      )}
+      {!logPaneOpen && (
+        <button
+          onClick={() => setLogPaneOpen(true)}
+          className="h-6 flex-shrink-0 bg-dark-accent/50 hover:bg-dark-accent border-t border-dark-accent flex items-center justify-center text-dark-muted hover:text-dark-text text-xs transition-colors"
+          title="Show Log"
+        >
+          Log
+        </button>
+      )}
       </div>
     </div>
   );

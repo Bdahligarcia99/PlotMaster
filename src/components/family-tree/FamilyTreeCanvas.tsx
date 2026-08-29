@@ -43,6 +43,7 @@ import {
   computeBranchMemberIds,
   getBranchExcludedNodeIds,
 } from "../../store/familyTreeStore";
+import { logManualEvent } from "../../logging/instrumentStore";
 import PersonNode from "./PersonNode";
 import UnionNode from "./UnionNode";
 import GenerationAnchorsOverlay from "./GenerationAnchorsOverlay";
@@ -678,6 +679,36 @@ export default function FamilyTreeCanvas({
       _: React.MouseEvent,
       node: { id: string; position: { x: number; y: number }; data: { kind?: string; isGenArmed?: boolean; genAnchorId?: string | null; name?: string } }
     ) => {
+      const state = useFamilyTreeStore.getState();
+      const moveIds = new Set<string>();
+      for (const id of dragStartRef.current.keys()) moveIds.add(id);
+      const group = unionDragGroupRef.current;
+      if (group) {
+        for (const id of Object.keys(group.startPositions)) moveIds.add(id);
+      }
+      const moves: { id: string; from: { x: number; y: number }; to: { x: number; y: number } }[] = [];
+      for (const id of moveIds) {
+        const start =
+          dragStartRef.current.get(id) ??
+          group?.startPositions[id];
+        if (!start) continue;
+        const current = state.nodes.find((n) => n.id === id);
+        if (!current) continue;
+        if (start.x === current.position.x && start.y === current.position.y) continue;
+        moves.push({
+          id,
+          from: start,
+          to: { x: current.position.x, y: current.position.y },
+        });
+      }
+      if (moves.length > 0) {
+        logManualEvent("familyTree", "node.moved", {
+          category: "layout",
+          detail: `${moves.length} node(s) moved`,
+          payload: { moves: moves.slice(0, 20), count: moves.length },
+        });
+      }
+
       unionDragGroupRef.current = null;
       if (foreignNodeIds.has(node.id)) return;
       if (node.data?.kind !== "person") return;

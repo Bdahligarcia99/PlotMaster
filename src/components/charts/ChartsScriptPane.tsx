@@ -5,6 +5,10 @@ import {
   generateChartsScript,
 } from "../../store/chartsStore";
 import { parseChartsScript } from "../../parseChartsScript";
+import ScriptPaneHeader, { type ScriptPaneView } from "../ui/ScriptPaneHeader";
+import LogFeedView from "../logging/LogFeedView";
+import { formatLogForCopy } from "../../logging/formatLog";
+import { getFilteredEvents, useActionLogStore } from "../../logging/actionLog";
 
 const INDENT = "  ";
 
@@ -77,12 +81,18 @@ export default function ChartsScriptPane() {
     (s) => s.createLayoutDraftBuiltinDataTypes
   );
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<ScriptPaneView>("code");
   const [compactDeclarations, setCompactDeclarations] = useState(false);
   const [editorContent, setEditorContent] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [runSuccess, setRunSuccess] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const logEvents = useActionLogStore((s) => s.events);
+  const logVerbose = useActionLogStore((s) => s.verbose);
+  const logCategoryFilter = useActionLogStore((s) => s.categoryFilter);
+  const logSearchQuery = useActionLogStore((s) => s.searchQuery);
 
   const activeChartDoc = selectedCharacterId
     ? getDocumentForCharacter(selectedCharacterId)
@@ -129,7 +139,17 @@ export default function ChartsScriptPane() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(editorContent);
+      const text =
+        view === "log"
+          ? formatLogForCopy(
+              getFilteredEvents(logEvents, {
+                verbose: logVerbose,
+                categoryFilter: logCategoryFilter,
+                searchQuery: logSearchQuery,
+              })
+            )
+          : editorContent;
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -275,45 +295,47 @@ export default function ChartsScriptPane() {
 
   return (
     <div className="h-full flex flex-col border-t border-dark-accent/50 bg-dark-surface">
-      <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 border-b border-dark-accent/50 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">
-            Script
-          </span>
-          <span className="text-dark-accent/50">|</span>
-          <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">
-            Code
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {hasWorkingMode && (
+      <ScriptPaneHeader
+        view={view}
+        onViewChange={setView}
+        actionsSlot={
+          <>
+            {view === "code" && hasWorkingMode && (
+              <button
+                type="button"
+                onClick={handleRun}
+                className="px-2 py-1 text-xs rounded border border-green-500/50 bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
+                title="Apply script (Ctrl/Cmd+Enter)"
+              >
+                {runSuccess ? "Applied!" : "Run"}
+              </button>
+            )}
+            {view === "code" && (
+              <label className="flex items-center gap-1.5 text-xs text-dark-muted cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={compactDeclarations}
+                  onChange={(e) => setCompactDeclarations(e.target.checked)}
+                  className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
+                />
+                <span>Compact</span>
+              </label>
+            )}
             <button
               type="button"
-              onClick={handleRun}
-              className="px-2 py-1 text-xs rounded border border-green-500/50 bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
-              title="Apply script (Ctrl/Cmd+Enter)"
+              onClick={handleCopy}
+              className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent transition-colors"
             >
-              {runSuccess ? "Applied!" : "Run"}
+              {copied ? "Copied!" : "Copy"}
             </button>
-          )}
-          <label className="flex items-center gap-1.5 text-xs text-dark-muted cursor-pointer">
-            <input
-              type="checkbox"
-              checked={compactDeclarations}
-              onChange={(e) => setCompactDeclarations(e.target.checked)}
-              className="rounded border-dark-accent bg-dark-bg text-blue-500 focus:ring-blue-500/50"
-            />
-            <span>Compact</span>
-          </label>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="text-xs text-dark-muted hover:text-dark-text px-2 py-1 rounded border border-dark-accent/50 hover:border-dark-accent transition-colors"
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
+          </>
+        }
+      />
+      {view === "log" ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <LogFeedView />
         </div>
-      </div>
+      ) : (
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
         {parseError && (
           <div className="px-3 py-2 bg-red-500/15 border-b border-red-500/30 shrink-0" role="alert">
@@ -340,6 +362,7 @@ export default function ChartsScriptPane() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

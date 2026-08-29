@@ -9,6 +9,11 @@ import ChartsScreen from "./screens/ChartsScreen";
 import IntroDialog from "./components/home/IntroDialog";
 import { useAppStore } from "./store/appStore";
 import { useIntroWindowSize } from "./hooks/useIntroWindowSize";
+import { installGlobalUiLogging, NavigationLogWatcher } from "./logging/uiEvents";
+import { initLogPersistenceSubscriber } from "./logging/logPersistence";
+
+installGlobalUiLogging();
+initLogPersistenceSubscriber();
 
 function WorkspaceRedirect() {
   const { id } = useParams<{ id: string }>();
@@ -28,6 +33,7 @@ export default function App() {
 
   return (
     <>
+      <NavigationLogWatcher />
       <Routes>
         <Route
           path="/"

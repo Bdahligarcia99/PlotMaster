@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { Node, Edge } from "reactflow";
+import { instrument } from "../logging/instrumentStore";
+import { logEvent } from "../logging/actionLog";
 import { getStorageDriver, type PersistedFamilyRecord } from "../storage/StorageDriver";
 import { parseFamilyTreeScript, computeBranchUnionIds } from "./familyTreeScript";
 import {
@@ -4068,7 +4070,7 @@ function ensureDefaultDocumentsImpl(
 
 export { previewFamilyDocumentDeleteCounts };
 
-export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
+export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree", (set, get) => ({
   nodes: [],
   edges: [],
   activeProjectId: null,
@@ -7167,7 +7169,7 @@ export const useFamilyTreeStore = create<FamilyTreeStore>((set, get) => ({
       driver.updateProjectMeta(pid, { updatedAt: Date.now() });
     }
   },
-}));
+})));
 
 useFamilyTreeStore.subscribe((state) => {
   const nodesOrEdgesChanged =
@@ -7250,7 +7252,16 @@ useFamilyTreeStore.subscribe((state) => {
     saveDebounce = setTimeout(() => {
       const s = useFamilyTreeStore.getState();
       if (s.autosaveEnabled && s.activeProjectId) {
-        void s.saveTree();
+        void s.saveTree().then((ok) => {
+          const after = useFamilyTreeStore.getState();
+          logEvent({
+            tier: "verbose",
+            category: "persistence",
+            module: "familyTree",
+            label: ok ? "autosave.ok" : "autosave.failed",
+            detail: ok ? undefined : after.lastSaveError ?? "save returned false",
+          });
+        });
       }
       saveDebounce = null;
     }, SAVE_DEBOUNCE_MS);

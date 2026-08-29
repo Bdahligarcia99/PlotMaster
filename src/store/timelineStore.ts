@@ -1,5 +1,6 @@
 import { arrayMove } from "@dnd-kit/sortable";
 import { create } from "zustand";
+import { instrument } from "../logging/instrumentStore";
 import {
   getStorageDriver,
   isTimelineProjectPayload,
@@ -524,7 +525,7 @@ interface TimelineStore {
   syncScriptDraftFromModel: () => string;
 }
 
-export const useTimelineStore = create<TimelineStore>((set, get) => ({
+export const useTimelineStore = create<TimelineStore>(instrument("timeline", (set, get) => ({
   activeProjectId: null,
   timelineOrientation: "vertical",
   displayMode: "block",
@@ -1628,7 +1629,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     set({ scriptDraft: text });
     return text;
   },
-}));
+})));
 
 let saveDebounce: ReturnType<typeof setTimeout> | null = null;
 let prevSnapshot = "";

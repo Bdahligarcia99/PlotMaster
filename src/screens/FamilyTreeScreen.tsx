@@ -32,6 +32,7 @@ import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
 import { DEFAULT_BEAT_TEXT_SCALE_PERCENT } from "../store/timelineTypes";
+import { bindLogPersistence } from "../logging/logPersistence";
 
 type FileDeleteConfirm = {
   docId: string;
@@ -341,6 +342,11 @@ export default function FamilyTreeScreen() {
         setProjectName(p?.name ?? "Family Tree");
       });
   }, [projectId, loadTree]);
+
+  useEffect(() => {
+    bindLogPersistence(projectId ?? null);
+    return () => bindLogPersistence(null);
+  }, [projectId]);
 
   const handleStartEditName = () => {
     setEditNameValue(projectName);

@@ -9,6 +9,10 @@ import {
   useTimelineStore,
 } from "../../store/timelineStore";
 import type { TextEditorDrafts } from "./TimelineTextEditorWorkspace";
+import ScriptPaneHeader, { type ScriptPaneView } from "../ui/ScriptPaneHeader";
+import LogFeedView from "../logging/LogFeedView";
+import { formatLogForCopy } from "../../logging/formatLog";
+import { getFilteredEvents, useActionLogStore } from "../../logging/actionLog";
 
 interface TimelineScriptPaneProps {
   drafts: TextEditorDrafts;
@@ -58,7 +62,13 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
   const connections = useTimelineStore((s) => s.connections);
 
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<ScriptPaneView>("code");
   const editorRefs = useRef<Map<string, BeatDocumentEditorHandle | null>>(new Map());
+
+  const logEvents = useActionLogStore((s) => s.events);
+  const logVerbose = useActionLogStore((s) => s.verbose);
+  const logCategoryFilter = useActionLogStore((s) => s.categoryFilter);
+  const logSearchQuery = useActionLogStore((s) => s.searchQuery);
 
   const folderScoped = folders.length > 0;
   const folderDocs = useMemo(
@@ -105,8 +115,17 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
 
   const handleCopy = async () => {
     try {
-      const combined = folderDocs.map((d) => getDocContent(d.id)).join("\n\n");
-      await navigator.clipboard.writeText(combined);
+      const text =
+        view === "log"
+          ? formatLogForCopy(
+              getFilteredEvents(logEvents, {
+                verbose: logVerbose,
+                categoryFilter: logCategoryFilter,
+                searchQuery: logSearchQuery,
+              })
+            )
+          : folderDocs.map((d) => getDocContent(d.id)).join("\n\n");
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -116,13 +135,10 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
 
   return (
     <div className="h-full flex flex-col border-t border-dark-accent/50 bg-dark-surface">
-      <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 border-b border-dark-accent/50 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Script</span>
-          <span className="text-dark-accent/50">|</span>
-          <span className="text-xs font-medium text-dark-muted uppercase tracking-wide">Code</span>
-        </div>
-        <div className="flex items-center gap-2">
+      <ScriptPaneHeader
+        view={view}
+        onViewChange={setView}
+        actionsSlot={
           <button
             type="button"
             onClick={handleCopy}
@@ -130,8 +146,13 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
           >
             {copied ? "Copied!" : "Copy"}
           </button>
+        }
+      />
+      {view === "log" ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <LogFeedView />
         </div>
-      </div>
+      ) : (
       <div className="flex-1 min-h-0 overflow-auto">
         {folderDocs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-dark-muted text-sm px-4 text-center">
@@ -164,6 +185,7 @@ export default function TimelineScriptPane({ drafts, onDraftsChange }: TimelineS
           })
         )}
       </div>
+      )}
     </div>
   );
 }

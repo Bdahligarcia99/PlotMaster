@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { instrument } from "../logging/instrumentStore";
 import { getStorageDriver } from "../storage/StorageDriver";
 
 const APP_STORAGE_KEY = "synapse-iwe:app";
@@ -114,7 +115,7 @@ function saveToStorage(modularProjects: Project[], standaloneProjects: Standalon
 
 const initialState = loadFromStorage();
 
-export const useAppStore = create<AppStore>((set, get) => ({
+export const useAppStore = create<AppStore>(instrument("app", (set, get) => ({
   modularProjects: initialState.modularProjects,
   standaloneProjects: initialState.standaloneProjects,
   introDialogOpen: false,
@@ -266,4 +267,4 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     return null;
   },
-}));
+})));

@@ -24,6 +24,7 @@ import { useAppStore } from "../store/appStore";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { getStorageDriver } from "../storage/StorageDriver";
 import { DEFAULT_BEAT_TEXT_SCALE_PERCENT } from "../store/timelineTypes";
+import { bindLogPersistence } from "../logging/logPersistence";
 
 const ENTITIES_MIN_W = 220;
 const ENTITIES_MAX_W = 520;
@@ -285,6 +286,11 @@ export default function TimelineScreen() {
         setProjectName(p?.name ?? "Timeline Outliner");
       });
   }, [projectId, loadTimeline]);
+
+  useEffect(() => {
+    bindLogPersistence(projectId ?? null);
+    return () => bindLogPersistence(null);
+  }, [projectId]);
 
   const handleSaveName = async () => {
     const trimmed = editNameValue.trim();

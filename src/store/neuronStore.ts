@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { instrument } from "../logging/instrumentStore";
 import { getStorageDriver } from "../storage/StorageDriver";
 import type {
   NeuronDocumentRecord,
@@ -94,7 +95,7 @@ function nextSortOrder(items: { sortOrder: number }[]): number {
   return Math.max(...items.map((i) => i.sortOrder)) + 1;
 }
 
-export const useNeuronStore = create<NeuronStore>((set, get) => ({
+export const useNeuronStore = create<NeuronStore>(instrument("neuron", (set, get) => ({
   activeProjectId: null,
   projectName: "Untitled",
   ownerProjectId: null,
@@ -342,7 +343,7 @@ export const useNeuronStore = create<NeuronStore>((set, get) => ({
   getMirrorMeta: (mirrorKey) => {
     return get().mirrorMeta[mirrorKey] ?? {};
   },
-}));
+})));
 
 export { sortByOrder };
 

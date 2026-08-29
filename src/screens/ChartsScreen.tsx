@@ -26,6 +26,7 @@ import { useChartsStore } from "../store/chartsStore";
 import type { ChartsEntryKind } from "../store/chartsDocumentHelpers";
 import { isTauri, openOrFocusIntroWindow } from "../tauri/openProjectInNewWindow";
 import { DEFAULT_BEAT_TEXT_SCALE_PERCENT } from "../store/timelineTypes";
+import { bindLogPersistence } from "../logging/logPersistence";
 
 export default function ChartsScreen() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -81,6 +82,11 @@ export default function ChartsScreen() {
     }
     return () => setActiveProject(null);
   }, [projectId, setActiveProject, updateLastOpened]);
+
+  useEffect(() => {
+    bindLogPersistence(projectId ?? null);
+    return () => bindLogPersistence(null);
+  }, [projectId]);
 
   useEffect(() => {
     if (project?.name) setProjectName(project.name);

@@ -40,3 +40,98 @@ This feature allows a user to quickly create a union with all its members.
 If Full Union is selected the union button in tool bar is not greyed out when two person nodes are not selected.
 If Backward or Forward Union is selected the button remains greyed out as usual until two person nodes are selected.
 
+I’d like to make some adjustments to the inspector. The layouts for parents and children are both too different. I want them to be more identical.
+
+The inspector tells you what type of node you are looking at: 
+INSPECTOR - UNION 
+INSPECTOR - PERSON 
+Etc.
+It should also show the name of the node from the First Name field for persons and name field for unions:
+INSPECTOR - UNION 1 (UNION)
+INSPECTOR - PERSON 1 (PERSON)
+Node types are in the ()
+
+I want the UI for child to look the same as the parent UI namely:
+The 
+“Partner”
+“Role with person n”
+And
+“Children”
+area is inside a bounding box whereas the 
+“Parents”
+“Siblings” area is not inside a bounding box in the child UI.
+Also, move the “Role with person n” and its dropdown under the gender drop down in the parent UI. 
+The child UI, instead of having a “Role with person n” dropdown, it should have a Child Role drop down. The child roles in the dropdown should be Son, Daughter, Child (gender neutral term for child), Adoptive Son, Adoptive Daughter, Adoptive Child, Custom…
+
+The gen anchor field  is currently a dropdown that lets users assign a different anchor gen to it. Do not allow this anymore, it should be purely a status indicator. Remove dropdown. Person nodes must be physically moved to inherit a new anchor, unless “Lock Gen Anchor” is enabled. 
+
+Union Creation and Parental / Gender Assignment Features:
+
+Add New Parental Roles to Parental List Drop Down In Inspector and “Full Union” advanced UI: Stepparent, Adoptive Mother, Adoptive Father, Parent (gender neutral term assigned to “other” gender or non mother father parental role), Nanny
+Change Mother to Biological Mother
+Change Father to Biological Father
+
+Advanced options and simple options for “Full Union”
+Simple options - the “Full Union” options will appear as they do now 
+1 check boxes for mother and father, auto assign their parental roles and respective genders mother = female, father = male
+2 children - 0 + control
+
+Advanced options will be under an advanced options button that, when clicked, opens a new UI window with the following options:
+
+
+
+“Parent 1” [Parental role dropdown from inspector] [Gender dropdown from inspector]
+“Parent 2” [Parental role dropdown from inspector] [Gender dropdown from inspector]
+“+” Add New Parent - unions should now be able to have more than two parents. Clicking this option adds Parent 3, Parent 4 etc with parental role dropdown. 
+Check box “Auto Assign Missing Partner” - you can select a node on the canvas and then click “+Union”, when “Full Union” is enabled, to fill in the missing partner. If the canvas node is Biological Mother, the new partner becomes Biological Father. Stepmother and stepfather do not receive this treatment.
+Stepmother, Stepfather, Mother, and Father auto receive their respective genders. 
+If the “Auto assign missing partner” check box is not selected, the new partner is simply unassigned. 
+Child 1 [child role][Gender] - 
+Child 2 [child role][Gender] - 
+“+” Add New Child - replaces the - 0 + control in the advanced options UI. 
+(Users can select one of the already existing child n or parent n entries and the “+” option turns to “-“ for deletion)
+
+Tweaks: (Family tree module features)
+Flexible roles, genders, warnings, and scoped Clear
+1
+The “Clear” button in the tool bar clears everything all nodes and families. Make it so that it only clears one tab’s nodes, but not that tab itself. Also, add a warning when clicking 
+“Eradication Warning
+This will erase all [currently selected family tab name]’s union and person nodes. Proceed?
+[Cancel] [Confirm]
+2a (Inspector panel)
+Do not auto assign father and mother roles to nodes anymore. always use unassigned instead. 
+2b
+Permit unions to have two fathers or two mothers or two of any parental role. 
+2c
+Add new parental roles. Right now we have father, mother, and unassigned. Add Unknown, Guardian, Stepmother, Stepfather as new types.
+If unknown is used, Unknown is auto assigned to First name field, other name fields get disabled.
+2d
+If parental nodes have unassigned, add this as a warning in “Review Nodes” and warning triangle tool tips.
+3
+Nodes get renamed to unknown when naming a mother to a father or vice versa. Do not use unknown as a name unless unknown type is selected (2c). Again, allow parent assignment to be more flexible to allow a mix of all roles, even repeated roles (tow mothers , two fathers). 
+4
+When clicking a name field in the inspector First Name, Middle name, Last name, etc it auto selects the text in the field to change it as requested, but only when First name reads “Person n” or any name field has a “?”
+5
+Give all children nodes a Guardian parental assignment toggle.
+6
+Give all person nodes parent or child, a gender assignment dropdown as well: male, female, other.
+7
+Give gender assignment and parental assignment options a “custom” option so users can make their own roles if needed.
+8
+If no gender is assigned, give a warning in “Review Nodes” area.
+9
+Be sure to update the person functions in the script to contain the new field data.
+
+1
+There are some check marks in the tool bar that do not adhere to the apps color palette, please fix that. 
+Some of the warning pop ups also need to have their check boxes adhere to the color palette. 
+2
+The app should not all user to interact with person nodes from a different family.
+Example: if family 1 is the active family , family 2’s person nodes are dimmed. Family 2’s node should not be moveable if family 1 is the active tab. 
+
+
+2c
+Selecting a person node (parent or child) on the canvas and clicking “+Union” when “Full Union” is enabled will use that node as one of the parents. The partner will take on whatever role is needed (if selected union from the canvas was a mother , the new partner is assigned father and vice versa)
+Remember that users can select if a union should include mother and father in Full Union settings. 
+If only mother is check marked but the person node originally selected from the canvas is also a mother, override assignment to assign father instead.
+If neither mother nor father is check marked in Full Union settings (yes, this should be allowed) then do not assign another partner to the union. Just keep the selected person node from the canvas as the only parent.

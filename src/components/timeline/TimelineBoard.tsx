@@ -18,6 +18,7 @@ import {
 } from "@dnd-kit/sortable";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { logManualEvent } from "../../logging/instrumentStore";
 import LaneColumn from "./LaneColumn";
 import LaneGateCell, { laneGateSortableId } from "./LaneGateCell";
 import BeatBlock from "./BeatBlock";
@@ -747,8 +748,22 @@ export default function TimelineBoard({
           moveBeatsGroup(
             previews.map((p) => ({ beatId: p.beatId, laneId: p.laneId, slot: p.slot }))
           );
+          logManualEvent("timeline", "beat.moved", {
+            category: "layout",
+            detail: `${previews.length} beat(s) moved (group)`,
+            payload: { previews: previews.slice(0, 15), count: previews.length },
+          });
         } else {
           moveBeat(target.beatId, target.targetLaneId, target.targetSlot);
+          logManualEvent("timeline", "beat.moved", {
+            category: "layout",
+            detail: `beat ${target.beatId} -> lane ${target.targetLaneId} slot ${target.targetSlot}`,
+            payload: {
+              beatId: target.beatId,
+              laneId: target.targetLaneId,
+              slot: target.targetSlot,
+            },
+          });
         }
         return;
       }
@@ -761,6 +776,11 @@ export default function TimelineBoard({
       const laneBeats = beats.filter((b) => b.laneId === fallbackLaneId && b.id !== beatId);
       const fallbackSlot = laneBeats.length === 0 ? 0 : Math.max(...laneBeats.map((b) => b.slot)) + 1;
       moveBeat(beatId, fallbackLaneId, fallbackSlot);
+      logManualEvent("timeline", "beat.moved", {
+        category: "layout",
+        detail: `beat ${beatId} -> lane ${fallbackLaneId} slot ${fallbackSlot}`,
+        payload: { beatId, laneId: fallbackLaneId, slot: fallbackSlot },
+      });
     },
     [beats, moveBeat, moveBeatsGroup, reorderLane, sortedLanes, resolveDragTarget, selectedBeatIds]
   );
