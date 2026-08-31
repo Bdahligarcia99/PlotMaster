@@ -4,13 +4,22 @@ import {
   DEFAULT_CONNECTION_STYLE,
   resolveUnionConnectionStyle,
   getEdgeConnectionStyleName,
+  getEdgeConnectionStyleNameWithoutRole,
   getEdgeForPersonAtUnion,
-  getUnionFamilyMemberIds,
+  getUnionPartners,
   getPersonDisplayName,
+  isChildEdge,
+  listRoleStyles,
+  scanRoleLinkCulprits,
+  isRoleStyleLinkable,
+  roleStyleKey,
   type ConnectionVisualStyle,
   type ConnectionStyleDef,
   type UnionNodeData,
   type PersonNodeData,
+  type FamilyTreeEdgeData,
+  type RoleLinkCulprit,
+  type RoleStyleEntry,
 } from "../../store/familyTreeStore";
 import Input from "../ui/Input";
 import ColorInput from "../ui/ColorInput";
@@ -19,6 +28,12 @@ import Button from "../ui/Button";
 import ConnectionIconPicker from "./ConnectionIconPicker";
 import { renderConnectionIcon } from "./connectionIconRegistry";
 import type { ConnectionIconRef } from "../../store/familyTreeStore";
+import {
+  PARENT_ROLE_LABELS,
+  CHILD_ROLE_LABELS,
+  GENDER_LABELS,
+} from "./roleSelects";
+import RoleStyleLinkWarningModal from "./RoleStyleLinkWarningModal";
 
 interface UnionConnectionStyleEditorProps {
   unionId: string;
@@ -27,6 +42,7 @@ interface UnionConnectionStyleEditorProps {
 
 type StyleDraft = {
   id?: string;
+  roleKey?: string;
   name: string;
   description?: string;
   stroke: string;
@@ -34,6 +50,32 @@ type StyleDraft = {
   dashPattern: number[];
   icon?: ConnectionIconRef;
 };
+
+type ConnectionEntry = {
+  personId: string;
+  name: string;
+  gender?: string;
+  role?: string;
+  roleKey?: string;
+  roleLabel: string;
+  edgeId?: string;
+  styleName: string;
+  underlyingStyleName: string;
+  hasOwnStyle: boolean;
+};
+
+function formatParentRoleLabel(role: string): string {
+  return PARENT_ROLE_LABELS[role] ?? role;
+}
+
+function formatChildRoleLabel(role: string): string {
+  return CHILD_ROLE_LABELS[role] ?? role;
+}
+
+function formatGenderLabel(gender?: string): string {
+  if (!gender?.trim()) return "—";
+  return GENDER_LABELS[gender] ?? gender;
+}
 
 export function StylePreviewLine({
   style,
@@ -91,6 +133,15 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
   const clearEdgeConnectionStyle = useFamilyTreeStore((s) => s.clearEdgeConnectionStyle);
   const connectionStyleEditorOffset = useFamilyTreeStore((s) => s.connectionStyleEditorOffset);
   const setConnectionStyleEditorOffset = useFamilyTreeStore((s) => s.setConnectionStyleEditorOffset);
+  const customParentRoles = useFamilyTreeStore((s) => s.customParentRoles);
+  const customChildRoles = useFamilyTreeStore((s) => s.customChildRoles);
+  const roleStyleOverrides = useFamilyTreeStore((s) => s.roleStyleOverrides);
+  const roleStyleLinks = useFamilyTreeStore((s) => s.roleStyleLinks);
+  const setRoleStyleOverride = useFamilyTreeStore((s) => s.setRoleStyleOverride);
+  const resetRoleStyle = useFamilyTreeStore((s) => s.resetRoleStyle);
+  const resetAllBuiltInRoleStyles = useFamilyTreeStore((s) => s.resetAllBuiltInRoleStyles);
+  const setRoleStyleLink = useFamilyTreeStore((s) => s.setRoleStyleLink);
+  const setUnionUseRoleStyles = useFamilyTreeStore((s) => s.setUnionUseRoleStyles);
 
   const unionNode = nodes.find((n) => n.id === unionId && (n.data as UnionNodeData).kind === "union");
   const unionData = unionNode?.data as UnionNodeData | undefined;
@@ -102,9 +153,12 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
 
   const [draft, setDraft] = useState<StyleDraft | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [libraryTab, setLibraryTab] = useState<"builtIn" | "userMade">("builtIn");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [activePersonIds, setActivePersonIds] = useState<Set<string>>(new Set());
   const [activeStyleId, setActiveStyleId] = useState<string | null>(null);
+  const [pendingRoleLink, setPendingRoleLink] = useState<{ key: string; label: string } | null>(null);
+  const [warningCulprits, setWarningCulprits] = useState<RoleLinkCulprit[]>([]);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const iconPickerBoxRef = useRef<HTMLDivElement>(null);
@@ -188,21 +242,106 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     setIconPickerOpen(false);
   }, [iconPickerOpen]);
 
-  const connectedMembers = useMemo(() => {
-    if (!unionData) return [];
-    return getUnionFamilyMemberIds(unionId, nodes, edges).map((personId) => {
-      const edge = getEdgeForPersonAtUnion(unionId, personId, edges);
+  const roleStyleCtx = useMemo(
+    () => ({ roleStyleLinks, roleStyleOverrides }),
+    [roleStyleLinks, roleStyleOverrides]
+  );
+
+  const roleStyleLists = useMemo(
+    () => listRoleStyles(customParentRoles, customChildRoles, roleStyleOverrides),
+    [customParentRoles, customChildRoles, roleStyleOverrides]
+  );
+
+  const buildConnectionEntry = useCallback(
+    (
+      personId: string,
+      role: string | undefined,
+      kind: "parent" | "child",
+      edge: ReturnType<typeof getEdgeForPersonAtUnion>
+    ): ConnectionEntry => {
       const personNode = nodes.find((n) => n.id === personId);
+      const personData = personNode?.data as PersonNodeData | undefined;
       const name = personNode
-        ? getPersonDisplayName(personNode.data as PersonNodeData, personId, nodes)
+        ? getPersonDisplayName(personData!, personId, nodes)
         : personId;
+      const roleKey = role ? roleStyleKey(kind, role) : undefined;
+      const roleLabel = role
+        ? kind === "parent"
+          ? formatParentRoleLabel(role)
+          : formatChildRoleLabel(role)
+        : "Unassigned";
       const styleName =
         edge && unionData
-          ? getEdgeConnectionStyleName(edge, unionData, connectionStyles)
+          ? getEdgeConnectionStyleName(edge, unionData, connectionStyles, roleStyleCtx)
           : "Default";
-      return { personId, name, edgeId: edge?.id, styleName };
+      const underlyingStyleName =
+        edge && unionData
+          ? getEdgeConnectionStyleNameWithoutRole(edge, unionData, connectionStyles)
+          : "Default";
+      const edgeData = edge?.data as FamilyTreeEdgeData | undefined;
+      const hasOwnStyle = !!(edgeData?.connectionStyleOverride || edgeData?.connectionStyleId);
+      return {
+        personId,
+        name,
+        gender: personData?.gender,
+        role,
+        roleKey,
+        roleLabel,
+        edgeId: edge?.id,
+        styleName,
+        underlyingStyleName,
+        hasOwnStyle,
+      };
+    },
+    [nodes, unionData, connectionStyles, roleStyleCtx]
+  );
+
+  const parentConnections = useMemo(() => {
+    if (!unionData) return [];
+    return getUnionPartners(unionData).map(({ personId, role }) => {
+      const edge = getEdgeForPersonAtUnion(unionId, personId, edges);
+      return buildConnectionEntry(personId, role, "parent", edge);
     });
-  }, [unionId, unionData, nodes, edges, connectionStyles]);
+  }, [unionData, unionId, edges, buildConnectionEntry]);
+
+  const childConnections = useMemo(() => {
+    if (!unionData) return [];
+    return edges
+      .filter((e) => e.source === unionId && isChildEdge(e))
+      .map((edge) => {
+        const personId = edge.target;
+        const childRole = (edge.data as FamilyTreeEdgeData | undefined)?.childRole;
+        return buildConnectionEntry(personId, childRole, "child", edge);
+      });
+  }, [unionData, unionId, edges, buildConnectionEntry]);
+
+  const attemptSetRoleLink = useCallback(
+    (key: string, label: string, on: boolean) => {
+      if (!on) {
+        setRoleStyleLink(key, false);
+        return;
+      }
+      const culprits = scanRoleLinkCulprits(key, nodes, edges, connectionStyles);
+      if (culprits.length === 0) {
+        setRoleStyleLink(key, true);
+        return;
+      }
+      setPendingRoleLink({ key, label });
+      setWarningCulprits(culprits);
+    },
+    [nodes, edges, connectionStyles, setRoleStyleLink]
+  );
+
+  const confirmRoleLink = useCallback(() => {
+    if (pendingRoleLink) setRoleStyleLink(pendingRoleLink.key, true);
+    setPendingRoleLink(null);
+    setWarningCulprits([]);
+  }, [pendingRoleLink, setRoleStyleLink]);
+
+  const cancelRoleLink = useCallback(() => {
+    setPendingRoleLink(null);
+    setWarningCulprits([]);
+  }, []);
 
   const applyStyleToPersons = useCallback(
     (styleId: string | undefined, personIds: string[]) => {
@@ -249,6 +388,22 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     });
   }, []);
 
+  const startEditRoleDraft = useCallback(
+    (entry: RoleStyleEntry) => {
+      setIconPickerOpen(false);
+      setDraft({
+        roleKey: entry.key,
+        name: entry.name,
+        description: entry.style.description ?? "",
+        stroke: entry.style.stroke,
+        strokeWidth: entry.style.strokeWidth,
+        dashPattern: [...entry.style.dashPattern],
+        icon: entry.style.icon,
+      });
+    },
+    []
+  );
+
   const startEditDraft = useCallback((style: ConnectionStyleDef) => {
     setIconPickerOpen(false);
     setDraft({
@@ -276,6 +431,12 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       dashPattern: [...draft.dashPattern],
       icon: draft.icon,
     };
+    if (draft.roleKey) {
+      setRoleStyleOverride(draft.roleKey, payload);
+      setIconPickerOpen(false);
+      setDraft(null);
+      return;
+    }
     if (draft.id) {
       updateConnectionStyle(draft.id, payload);
     } else {
@@ -299,6 +460,7 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     advancedOpen,
     activePersonIds,
     applyStyleToPersons,
+    setRoleStyleOverride,
   ]);
 
   const handleUseWithoutSaving = useCallback(() => {
@@ -342,6 +504,131 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
     }
   };
 
+  const useRoleStyles = !!unionData.useRoleStyles;
+
+  const renderRoleStyleRow = (entry: RoleStyleEntry, showReset: boolean) => (
+    <div
+      key={entry.key}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded border min-w-0 ${
+        entry.isLinkable ? "border-transparent hover:border-dark-accent hover:bg-dark-accent/30" : "opacity-50 border-transparent"
+      }`}
+    >
+      <StylePreviewLine style={entry.style} />
+      <span className="flex-1 text-xs truncate">{entry.name}</span>
+      {showReset && entry.isEdited && (
+        <button
+          type="button"
+          title="Reset to built-in"
+          onClick={() => resetRoleStyle(entry.key)}
+          className="text-[10px] text-dark-muted hover:text-dark-text px-1"
+        >
+          Reset
+        </button>
+      )}
+      <button
+        type="button"
+        title="Edit"
+        onClick={() => startEditRoleDraft(entry)}
+        className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+          />
+        </svg>
+      </button>
+    </div>
+  );
+
+  const renderConnectionRow = (entry: ConnectionEntry) => (
+    <div
+      key={entry.personId}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded border min-w-0 ${
+        activePersonIds.has(entry.personId)
+          ? "border-blue-500 bg-blue-500/10"
+          : "border-transparent hover:border-dark-accent hover:bg-dark-accent/20"
+      }`}
+    >
+      {useRoleStyles && entry.roleKey && (
+        <input
+          type="checkbox"
+          checked={!!roleStyleLinks[entry.roleKey]}
+          disabled={!isRoleStyleLinkable(entry.roleKey, roleStyleOverrides)}
+          title={
+            isRoleStyleLinkable(entry.roleKey, roleStyleOverrides)
+              ? "Link role style to all connections with this role"
+              : "Edit this role's style in the library before linking"
+          }
+          onChange={(e) =>
+            attemptSetRoleLink(entry.roleKey!, entry.roleLabel, e.target.checked)
+          }
+          onClick={(e) => e.stopPropagation()}
+          className="themed-checkbox flex-shrink-0"
+        />
+      )}
+      <button
+        type="button"
+        onClick={() => togglePerson(entry.personId)}
+        className="flex-1 min-w-0 text-left text-xs text-dark-text"
+        title="Click to select, then click a library style to apply"
+      >
+        <span className="block truncate font-medium">{entry.name}</span>
+        {useRoleStyles && entry.role && (
+          <span className="block truncate text-[10px] text-dark-muted">
+            {entry.roleLabel} · {formatGenderLabel(entry.gender)}
+          </span>
+        )}
+        {!useRoleStyles && (
+          <span className="block truncate text-[10px] text-dark-muted">
+            {formatGenderLabel(entry.gender)}
+            {entry.role ? ` · ${entry.roleLabel}` : ""}
+          </span>
+        )}
+      </button>
+      <span
+        className="text-[10px] text-dark-muted flex-shrink-0 max-w-[88px] truncate text-right"
+        title={
+          entry.styleName !== entry.underlyingStyleName
+            ? `Showing ${entry.styleName} (assigned: ${entry.underlyingStyleName})`
+            : entry.styleName
+        }
+      >
+        {entry.styleName}
+        {entry.styleName !== entry.underlyingStyleName && (
+          <span className="block text-[9px] opacity-70">({entry.underlyingStyleName})</span>
+        )}
+      </span>
+      {entry.edgeId && (
+        <select
+          value={
+            (() => {
+              const edge = edges.find((e) => e.id === entry.edgeId);
+              const edgeData = edge?.data as { connectionStyleId?: string } | undefined;
+              return edgeData?.connectionStyleId ?? "";
+            })()
+          }
+          onChange={(e) => {
+            const val = e.target.value;
+            if (!val) clearEdgeConnectionStyle(entry.edgeId!);
+            else setEdgeConnectionStyleId(entry.edgeId!, val);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="text-[10px] px-1 py-0.5 rounded bg-dark-bg border border-dark-accent text-dark-text max-w-[72px]"
+        >
+          <option value="">Default</option>
+          {connectionStyles.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+
   const leftColumn = (
     <>
       <div className="mb-3 flex items-center gap-2">
@@ -363,105 +650,163 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       )}
 
       <div className="mb-2">
-        <div className="text-xs text-dark-muted mb-1.5">Library</div>
-        <div className="max-h-36 overflow-y-auto nowheel space-y-1">
-          {connectionStyles.length === 0 && (
-            <div className="text-xs text-dark-muted px-1 py-2">No saved styles yet</div>
-          )}
-          {connectionStyles.map((style) => {
-            const isActive = advancedOpen
-              ? activeStyleId === style.id
-              : !hasOverride && activeStyleIdForUnion === style.id;
-            return (
-              <div
-                key={style.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleLibraryStyleClick(style.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    handleLibraryStyleClick(style.id);
-                  }
-                }}
-                className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer border ${
-                  isActive
-                    ? "border-blue-500 bg-blue-500/10"
-                    : "border-transparent hover:border-dark-accent hover:bg-dark-accent/30"
-                }`}
-              >
-                <StylePreviewLine style={style} />
-                <span className="flex-1 text-xs truncate">{style.name}</span>
-                <button
-                  type="button"
-                  title="Edit"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startEditDraft(style);
-                  }}
-                  className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                    />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  title="Duplicate"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    duplicateConnectionStyle(style.id);
-                  }}
-                  className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                    />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteConnectionStyle(style.id);
-                  }}
-                  className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-red-400 hover:bg-dark-accent/50"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
-              </div>
-            );
-          })}
+        <div className="flex gap-1 mb-2">
+          <button
+            type="button"
+            onClick={() => setLibraryTab("builtIn")}
+            className={`flex-1 py-1 text-[10px] rounded border ${
+              libraryTab === "builtIn"
+                ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                : "border-dark-accent text-dark-muted hover:text-dark-text"
+            }`}
+          >
+            Built-In
+          </button>
+          <button
+            type="button"
+            onClick={() => setLibraryTab("userMade")}
+            className={`flex-1 py-1 text-[10px] rounded border ${
+              libraryTab === "userMade"
+                ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                : "border-dark-accent text-dark-muted hover:text-dark-text"
+            }`}
+          >
+            User Made
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={startNewDraft}
-          className="mt-2 w-full px-2 py-1.5 text-xs rounded border border-dashed border-dark-accent text-dark-muted hover:text-dark-text hover:border-dark-muted"
-        >
-          + New Style
-        </button>
+        <div className="max-h-36 overflow-y-auto nowheel space-y-1">
+          {libraryTab === "builtIn" ? (
+            <>
+              <div className="text-[10px] text-dark-muted px-1 pt-1">Parents</div>
+              {roleStyleLists.parents
+                .filter((e) => e.isBuiltIn)
+                .map((entry) => renderRoleStyleRow(entry, true))}
+              <div className="text-[10px] text-dark-muted px-1 pt-2">Children</div>
+              {roleStyleLists.children
+                .filter((e) => e.isBuiltIn)
+                .map((entry) => renderRoleStyleRow(entry, true))}
+            </>
+          ) : (
+            <>
+              {connectionStyles.length === 0 &&
+                roleStyleLists.parents.filter((e) => !e.isBuiltIn).length === 0 &&
+                roleStyleLists.children.filter((e) => !e.isBuiltIn).length === 0 && (
+                  <div className="text-xs text-dark-muted px-1 py-2">No user styles yet</div>
+                )}
+              {connectionStyles.map((style) => {
+                const isActive = advancedOpen
+                  ? activeStyleId === style.id
+                  : !hasOverride && activeStyleIdForUnion === style.id;
+                return (
+                  <div
+                    key={style.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleLibraryStyleClick(style.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleLibraryStyleClick(style.id);
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer border ${
+                      isActive
+                        ? "border-blue-500 bg-blue-500/10"
+                        : "border-transparent hover:border-dark-accent hover:bg-dark-accent/30"
+                    }`}
+                  >
+                    <StylePreviewLine style={style} />
+                    <span className="flex-1 text-xs truncate">{style.name}</span>
+                    <button
+                      type="button"
+                      title="Edit"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startEditDraft(style);
+                      }}
+                      className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      title="Duplicate"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        duplicateConnectionStyle(style.id);
+                      }}
+                      className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-dark-text hover:bg-dark-accent/50"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      title="Delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteConnectionStyle(style.id);
+                      }}
+                      className="w-6 h-6 flex items-center justify-center rounded text-dark-muted hover:text-red-400 hover:bg-dark-accent/50"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                );
+              })}
+              {roleStyleLists.parents
+                .filter((e) => !e.isBuiltIn)
+                .map((entry) => renderRoleStyleRow(entry, false))}
+              {roleStyleLists.children
+                .filter((e) => !e.isBuiltIn)
+                .map((entry) => renderRoleStyleRow(entry, false))}
+            </>
+          )}
+        </div>
+        {libraryTab === "builtIn" ? (
+          <button
+            type="button"
+            onClick={() => resetAllBuiltInRoleStyles()}
+            className="mt-2 w-full px-2 py-1.5 text-xs rounded border border-dark-accent text-dark-muted hover:text-dark-text hover:border-dark-muted"
+          >
+            Reset all built-in styles
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={startNewDraft}
+            className="mt-2 w-full px-2 py-1.5 text-xs rounded border border-dashed border-dark-accent text-dark-muted hover:text-dark-text hover:border-dark-muted"
+          >
+            + New Style
+          </button>
+        )}
       </div>
 
       {draft && (
         <div className="mt-3 pt-3 border-t border-dark-accent">
-          <div className="text-xs text-dark-muted mb-2">{draft.id ? "Edit style" : "New style"}</div>
+          <div className="text-xs text-dark-muted mb-2">
+            {draft.roleKey ? "Edit role style" : draft.id ? "Edit style" : "New style"}
+          </div>
           <Input
             label="Name"
             value={draft.name}
@@ -597,11 +942,13 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
           </div>
           <div className="flex flex-wrap gap-2 mt-3">
             <Button type="button" onClick={handleSaveToLibrary} className="!py-1.5 !px-3 text-xs">
-              Save to Library
+              {draft.roleKey ? "Save role style" : "Save to Library"}
             </Button>
-            <Button type="button" onClick={handleUseWithoutSaving} className="!py-1.5 !px-3 text-xs">
-              Use without saving
-            </Button>
+            {!draft.roleKey && (
+              <Button type="button" onClick={handleUseWithoutSaving} className="!py-1.5 !px-3 text-xs">
+                Use without saving
+              </Button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -623,57 +970,24 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       {advancedOpen && (
         <>
           <div className="text-xs text-dark-muted mb-1.5">Union Connections</div>
-          {connectedMembers.length === 0 ? (
+          {parentConnections.length === 0 && childConnections.length === 0 ? (
             <div className="text-xs text-dark-muted px-1 py-2">No connected people</div>
           ) : (
             <div
-              className={`overflow-y-auto nowheel space-y-1 ${iconPickerOpen ? "max-h-40" : "max-h-64"}`}
+              className={`overflow-y-auto nowheel space-y-2 ${iconPickerOpen ? "max-h-40" : "max-h-64"}`}
             >
-              {connectedMembers.map(({ personId, name, edgeId, styleName }) => (
-                <div
-                  key={personId}
-                  className={`flex items-center gap-2 px-2 py-1.5 rounded border min-w-0 ${
-                    activePersonIds.has(personId)
-                      ? "border-blue-500 bg-blue-500/10"
-                      : "border-transparent hover:border-dark-accent hover:bg-dark-accent/20"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => togglePerson(personId)}
-                    className="flex-1 min-w-0 text-left text-xs text-dark-text truncate"
-                    title="Click to select, then click a library style to apply"
-                  >
-                    {name}
-                  </button>
-                  <span className="text-[10px] text-dark-muted flex-shrink-0">{styleName}</span>
-                  {edgeId && (
-                    <select
-                      value={
-                        (() => {
-                          const edge = edges.find((e) => e.id === edgeId);
-                          const edgeData = edge?.data as { connectionStyleId?: string } | undefined;
-                          return edgeData?.connectionStyleId ?? "";
-                        })()
-                      }
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (!val) clearEdgeConnectionStyle(edgeId);
-                        else setEdgeConnectionStyleId(edgeId, val);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-[10px] px-1 py-0.5 rounded bg-dark-bg border border-dark-accent text-dark-text max-w-[88px]"
-                    >
-                      <option value="">Default</option>
-                      {connectionStyles.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+              {parentConnections.length > 0 && (
+                <div>
+                  <div className="text-[10px] text-dark-muted mb-1 px-1">Parents</div>
+                  <div className="space-y-1">{parentConnections.map(renderConnectionRow)}</div>
                 </div>
-              ))}
+              )}
+              {childConnections.length > 0 && (
+                <div>
+                  <div className="text-[10px] text-dark-muted mb-1 px-1">Children</div>
+                  <div className="space-y-1">{childConnections.map(renderConnectionRow)}</div>
+                </div>
+              )}
             </div>
           )}
           {activePersonIds.size > 0 && (
@@ -733,19 +1047,32 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
         </button>
       </div>
 
-      <label className="flex items-center gap-2 mb-3 text-xs text-dark-muted cursor-pointer">
-        <input
-          type="checkbox"
-          checked={advancedOpen}
-          onChange={(e) => {
-            setAdvancedOpen(e.target.checked);
-            setActivePersonIds(new Set());
-            setActiveStyleId(null);
-          }}
-          className="themed-checkbox"
-        />
-        Advanced options
-      </label>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3">
+        <label className="flex items-center gap-2 text-xs text-dark-muted cursor-pointer">
+          <input
+            type="checkbox"
+            checked={advancedOpen}
+            onChange={(e) => {
+              setAdvancedOpen(e.target.checked);
+              setActivePersonIds(new Set());
+              setActiveStyleId(null);
+            }}
+            className="themed-checkbox"
+          />
+          Advanced options
+        </label>
+        {advancedOpen && (
+          <label className="flex items-center gap-2 text-xs text-dark-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useRoleStyles}
+              onChange={(e) => setUnionUseRoleStyles(unionId, e.target.checked)}
+              className="themed-checkbox"
+            />
+            Use Parent/Child role style
+          </label>
+        )}
+      </div>
 
       {showSecondColumn ? (
         <div className="grid grid-cols-2 gap-3">
@@ -755,6 +1082,13 @@ export default function UnionConnectionStyleEditor({ unionId, onClose }: UnionCo
       ) : (
         leftColumn
       )}
+      <RoleStyleLinkWarningModal
+        isOpen={!!pendingRoleLink}
+        roleLabel={pendingRoleLink?.label ?? ""}
+        culprits={warningCulprits}
+        onCancel={cancelRoleLink}
+        onProceed={confirmRoleLink}
+      />
     </div>
   );
 }

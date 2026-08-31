@@ -374,6 +374,385 @@ export const DEFAULT_CONNECTION_STYLE: ConnectionVisualStyle = {
   dashPattern: [],
 };
 
+export type RoleStyleKind = "parent" | "child";
+
+export type RoleStyleOverride = Partial<ConnectionVisualStyle> & { name?: string };
+
+export interface RoleStyleContext {
+  roleStyleLinks: Record<string, boolean>;
+  roleStyleOverrides: Record<string, RoleStyleOverride>;
+}
+
+export interface RoleStyleEntry {
+  key: string;
+  kind: RoleStyleKind;
+  role: string;
+  name: string;
+  style: ConnectionVisualStyle;
+  isBuiltIn: boolean;
+  isEdited: boolean;
+  isLinkable: boolean;
+}
+
+export function roleStyleKey(kind: RoleStyleKind, role: string): string {
+  return `${kind}:${role.toLowerCase()}`;
+}
+
+function parseRoleStyleKey(key: string): { kind: RoleStyleKind; role: string } | null {
+  const idx = key.indexOf(":");
+  if (idx <= 0) return null;
+  const kind = key.slice(0, idx);
+  if (kind !== "parent" && kind !== "child") return null;
+  return { kind, role: key.slice(idx + 1) };
+}
+
+export function isBuiltInRoleStyleKey(key: string): boolean {
+  return key in BUILT_IN_ROLE_STYLES;
+}
+
+/** Built-in visual defaults for every parent/child role (source of truth; edits persist as overrides). */
+export const BUILT_IN_ROLE_STYLES: Record<string, ConnectionVisualStyle & { name: string }> = {
+  "parent:father": {
+    name: "Biological Father",
+    stroke: "#2563eb",
+    strokeWidth: 2.5,
+    dashPattern: [],
+    icon: { kind: "emoji", value: "👨" },
+  },
+  "parent:mother": {
+    name: "Biological Mother",
+    stroke: "#db2777",
+    strokeWidth: 2.5,
+    dashPattern: [],
+    icon: { kind: "emoji", value: "👩" },
+  },
+  "parent:unknown": {
+    name: "Unknown",
+    stroke: "#64748b",
+    strokeWidth: 1.5,
+    dashPattern: [2, 4],
+    icon: { kind: "emoji", value: "❓" },
+  },
+  "parent:guardian": {
+    name: "Guardian",
+    stroke: "#0d9488",
+    strokeWidth: 2,
+    dashPattern: [8, 4],
+    icon: { kind: "emoji", value: "👮" },
+  },
+  "parent:stepmother": {
+    name: "Stepmother",
+    stroke: "#f472b6",
+    strokeWidth: 2,
+    dashPattern: [8, 4],
+    icon: { kind: "emoji", value: "👩" },
+  },
+  "parent:stepfather": {
+    name: "Stepfather",
+    stroke: "#60a5fa",
+    strokeWidth: 2,
+    dashPattern: [8, 4],
+    icon: { kind: "emoji", value: "👨" },
+  },
+  "parent:stepparent": {
+    name: "Stepparent",
+    stroke: "#a855f7",
+    strokeWidth: 2,
+    dashPattern: [8, 4],
+    icon: { kind: "emoji", value: "🧑" },
+  },
+  "parent:adoptive_mother": {
+    name: "Adoptive Mother",
+    stroke: "#ec4899",
+    strokeWidth: 2,
+    dashPattern: [8, 4, 1, 4],
+    icon: { kind: "emoji", value: "🤱" },
+  },
+  "parent:adoptive_father": {
+    name: "Adoptive Father",
+    stroke: "#3b82f6",
+    strokeWidth: 2,
+    dashPattern: [8, 4, 1, 4],
+    icon: { kind: "emoji", value: "👨‍👦" },
+  },
+  "parent:parent": {
+    name: "Parent",
+    stroke: "#9333ea",
+    strokeWidth: 2,
+    dashPattern: [],
+    icon: { kind: "emoji", value: "🧑" },
+  },
+  "parent:nanny": {
+    name: "Nanny",
+    stroke: "#06b6d4",
+    strokeWidth: 1.5,
+    dashPattern: [2, 4],
+    icon: { kind: "emoji", value: "👵" },
+  },
+  "child:son": {
+    name: "Son",
+    stroke: "#2563eb",
+    strokeWidth: 2,
+    dashPattern: [],
+    icon: { kind: "emoji", value: "👦" },
+  },
+  "child:daughter": {
+    name: "Daughter",
+    stroke: "#db2777",
+    strokeWidth: 2,
+    dashPattern: [],
+    icon: { kind: "emoji", value: "👧" },
+  },
+  "child:child": {
+    name: "Child",
+    stroke: "#9333ea",
+    strokeWidth: 2,
+    dashPattern: [],
+    icon: { kind: "emoji", value: "🧒" },
+  },
+  "child:adoptive_son": {
+    name: "Adoptive Son",
+    stroke: "#3b82f6",
+    strokeWidth: 2,
+    dashPattern: [8, 4, 1, 4],
+    icon: { kind: "emoji", value: "👶" },
+  },
+  "child:adoptive_daughter": {
+    name: "Adoptive Daughter",
+    stroke: "#ec4899",
+    strokeWidth: 2,
+    dashPattern: [8, 4, 1, 4],
+    icon: { kind: "emoji", value: "👶" },
+  },
+  "child:adoptive_child": {
+    name: "Adoptive Child",
+    stroke: "#a855f7",
+    strokeWidth: 2,
+    dashPattern: [8, 4, 1, 4],
+    icon: { kind: "emoji", value: "👶" },
+  },
+};
+
+function dashPatternEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+function iconEqual(a?: ConnectionIconRef, b?: ConnectionIconRef): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.kind === b.kind && a.value === b.value;
+}
+
+export function resolveRoleStyle(
+  key: string,
+  overrides: Record<string, RoleStyleOverride>
+): ConnectionVisualStyle & { name: string } {
+  const builtIn = BUILT_IN_ROLE_STYLES[key];
+  const parsed = parseRoleStyleKey(key);
+  const baseName =
+    builtIn?.name ??
+    (parsed ? parsed.role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : key);
+  const base: ConnectionVisualStyle & { name: string } = builtIn ?? {
+    ...DEFAULT_CONNECTION_STYLE,
+    name: baseName,
+  };
+  const override = overrides[key];
+  if (!override) return { ...base };
+  return {
+    stroke: override.stroke ?? base.stroke,
+    strokeWidth: override.strokeWidth ?? base.strokeWidth,
+    dashPattern: override.dashPattern ? [...override.dashPattern] : [...base.dashPattern],
+    description: override.description ?? base.description,
+    icon: override.icon ?? base.icon,
+    name: override.name ?? base.name,
+  };
+}
+
+export function isRoleStyleEdited(
+  key: string,
+  overrides: Record<string, RoleStyleOverride>
+): boolean {
+  const override = overrides[key];
+  if (!override) return false;
+  const resolved = resolveRoleStyle(key, overrides);
+  const builtIn = BUILT_IN_ROLE_STYLES[key];
+  if (!builtIn) return true;
+  if (override.name != null && override.name !== builtIn.name) return true;
+  if (override.stroke != null && override.stroke !== builtIn.stroke) return true;
+  if (override.strokeWidth != null && override.strokeWidth !== builtIn.strokeWidth) return true;
+  if (override.dashPattern != null && !dashPatternEqual(override.dashPattern, builtIn.dashPattern))
+    return true;
+  if (override.icon != null && !iconEqual(override.icon, builtIn.icon)) return true;
+  if (override.description != null && override.description !== builtIn.description) return true;
+  void resolved;
+  return false;
+}
+
+export function isRoleStyleLinkable(
+  key: string,
+  overrides: Record<string, RoleStyleOverride>
+): boolean {
+  return isBuiltInRoleStyleKey(key) || isRoleStyleEdited(key, overrides);
+}
+
+export function listRoleStyles(
+  customParentRoles: string[],
+  customChildRoles: string[],
+  overrides: Record<string, RoleStyleOverride>
+): { parents: RoleStyleEntry[]; children: RoleStyleEntry[] } {
+  const parents: RoleStyleEntry[] = [];
+  const children: RoleStyleEntry[] = [];
+
+  const addEntry = (kind: RoleStyleKind, role: string, target: RoleStyleEntry[]) => {
+    const key = roleStyleKey(kind, role);
+    const resolved = resolveRoleStyle(key, overrides);
+    const edited = isRoleStyleEdited(key, overrides);
+    target.push({
+      key,
+      kind,
+      role,
+      name: resolved.name,
+      style: resolved,
+      isBuiltIn: isBuiltInRoleStyleKey(key),
+      isEdited: edited,
+      isLinkable: isRoleStyleLinkable(key, overrides),
+    });
+  };
+
+  for (const role of BUILT_IN_PARENT_ROLES) addEntry("parent", role, parents);
+  for (const role of customParentRoles) addEntry("parent", role, parents);
+  for (const role of BUILT_IN_CHILD_ROLES) addEntry("child", role, children);
+  for (const role of customChildRoles) addEntry("child", role, children);
+
+  return { parents, children };
+}
+
+/** Resolve the role style key for a person connected to a union, if any. */
+export function getRoleStyleKeyForEdge(
+  edge: Edge,
+  unionData: UnionNodeData
+): string | null {
+  const edgeData = edge.data as FamilyTreeEdgeData | undefined;
+  if (edgeData?.type === "partner") {
+    const personId = edge.source;
+    const slot = getUnionPartners(unionData).find((p) => p.personId === personId);
+    if (!slot?.role) return null;
+    return roleStyleKey("parent", slot.role);
+  }
+  if (edgeData?.type === "child") {
+    const childRole = edgeData.childRole;
+    if (!childRole) return null;
+    return roleStyleKey("child", childRole);
+  }
+  return null;
+}
+
+function edgeHasOwnStyle(edge: Edge): boolean {
+  const edgeData = edge.data as FamilyTreeEdgeData | undefined;
+  return !!(edgeData?.connectionStyleOverride || edgeData?.connectionStyleId);
+}
+
+export interface RoleLinkCulprit {
+  personId: string;
+  personName: string;
+  unionId: string;
+  unionName: string;
+  currentStyleName: string;
+}
+
+/** Connections in gated unions that would have an explicit style outranked by linking a role. */
+export function scanRoleLinkCulprits(
+  roleKey: string,
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[],
+  connectionStyles: ConnectionStyleDef[]
+): RoleLinkCulprit[] {
+  const culprits: RoleLinkCulprit[] = [];
+  const seen = new Set<string>();
+
+  for (const unionNode of nodes) {
+    if ((unionNode.data as UnionNodeData).kind !== "union") continue;
+    const unionData = unionNode.data as UnionNodeData;
+    if (!unionData.useRoleStyles) continue;
+
+    const unionId = unionNode.id;
+    const unionName = unionData.name?.trim() || unionId;
+
+    for (const edge of edges) {
+      const key = getRoleStyleKeyForEdge(edge, unionData);
+      if (key !== roleKey) continue;
+      if (!edgeHasOwnStyle(edge)) continue;
+
+      const edgeData = edge.data as FamilyTreeEdgeData;
+      const personId =
+        edgeData.type === "partner" ? edge.source : edgeData.type === "child" ? edge.target : null;
+      if (!personId) continue;
+
+      const dedupeKey = `${unionId}:${personId}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      const personNode = nodes.find((n) => n.id === personId);
+      const personName = personNode
+        ? getPersonDisplayName(personNode.data as PersonNodeData, personId, nodes)
+        : personId;
+
+      const baseStyleName = getEdgeConnectionStyleName(edge, unionData, connectionStyles);
+      culprits.push({
+        personId,
+        personName,
+        unionId,
+        unionName,
+        currentStyleName: baseStyleName,
+      });
+    }
+  }
+
+  return culprits;
+}
+
+/** True when a linked role style wins for this edge (non-destructive override at resolve time). */
+export function isRoleStyleActiveForEdge(
+  edge: Edge,
+  unionData: UnionNodeData,
+  ctx?: RoleStyleContext
+): boolean {
+  if (!unionData.useRoleStyles || !ctx) return false;
+  const key = getRoleStyleKeyForEdge(edge, unionData);
+  if (!key || !ctx.roleStyleLinks[key]) return false;
+  return isRoleStyleLinkable(key, ctx.roleStyleOverrides);
+}
+
+/** Collect role style keys that are actively winning on at least one gated union connection. */
+export function collectWinningRoleStyleKeys(
+  nodes: Node<FamilyTreeNodeData>[],
+  edges: Edge[],
+  ctx: RoleStyleContext
+): string[] {
+  const keys = new Set<string>();
+  for (const unionNode of nodes) {
+    if ((unionNode.data as UnionNodeData).kind !== "union") continue;
+    const unionData = unionNode.data as UnionNodeData;
+    if (!unionData.useRoleStyles) continue;
+    const unionId = unionNode.id;
+    for (const edge of edges) {
+      const edgeData = edge.data as FamilyTreeEdgeData | undefined;
+      const edgeUnionId =
+        edgeData?.type === "partner"
+          ? edge.target
+          : edgeData?.type === "child"
+            ? edge.source
+            : null;
+      if (edgeUnionId !== unionId) continue;
+      if (!isRoleStyleActiveForEdge(edge, unionData, ctx)) continue;
+      const key = getRoleStyleKeyForEdge(edge, unionData);
+      if (key) keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
 export function resolveUnionConnectionStyle(
   data: Pick<UnionNodeData, "connectionStyleId" | "connectionStyleOverride">,
   connectionStyles: ConnectionStyleDef[]
@@ -411,8 +790,15 @@ export interface FamilyTreeEdgeData {
 export function resolveEdgeConnectionStyle(
   edge: Edge,
   unionData: UnionNodeData,
-  connectionStyles: ConnectionStyleDef[]
+  connectionStyles: ConnectionStyleDef[],
+  roleCtx?: RoleStyleContext
 ): ConnectionVisualStyle {
+  if (unionData.useRoleStyles && roleCtx) {
+    const key = getRoleStyleKeyForEdge(edge, unionData);
+    if (key && roleCtx.roleStyleLinks[key] && isRoleStyleLinkable(key, roleCtx.roleStyleOverrides)) {
+      return resolveRoleStyle(key, roleCtx.roleStyleOverrides);
+    }
+  }
   const edgeData = edge.data as FamilyTreeEdgeData | undefined;
   if (edgeData?.connectionStyleOverride) return edgeData.connectionStyleOverride;
   if (edgeData?.connectionStyleId) {
@@ -424,6 +810,28 @@ export function resolveEdgeConnectionStyle(
 
 /** Resolve display name for a single edge's connection style. */
 export function getEdgeConnectionStyleName(
+  edge: Edge,
+  unionData: UnionNodeData,
+  connectionStyles: ConnectionStyleDef[],
+  roleCtx?: RoleStyleContext
+): string {
+  if (unionData.useRoleStyles && roleCtx) {
+    const key = getRoleStyleKeyForEdge(edge, unionData);
+    if (key && roleCtx.roleStyleLinks[key] && isRoleStyleLinkable(key, roleCtx.roleStyleOverrides)) {
+      return resolveRoleStyle(key, roleCtx.roleStyleOverrides).name;
+    }
+  }
+  const edgeData = edge.data as FamilyTreeEdgeData | undefined;
+  if (edgeData?.connectionStyleOverride) return "Custom";
+  if (edgeData?.connectionStyleId) {
+    const found = connectionStyles.find((s) => s.id === edgeData.connectionStyleId);
+    if (found) return found.name;
+  }
+  return getConnectionStyleName(unionData, connectionStyles);
+}
+
+/** Underlying style name before role-link override (for shadow display in the editor). */
+export function getEdgeConnectionStyleNameWithoutRole(
   edge: Edge,
   unionData: UnionNodeData,
   connectionStyles: ConnectionStyleDef[]
@@ -540,6 +948,8 @@ export interface UnionNodeData {
   createdAt?: number;
   /** True when canvas coordinates are not yet assigned (x: ? / y: ? in script). */
   positionUnset?: boolean;
+  /** When true, linked parent/child role styles may apply to connections in this union. */
+  useRoleStyles?: boolean;
 }
 
 export type UnionArrangeSpacing = {
@@ -2641,6 +3051,10 @@ interface FamilyTreeStore {
   genAnchorLineOpacity: number;
   generationAnchors: GenerationAnchor[];
   connectionStyles: ConnectionStyleDef[];
+  /** Per-role style edits keyed by roleStyleKey (parent:role / child:role). */
+  roleStyleOverrides: Record<string, RoleStyleOverride>;
+  /** Global role-to-style link toggles keyed by roleStyleKey. */
+  roleStyleLinks: Record<string, boolean>;
   /** Project-level custom parent role labels. */
   customParentRoles: string[];
   /** Project-level custom gender labels. */
@@ -2715,6 +3129,11 @@ interface FamilyTreeStore {
   setEdgeConnectionStyleId: (edgeId: string, styleId: string | undefined) => void;
   setEdgeConnectionStyleOverride: (edgeId: string, style: ConnectionVisualStyle | undefined) => void;
   clearEdgeConnectionStyle: (edgeId: string) => void;
+  setRoleStyleOverride: (key: string, patch: RoleStyleOverride) => void;
+  resetRoleStyle: (key: string) => void;
+  resetAllBuiltInRoleStyles: () => void;
+  setRoleStyleLink: (key: string, on: boolean) => void;
+  setUnionUseRoleStyles: (unionId: string, on: boolean) => void;
   setUnionFamilyLocked: (unionId: string, locked: boolean) => void;
   setUnionMainGraph: (unionId: string, value: boolean) => void;
   setGenLabelMode: (v: "letters" | "numbers" | "both") => void;
@@ -2939,6 +3358,8 @@ let prevGenAnchorLineOpacity: number | null = null;
 let prevGenLabelMode: "letters" | "numbers" | "both" | null = null;
 let prevGenerationAnchorsJson: string | null = null;
 let prevConnectionStylesJson: string | null = null;
+let prevRoleStyleOverridesJson: string | null = null;
+let prevRoleStyleLinksJson: string | null = null;
 let prevFamiliesJson: string | null = null;
 let prevBranchesJson: string | null = null;
 let prevDocumentsRef: FamilyTreeDocumentRecord[] | null = null;
@@ -4101,6 +4522,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
   genAnchorLineOpacity: 35,
   generationAnchors: [],
   connectionStyles: [],
+  roleStyleOverrides: {} as Record<string, RoleStyleOverride>,
+  roleStyleLinks: {} as Record<string, boolean>,
   customParentRoles: [] as string[],
   customGenders: [] as string[],
   customChildRoles: [] as string[],
@@ -5018,6 +5441,50 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
     }));
     return newId;
   },
+  setRoleStyleOverride: (key, patch) =>
+    set((s) => ({
+      roleStyleOverrides: {
+        ...s.roleStyleOverrides,
+        [key]: { ...s.roleStyleOverrides[key], ...patch },
+      },
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  resetRoleStyle: (key) =>
+    set((s) => {
+      if (!(key in s.roleStyleOverrides)) return {};
+      const next = { ...s.roleStyleOverrides };
+      delete next[key];
+      return { roleStyleOverrides: next, hasUnsavedChanges: true, lastSaveError: null };
+    }),
+  resetAllBuiltInRoleStyles: () =>
+    set((s) => {
+      const next = { ...s.roleStyleOverrides };
+      for (const key of Object.keys(next)) {
+        if (isBuiltInRoleStyleKey(key)) delete next[key];
+      }
+      return { roleStyleOverrides: next, hasUnsavedChanges: true, lastSaveError: null };
+    }),
+  setRoleStyleLink: (key, on) =>
+    set((s) => ({
+      roleStyleLinks: on
+        ? { ...s.roleStyleLinks, [key]: true }
+        : Object.fromEntries(Object.entries(s.roleStyleLinks).filter(([k]) => k !== key)),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
+  setUnionUseRoleStyles: (unionId, on) =>
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        if (n.id !== unionId || (n.data as UnionNodeData).kind !== "union") return n;
+        return {
+          ...n,
+          data: { ...(n.data as UnionNodeData), useRoleStyles: on || undefined },
+        };
+      }),
+      hasUnsavedChanges: true,
+      lastSaveError: null,
+    })),
   setUnionConnectionStyleId: (unionId, styleId) =>
     set((s) => ({
       nodes: s.nodes.map((n) => {
@@ -6814,6 +7281,14 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
       edges,
       generationAnchors: (payload as { generationAnchors?: GenerationAnchor[] })?.generationAnchors ?? [],
       connectionStyles: payload?.connectionStyles ?? [],
+      roleStyleOverrides:
+        payload?.roleStyleOverrides && typeof payload.roleStyleOverrides === "object"
+          ? payload.roleStyleOverrides
+          : {},
+      roleStyleLinks:
+        payload?.roleStyleLinks && typeof payload.roleStyleLinks === "object"
+          ? payload.roleStyleLinks
+          : {},
       customParentRoles: Array.isArray(payload?.customParentRoles)
         ? payload!.customParentRoles.filter((r): r is string => typeof r === "string")
         : [],
@@ -7016,6 +7491,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
         anchorNodeId: null,
         generationAnchors: s.generationAnchors,
         connectionStyles: s.connectionStyles,
+        roleStyleOverrides: s.roleStyleOverrides,
+        roleStyleLinks: s.roleStyleLinks,
         customParentRoles: s.customParentRoles,
         customGenders: s.customGenders,
         customChildRoles: s.customChildRoles,
@@ -7110,6 +7587,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
       edges: [],
       generationAnchors: [],
       connectionStyles: [],
+      roleStyleOverrides: {},
+      roleStyleLinks: {},
       customParentRoles: [],
       customGenders: [],
       customChildRoles: [],
@@ -7155,6 +7634,8 @@ export const useFamilyTreeStore = create<FamilyTreeStore>(instrument("familyTree
         anchorNodeId: null,
         generationAnchors: [],
         connectionStyles: [],
+        roleStyleOverrides: {},
+        roleStyleLinks: {},
         families: [],
         branches: [],
         documents: [],
@@ -7191,6 +7672,8 @@ useFamilyTreeStore.subscribe((state) => {
   }
   const generationAnchorsJson = JSON.stringify(state.generationAnchors);
   const connectionStylesJson = JSON.stringify(state.connectionStyles);
+  const roleStyleOverridesJson = JSON.stringify(state.roleStyleOverrides);
+  const roleStyleLinksJson = JSON.stringify(state.roleStyleLinks);
   const familiesJson = JSON.stringify(familiesToPersisted(state.families));
   const branchesJson = JSON.stringify(branchesToPersisted(state.branches));
   const documentsUpdatedAtSum = state.documents.reduce((sum, d) => sum + d.updatedAt, 0);
@@ -7217,6 +7700,8 @@ useFamilyTreeStore.subscribe((state) => {
     state.genLabelMode !== prevGenLabelMode ||
     generationAnchorsJson !== prevGenerationAnchorsJson ||
     connectionStylesJson !== prevConnectionStylesJson ||
+    roleStyleOverridesJson !== prevRoleStyleOverridesJson ||
+    roleStyleLinksJson !== prevRoleStyleLinksJson ||
     familiesJson !== prevFamiliesJson ||
     branchesJson !== prevBranchesJson ||
     documentsChanged ||
@@ -7244,6 +7729,8 @@ useFamilyTreeStore.subscribe((state) => {
   prevGenLabelMode = state.genLabelMode;
   prevGenerationAnchorsJson = generationAnchorsJson;
   prevConnectionStylesJson = connectionStylesJson;
+  prevRoleStyleOverridesJson = roleStyleOverridesJson;
+  prevRoleStyleLinksJson = roleStyleLinksJson;
   prevFamiliesJson = familiesJson;
   prevBranchesJson = branchesJson;
   prevDocumentsRef = state.documents;

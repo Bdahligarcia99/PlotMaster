@@ -135,3 +135,12 @@ Selecting a person node (parent or child) on the canvas and clicking “+Union�
 Remember that users can select if a union should include mother and father in Full Union settings. 
 If only mother is check marked but the person node originally selected from the canvas is also a mother, override assignment to assign father instead.
 If neither mother nor father is check marked in Full Union settings (yes, this should be allowed) then do not assign another partner to the union. Just keep the selected person node from the canvas as the only parent.
+
+In connection styles editor:
+If the user does not click the advanced options checkbox, do not show the Union Connections list in the second column. Still use the second column to show the icon selectors though, but move them to the top of the column where the Union Connections list would be. Only move it when advanced options is selected so it does not block the Union Connections list.
+
+Right now, the icon selector goes away only if you edit another setting, specifically only when deleting character from a field,  in the style connect settings. Make this more strict. If a user clicks on a field or even just clicks anywhere in the connection style UI box but outside the icon selector, close the icon selector. No need for the “<- assign icon” back button.
+
+Also, let the icon selector take up more vertical space, right now it is cut off with roughly a 1/4 of empty space left at the bottom.
+
+Allow the connection styles editor window to be moveable and have it persist where user moves it next time it’s opened in any union.

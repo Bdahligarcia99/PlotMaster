@@ -512,6 +512,12 @@ export default function FamilyTreeCanvas({
   const nodeSizesById = useFamilyTreeStore((s) => s.nodeSizesById);
   const generationAnchors = useFamilyTreeStore((s) => s.generationAnchors);
   const connectionStyles = useFamilyTreeStore((s) => s.connectionStyles);
+  const roleStyleLinks = useFamilyTreeStore((s) => s.roleStyleLinks);
+  const roleStyleOverrides = useFamilyTreeStore((s) => s.roleStyleOverrides);
+  const roleStyleCtx = useMemo(
+    () => ({ roleStyleLinks, roleStyleOverrides }),
+    [roleStyleLinks, roleStyleOverrides]
+  );
   const genLabelMode = useFamilyTreeStore((s) => s.genLabelMode);
   const updateNodeGenAnchor = useFamilyTreeStore((s) => s.updateNodeGenAnchor);
   const setGenInheritFlash = useFamilyTreeStore((s) => s.setGenInheritFlash);
@@ -845,7 +851,8 @@ export default function FamilyTreeCanvas({
       const resolved = resolveEdgeConnectionStyle(
         edge,
         unionNode.data as UnionNodeData,
-        connectionStyles
+        connectionStyles,
+        roleStyleCtx
       );
       return {
         ...edge,
@@ -861,7 +868,7 @@ export default function FamilyTreeCanvas({
         },
       };
     });
-  }, [canvasEdges, canvasNodes, connectionStyles]);
+  }, [canvasEdges, canvasNodes, connectionStyles, roleStyleCtx]);
 
   const onEdgeMouseEnter = useCallback(
     (_: React.MouseEvent, edge: Edge) => {
@@ -884,8 +891,14 @@ export default function FamilyTreeCanvas({
         ? getPersonDisplayName(personNode.data as PersonNodeData, personId, store.nodes)
         : personId;
       const unionData = unionNode.data as UnionNodeData;
-      const style = resolveEdgeConnectionStyle(edge, unionData, store.connectionStyles);
-      const styleName = getEdgeConnectionStyleName(edge, unionData, store.connectionStyles);
+      const style = resolveEdgeConnectionStyle(edge, unionData, store.connectionStyles, {
+        roleStyleLinks: store.roleStyleLinks,
+        roleStyleOverrides: store.roleStyleOverrides,
+      });
+      const styleName = getEdgeConnectionStyleName(edge, unionData, store.connectionStyles, {
+        roleStyleLinks: store.roleStyleLinks,
+        roleStyleOverrides: store.roleStyleOverrides,
+      });
       setHoveredConnectionInfo({
         unionId,
         personName,

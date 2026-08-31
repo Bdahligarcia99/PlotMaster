@@ -537,6 +537,7 @@ export function parseFamilyTreeScript(
         connectionStyleId: styleId,
         arrangeSpacing: block.arrange,
         isMainGraph: block.mainGraph ?? (existingUnion?.data as UnionNodeData)?.isMainGraph,
+        useRoleStyles: (existingUnion?.data as UnionNodeData)?.useRoleStyles,
         createdAt: (existingUnion?.data as UnionNodeData)?.createdAt ?? Date.now(),
         positionUnset: block.positionUnset,
       };
@@ -568,6 +569,7 @@ export function parseFamilyTreeScript(
       connectionStyleId: styleId,
       arrangeSpacing: block.arrange,
       isMainGraph: block.mainGraph ?? (existingUnion?.data as UnionNodeData)?.isMainGraph,
+      useRoleStyles: (existingUnion?.data as UnionNodeData)?.useRoleStyles,
       createdAt: (existingUnion?.data as UnionNodeData)?.createdAt ?? Date.now(),
       positionUnset: block.positionUnset,
     };

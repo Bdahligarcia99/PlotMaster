@@ -1,5 +1,5 @@
 import type { Node, Edge } from "reactflow";
-import type { ConnectionStyleDef } from "../store/familyTreeStore";
+import type { ConnectionStyleDef, RoleStyleOverride } from "../store/familyTreeStore";
 import { resolveFileRefForProject } from "./synproj/synprojProjectService";
 import { FileBackedStorageDriver } from "./synproj/FileBackedStorageDriver";
 
@@ -122,6 +122,8 @@ export interface ProjectPayload {
   anchorNodeId: string | null;
   generationAnchors?: GenerationAnchor[];
   connectionStyles?: ConnectionStyleDef[];
+  roleStyleOverrides?: Record<string, RoleStyleOverride>;
+  roleStyleLinks?: Record<string, boolean>;
   customParentRoles?: string[];
   customGenders?: string[];
   customChildRoles?: string[];
